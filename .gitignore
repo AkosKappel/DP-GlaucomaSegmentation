@@ -1,0 +1,6 @@
+# JetBrains IDEs
+.idea
+
+# Python environment
+venv
+__pycache__
