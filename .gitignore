@@ -4,3 +4,9 @@
 # Python environment
 venv
 __pycache__
+
+# Datasets
+data
+
+# Preprocessing mini-framework
+RetinaSegmentDP
