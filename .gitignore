@@ -10,3 +10,7 @@ data
 
 # Preprocessing mini-framework
 RetinaSegmentDP
+
+# Model checkpoints
+checkpoints
+*.pth.tar
