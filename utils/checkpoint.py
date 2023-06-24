@@ -2,7 +2,7 @@ import os
 import torch
 
 
-def save_checkpoint(state, filename='checkpoint.pth.tar', checkpoint_dir='../checkpoints'):
+def save_checkpoint(state, filename='checkpoint.pth.tar', checkpoint_dir='.'):
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     filename = os.path.join(checkpoint_dir, filename)
@@ -10,7 +10,7 @@ def save_checkpoint(state, filename='checkpoint.pth.tar', checkpoint_dir='../che
     torch.save(state, filename)
 
 
-def load_checkpoint(filename, model, optimizer, checkpoint_dir='../checkpoints'):
+def load_checkpoint(filename, model, optimizer, checkpoint_dir='.'):
     filename = os.path.join(checkpoint_dir, filename)
     print(f'=> Loading checkpoint: {filename}')
     checkpoint = torch.load(filename)

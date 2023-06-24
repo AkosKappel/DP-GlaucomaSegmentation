@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from matplotlib.patches import Patch
 
 
 # plot segmentation results
-def plot_side_by_side_results(images, masks, preds):
+def plot_side_by_side_results(images, masks, preds, save_path=None, show=True):
     """
     Visualize the segmentation results in 3 columns as follows:
     1st column: input image
@@ -24,10 +25,16 @@ def plot_side_by_side_results(images, masks, preds):
         ax[i, 2].set_title('Prediction')
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_overlaid_results(images, masks, preds, alpha=0.4, od_color=(0, 0, 1), oc_color=(0, 1, 1)):
+def plot_overlaid_results(images, masks, preds, save_path=None, show=True,
+                          alpha=0.4, od_color=(0, 0, 1), oc_color=(0, 1, 1)):
     """
     Visualize the segmentation results in 2 columns as follows:
     1st column: ground truth overlaid on the input image
@@ -51,10 +58,15 @@ def plot_overlaid_results(images, masks, preds, alpha=0.4, od_color=(0, 0, 1), o
         ax[i, 1].set_title('Prediction')
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_correct_results(images, masks, preds,
+def plot_correct_results(images, masks, preds, save_path=None, show=True,
                          tp_color=(0, 1, 0), tn_color=(0, 0, 0),
                          fp_color=(1, 0, 0), fn_color=(1, 1, 0)):
     """
@@ -99,10 +111,34 @@ def plot_correct_results(images, masks, preds,
     ax[3, 1].legend(handles=legend_patches, bbox_to_anchor=(0.5, -0.5), loc='lower center', ncol=2)
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_results(images, masks, preds):
+def plot_results_from_loader(loader, model, device, save_path=None, show=True):
+    batch = next(iter(loader))
+    images, masks = batch
+
+    images = images.to(device=device)
+    masks = masks.to(device=device)
+    model = model.to(device=device)
+
+    model.eval()
+    outputs = model(images)
+    preds = torch.argmax(outputs, dim=1)
+
+    images = images.cpu().numpy().transpose(0, 2, 3, 1)
+    masks = masks.cpu().numpy()
+    preds = preds.cpu().numpy()
+
+    plot_results(images, masks, preds, save_path=save_path, show=show)
+
+
+def plot_results(images, masks, preds, save_path=None, show=True):
     """
     Visualize the segmentation results in 5 columns as follows:
     1st column: input image
@@ -164,10 +200,15 @@ def plot_results(images, masks, preds):
     ax[3, 3].legend(handles=legend_color_patches, bbox_to_anchor=(0.5, -0.6), loc='lower center', ncol=1)
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_correct_results_with_more_colors(images, masks, preds):
+def plot_correct_results_with_more_colors(images, masks, preds, save_path=None, show=True):
     """
     Visualize the results of the segmentation with different colors for each case (9 colors in total).
     This function is not recommended, because it uses too many colors and it is difficult to understand the results.
@@ -205,4 +246,9 @@ def plot_correct_results_with_more_colors(images, masks, preds):
         ax[i, 1].set_title('Correctness')
 
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
