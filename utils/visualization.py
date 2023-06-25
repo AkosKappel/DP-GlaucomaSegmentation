@@ -2,6 +2,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.patches import Patch
+from utils import ORIGA_MEANS, ORIGA_STDS
+
+
+def restore_image(image, mean=ORIGA_MEANS, std=ORIGA_STDS):
+    """
+    Restore a normalized image to its original state.
+    """
+    restored_image = image.copy()
+    for c in range(restored_image.shape[2]):
+        restored_image[:, :, c] = (restored_image[:, :, c] * std[c]) + mean[c]
+    return restored_image
 
 
 # plot segmentation results
@@ -156,6 +167,10 @@ def plot_results(images, masks, preds, save_path=None, show=True):
 
     fig, ax = plt.subplots(len(images), 5, figsize=(15, 3 * len(images)))
     for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
+        # un-normalize image with mean and std if necessary
+        if 0 > image.min() or image.max() <= 256:
+            image = restore_image(image)
+
         ax[i, 0].imshow(image)
         if i == 0:
             ax[i, 0].set_title('Input image')
