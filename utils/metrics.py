@@ -13,7 +13,8 @@ def calculate_metrics(tp, tn, fp, fn):
     }
 
 
-def get_performance_metrics(truth, prediction, average='macro', combined_only=True):
+def get_performance_metrics(truth, prediction, average: str = 'macro',
+                            combined_only: bool = True, num_classes: int = 3):
     # Flatten the tensors to 1D
     truth_flat = truth.flatten().numpy()
     prediction_flat = prediction.flatten().numpy()
@@ -23,7 +24,7 @@ def get_performance_metrics(truth, prediction, average='macro', combined_only=Tr
         'accuracy': accuracy_score(truth_flat, prediction_flat),
         'precision': precision_score(truth_flat, prediction_flat, average=average, zero_division=0),
         'sensitivity': recall_score(truth_flat, prediction_flat, average=average, zero_division=0),
-        'specificity': get_specificity_score(truth_flat, prediction_flat, n_classes=3),
+        'specificity': get_specificity_score(truth_flat, prediction_flat, n_classes=num_classes),
         'dice': f1_score(truth_flat, prediction_flat, average=average, zero_division=0),
         'iou': jaccard_score(truth_flat, prediction_flat, average=average, zero_division=0),
     }}

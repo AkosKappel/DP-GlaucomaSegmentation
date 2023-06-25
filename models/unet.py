@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as TF
+from torchsummary import summary
 
 
 class DoubleConv(nn.Module):
@@ -21,9 +22,9 @@ class DoubleConv(nn.Module):
 
 
 class UNet(nn.Module):
-    """Basic U-Net implementation"""
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = [32, 64, 128, 256]):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1,
+                 features: list[int] = [64, 128, 256, 512], init_weights: bool = True):
         super(UNet, self).__init__()
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
@@ -48,7 +49,8 @@ class UNet(nn.Module):
         self.output = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1)
 
         # Initialize weights
-        # self.initialize_weights()
+        if init_weights:
+            self.initialize_weights()
 
     def initialize_weights(self):
         for m in self.modules():
@@ -94,8 +96,14 @@ class UNet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = UNet(in_channels=3, out_channels=1)
+    _batch_size = 8
+    _in_channels, _out_channels = 3, 1
+    _height, _width = 128, 128
+    _layers = [32, 64, 128, 256]
+
+    model = UNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers)
     print(model)
-    random_data = torch.randn(8, 3, 128, 128)  # (batch_size, channels, height, width)
+    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     predictions = model(random_data)
-    assert predictions.shape == (8, 1, 128, 128)
+    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+    summary(model.cuda(), (_in_channels, _height, _width))

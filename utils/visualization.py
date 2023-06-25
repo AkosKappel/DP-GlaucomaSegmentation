@@ -120,20 +120,22 @@ def plot_correct_results(images, masks, preds, save_path=None, show=True,
 
 
 def plot_results_from_loader(loader, model, device, save_path=None, show=True):
-    batch = next(iter(loader))
-    images, masks = batch
-
-    images = images.to(device=device)
-    masks = masks.to(device=device)
-    model = model.to(device=device)
-
     model.eval()
-    outputs = model(images)
-    preds = torch.argmax(outputs, dim=1)
+    model = model.to(device=device)
+    with torch.no_grad():
+        batch = next(iter(loader))
+        images, masks = batch
 
-    images = images.cpu().numpy().transpose(0, 2, 3, 1)
-    masks = masks.cpu().numpy()
-    preds = preds.cpu().numpy()
+        images = images.to(device=device)
+        masks = masks.to(device=device)
+
+        outputs = model(images)
+        # softmax not needed because index of max value is the same before and after calling softmax
+        preds = torch.argmax(outputs, dim=1)
+
+        images = images.cpu().numpy().transpose(0, 2, 3, 1)
+        masks = masks.cpu().numpy()
+        preds = preds.cpu().numpy()
 
     plot_results(images, masks, preds, save_path=save_path, show=show)
 
