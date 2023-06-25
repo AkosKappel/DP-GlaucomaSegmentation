@@ -2,10 +2,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.patches import Patch
-from utils import ORIGA_MEANS, ORIGA_STDS
 
 
-def restore_image(image, mean=ORIGA_MEANS, std=ORIGA_STDS):
+def restore_image(image, mean, std):
     """
     Restore a normalized image to its original state.
     """
@@ -130,7 +129,7 @@ def plot_correct_results(images, masks, preds, save_path=None, show=True,
         plt.close()
 
 
-def plot_results_from_loader(loader, model, device, save_path=None, show=True):
+def plot_results_from_loader(loader, model, device, save_path=None, show=True, mean=None, std=None):
     model.eval()
     model = model.to(device=device)
     with torch.no_grad():
@@ -148,10 +147,10 @@ def plot_results_from_loader(loader, model, device, save_path=None, show=True):
         masks = masks.cpu().numpy()
         preds = preds.cpu().numpy()
 
-    plot_results(images, masks, preds, save_path=save_path, show=show)
+    plot_results(images, masks, preds, save_path=save_path, show=show, mean=mean, std=std)
 
 
-def plot_results(images, masks, preds, save_path=None, show=True):
+def plot_results(images, masks, preds, save_path=None, show=True, mean=None, std=None):
     """
     Visualize the segmentation results in 5 columns as follows:
     1st column: input image
@@ -168,8 +167,8 @@ def plot_results(images, masks, preds, save_path=None, show=True):
     fig, ax = plt.subplots(len(images), 5, figsize=(15, 3 * len(images)))
     for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
         # un-normalize image with mean and std if necessary
-        if 0 > image.min() or image.max() <= 256:
-            image = restore_image(image)
+        if mean is not None and std is not None:
+            image = restore_image(image, mean, std)
 
         ax[i, 0].imshow(image)
         if i == 0:
