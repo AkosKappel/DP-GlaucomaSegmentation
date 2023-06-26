@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+from torchsummary import summary
 from models.blocks import RecurrentBlock, UpConv
+
+__all__ = ['RecUNet']
 
 
 class RecUNet(nn.Module):
@@ -64,3 +67,21 @@ class RecUNet(nn.Module):
 
         # Output
         return self.conv1x1(de4)
+
+
+if __name__ == '__main__':
+    _batch_size = 8
+    _in_channels, _out_channels = 3, 1
+    _height, _width = 128, 128
+    _k = 2
+    _layers = [16, 32, 64, 128, 256]
+    _models = [
+        RecUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, n_repeats=_k),
+    ]
+    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
+    for model in _models:
+        predictions = model(random_data)
+        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(model)
+        summary(model.cuda(), (_in_channels, _height, _width))
+        print()
