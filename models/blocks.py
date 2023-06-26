@@ -91,28 +91,24 @@ class UpConv(nn.Module):
 class ResidualBlock(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int, bn: bool = True,
-                 relu_before: bool = True, shortcut_conv: bool = False):
+                 relu_before: bool = True, downsample: bool = True):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
 
         self.bn = bn
         self.relu_before = relu_before
-        self.shortcut_conv = shortcut_conv
+        self.downsample = downsample
 
         if self.bn:
             self.batch_norm1 = nn.BatchNorm2d(out_channels)
             self.batch_norm2 = nn.BatchNorm2d(out_channels)
 
-        if self.shortcut_conv:
+        if self.downsample:
             self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
 
     def forward(self, x):
         residual = x
-
-        # 1x1 convolution layer for shortcut
-        if self.shortcut_conv:
-            residual = self.conv1x1(residual)
 
         # first convolution block
         out = self.conv1(x)
@@ -128,6 +124,10 @@ class ResidualBlock(nn.Module):
         if self.relu_before:
             out = F.relu(out)
 
+        # 1x1 convolution to match channels of residual shortcut to output
+        if self.downsample:
+            residual = self.conv1x1(residual)
+
         # residual shortcut (identity mapping)
         out += residual
 
@@ -140,30 +140,29 @@ class ResidualBlock(nn.Module):
 
 class RecurrentBlock(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, t: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, t: int = 2, bn: bool = True):
         super(RecurrentBlock, self).__init__()
         self.t = t
         self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
-        self.conv1 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
-        self.conv2 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
+        self.conv1 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
+        self.conv2 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
 
     def forward(self, x):
         # 1x1 convolution to set correct number of channels for recurrent blocks
-        out = self.conv1x1(x)
+        x = self.conv1x1(x)
 
+        # one pass is done before the recursion loop begins
+        out = self.conv1(x)
         # first recurrent block
         for i in range(self.t):
-
-            # one pass is done before the recursion loop
-            if i == 0:
-                out = self.conv1(out)
-
             out = self.conv1(out + x)
 
+        # reset input for second recurrent block
+        x = out
+        # one pass is guaranteed before the recursion loop starts
+        out = self.conv2(x)
         # second recurrent block
         for i in range(self.t):
-            if i == 0:
-                out = self.conv2(out)
             out = self.conv2(out + x)
 
         return out
@@ -171,33 +170,30 @@ class RecurrentBlock(nn.Module):
 
 class RecurrentResidualBlock(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, t: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, t: int = 2, bn: bool = True):
         super(RecurrentResidualBlock, self).__init__()
         self.t = t
         self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
-        self.conv1 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
-        self.conv2 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
+        self.conv1 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
+        self.conv2 = ConvBatchAct(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
 
     def forward(self, x):
         # 1x1 convolution to set correct number of channels for recurrent blocks
-        out = self.conv1x1(x)
+        x = self.conv1x1(x)
 
         # identity mapping
-        residual = out
+        residual = x
 
+        # one pass is done before the recursion loop
+        out = self.conv1(x)
         # first recurrent block
         for i in range(self.t):
-
-            # one pass is done before the recursion loop
-            if i == 0:
-                out = self.conv1(out)
-
             out = self.conv1(out + x)
 
         # second recurrent block
+        x = out
+        out = self.conv2(x)
         for i in range(self.t):
-            if i == 0:
-                out = self.conv2(out)
             out = self.conv2(out + x)
 
         return out + residual
