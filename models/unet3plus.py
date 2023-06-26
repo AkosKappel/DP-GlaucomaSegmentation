@@ -1,0 +1,321 @@
+import torch
+import torch.nn as nn
+from torchsummary import summary
+from models.blocks import SingleConv, DoubleConv
+
+__all__ = ['UNet3Plus', 'GenericUNet3Plus']
+
+
+class UNet3Plus(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
+        super(UNet3Plus, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'U-Net 3+ requires a list of 5 features'
+
+        self.deep_supervision = deep_supervision
+
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)
+        self.pool4 = nn.MaxPool2d(kernel_size=4, stride=4, ceil_mode=True)
+        self.pool8 = nn.MaxPool2d(kernel_size=8, stride=8, ceil_mode=True)
+
+        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.up4 = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
+        self.up8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True)
+        self.up16 = nn.Upsample(scale_factor=16, mode='bilinear', align_corners=True)
+
+        # backbone (encoder + bridge)
+        self.en1 = DoubleConv(in_channels, features[0])
+        self.en2 = DoubleConv(features[0], features[1])
+        self.en3 = DoubleConv(features[1], features[2])
+        self.en4 = DoubleConv(features[2], features[3])
+        self.en5 = DoubleConv(features[3], features[4])
+
+        concat_channels = features[0]
+        concat_blocks = len(features)
+        up_channels = concat_channels * concat_blocks
+
+        # decoder - level 4
+        self.de4_1 = SingleConv(features[0], concat_channels)
+        self.de4_2 = SingleConv(features[1], concat_channels)
+        self.de4_3 = SingleConv(features[2], concat_channels)
+        self.de4_4 = SingleConv(features[3], concat_channels)
+        self.de4_5 = SingleConv(features[4], concat_channels)
+        self.de4 = SingleConv(up_channels, up_channels)
+
+        # decoder - level 3
+        self.de3_1 = SingleConv(features[0], concat_channels)
+        self.de3_2 = SingleConv(features[1], concat_channels)
+        self.de3_3 = SingleConv(features[2], concat_channels)
+        self.de3_4 = SingleConv(up_channels, concat_channels)
+        self.de3_5 = SingleConv(features[4], concat_channels)
+        self.de3 = SingleConv(up_channels, up_channels)
+
+        # decoder - level 2
+        self.de2_1 = SingleConv(features[0], concat_channels)
+        self.de2_2 = SingleConv(features[1], concat_channels)
+        self.de2_3 = SingleConv(up_channels, concat_channels)
+        self.de2_4 = SingleConv(up_channels, concat_channels)
+        self.de2_5 = SingleConv(features[4], concat_channels)
+        self.de2 = SingleConv(up_channels, up_channels)
+
+        # decoder - level 1
+        self.de1_1 = SingleConv(features[0], concat_channels)
+        self.de1_2 = SingleConv(up_channels, concat_channels)
+        self.de1_3 = SingleConv(up_channels, concat_channels)
+        self.de1_4 = SingleConv(up_channels, concat_channels)
+        self.de1_5 = SingleConv(features[4], concat_channels)
+        self.de1 = SingleConv(up_channels, up_channels)
+
+        # output
+        if self.deep_supervision:
+            self.output = nn.ModuleList([
+                nn.Conv2d(up_channels, out_channels, kernel_size=1),
+                nn.Conv2d(up_channels, out_channels, kernel_size=1),
+                nn.Conv2d(up_channels, out_channels, kernel_size=1),
+                nn.Conv2d(up_channels, out_channels, kernel_size=1),
+                nn.Conv2d(features[4], out_channels, kernel_size=1),
+            ])
+        else:
+            self.output = nn.Conv2d(up_channels, out_channels, kernel_size=1)
+
+        if cgm:
+            self.cgm = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Conv2d(features[4], 2, kernel_size=1),
+                nn.AdaptiveMaxPool2d(1),
+                nn.Sigmoid(),
+            )
+        else:
+            self.cgm = None
+
+        # initialize weights
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # Use zero bias
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # Encoder
+        e1 = self.en1(x)  # 320 x 320 x 64
+        e2 = self.en2(self.pool2(e1))  # 160 x 160 x 128
+        e3 = self.en3(self.pool2(e2))  # 80 x 80 x 256
+        e4 = self.en4(self.pool2(e3))  # 40 x 40 x 512
+        e5 = self.en5(self.pool2(e4))  # 20 x 20 x 1024
+
+        # Decoder
+        d4_1 = self.de4_1(self.pool8(e1))
+        d4_2 = self.de4_2(self.pool4(e2))
+        d4_3 = self.de4_3(self.pool2(e3))
+        d4_4 = self.de4_4(e4)
+        d4_5 = self.de4_5(self.up2(e5))
+        d4 = self.de4(torch.cat((d4_1, d4_2, d4_3, d4_4, d4_5), dim=1))  # 40 x 40 x UpChannels
+
+        d3_1 = self.de3_1(self.pool4(e1))
+        d3_2 = self.de3_2(self.pool2(e2))
+        d3_3 = self.de3_3(e3)
+        d3_4 = self.de3_4(self.up2(d4))
+        d3_5 = self.de3_5(self.up4(e5))
+        d3 = self.de3(torch.cat((d3_1, d3_2, d3_3, d3_4, d3_5), dim=1))  # 80 x 80 x UpChannels
+
+        d2_1 = self.de2_1(self.pool2(e1))
+        d2_2 = self.de2_2(e2)
+        d2_3 = self.de2_3(self.up2(d3))
+        d2_4 = self.de2_4(self.up4(d4))
+        d2_5 = self.de2_5(self.up8(e5))
+        d2 = self.de2(torch.cat((d2_1, d2_2, d2_3, d2_4, d2_5), dim=1))  # 160 x 160 x UpChannels
+
+        d1_1 = self.de1_1(e1)
+        d1_2 = self.de1_2(self.up2(d2))
+        d1_3 = self.de1_3(self.up4(d3))
+        d1_4 = self.de1_4(self.up8(d4))
+        d1_5 = self.de1_5(self.up16(e5))
+        d1 = self.de1(torch.cat((d1_1, d1_2, d1_3, d1_4, d1_5), dim=1))  # 320 x 320 x UpChannels
+
+        # Output
+        if self.deep_supervision:
+            output1 = self.output[0](d1)
+            output2 = self.output[1](self.up2(d2))
+            output3 = self.output[2](self.up4(d3))
+            output4 = self.output[3](self.up8(d4))
+            output5 = self.output[4](self.up16(e5))
+            output = (output1 + output2 + output3 + output4 + output5) / 5
+        else:
+            output = self.output(d1)
+
+        # Classification-guided module
+        if self.cgm is not None:
+            cgm = self.cgm(e5).squeeze()
+            cgm = torch.argmax(cgm, dim=1).view(output.shape[0], 1, 1, 1)
+            output = output * cgm
+
+        return output
+
+
+class GenericUNet3Plus(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
+        super(GenericUNet3Plus, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+
+        self.n_features = len(features)
+        self.deep_supervision = deep_supervision
+
+        self.pools = nn.ModuleList([
+            nn.MaxPool2d(kernel_size=2 ** i, stride=2 ** i, ceil_mode=True) for i in range(1, self.n_features - 1)
+        ])
+        self.ups = nn.ModuleList([
+            nn.Upsample(scale_factor=2 ** i, mode='bilinear', align_corners=True) for i in range(1, self.n_features)
+        ])
+
+        # encoder (backbone)
+        self.encoder = nn.ModuleList()
+        for feature in features:
+            self.encoder.append(DoubleConv(in_channels, feature))
+            in_channels = feature
+
+        concat_channels = features[0]
+        concat_blocks = len(features)
+        up_channels = concat_channels * concat_blocks
+
+        # skip connections
+        self.levels = nn.ModuleList()
+        for i in range(self.n_features - 1):
+            level = nn.ModuleList()
+            for j in range(self.n_features):
+                if j < self.n_features - 1 - i or j == self.n_features - 1:
+                    conv = SingleConv(features[j], concat_channels)
+                else:
+                    conv = SingleConv(up_channels, concat_channels)
+                level.append(conv)
+            self.levels.append(level)
+
+        # decoder
+        self.decoder = nn.ModuleList([SingleConv(up_channels, up_channels) for _ in range(self.n_features - 1)])
+
+        # output
+        if self.deep_supervision:
+            self.output = nn.ModuleList()
+            for _ in range(self.n_features - 1):
+                self.output.append(nn.Conv2d(up_channels, out_channels, kernel_size=1))
+            self.output.append(nn.Conv2d(features[-1], out_channels, kernel_size=1))
+        else:
+            self.output = nn.Conv2d(up_channels, out_channels, kernel_size=1)
+
+        # classification-guided module
+        if cgm:
+            self.cgm = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Conv2d(features[-1], 2, kernel_size=1),
+                nn.AdaptiveMaxPool2d(1),
+                nn.Sigmoid(),
+            )
+        else:
+            self.cgm = None
+
+        # initialize weights
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # Use zero bias
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # Encoder
+        en = [self.encoder[0](x)]
+        for j in range(1, self.n_features):
+            en.append(self.encoder[j](self.pools[0](en[j - 1])))
+
+        # Decoder
+        n_pools = len(self.pools)
+        de = [en[-1]]
+        for i in range(self.n_features - 1):
+            depth = self.n_features - i - 2
+            # full-scale skip connections
+            skips = []
+            for j in range(self.n_features):
+                if j < depth:  # downscale
+                    skip = self.levels[i][j](self.pools[n_pools - 1 - j - i](en[j]))
+                elif j == depth:  # no resize
+                    skip = self.levels[i][j](en[j])
+                else:  # upscale
+                    skip = self.levels[i][j](self.ups[j - depth - 1](de[-(j - depth)]))
+                skips.append(skip)
+            d = self.decoder[i](torch.cat(skips, dim=1))
+            de.append(d)
+
+        # Deep supervision
+        if self.deep_supervision:
+            output = self.output[0](de[-1])
+            for i, upscale in enumerate(self.ups):
+                output += self.output[i + 1](upscale(de[-(i + 2)]))
+            output /= self.n_features
+        else:
+            output = self.output(de[-1])
+
+        # Classification-guided module
+        if self.cgm is not None:
+            cgm = self.cgm(de[0]).squeeze()
+            cgm = torch.argmax(cgm, dim=1).view(output.shape[0], 1, 1, 1)
+            output = output * cgm
+
+        return output
+
+
+if __name__ == '__main__':
+    _batch_size = 8
+    _in_channels, _out_channels = 3, 1
+    _height, _width = 128, 128
+    _layers = [16, 32, 64, 128, 256]
+    _models = [
+        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                  deep_supervision=False, cgm=False),
+        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                  deep_supervision=False, cgm=True),
+        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                  deep_supervision=True, cgm=False),
+        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                  deep_supervision=True, cgm=True),
+        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                         deep_supervision=False, cgm=False),
+        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                         deep_supervision=False, cgm=True),
+        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                         deep_supervision=True, cgm=False),
+        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                         deep_supervision=True, cgm=True),
+    ]
+    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
+    for model in _models:
+        predictions = model(random_data)
+        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(model)
+        summary(model.cuda(), (_in_channels, _height, _width))
+        print()

@@ -50,3 +50,8 @@ def load_origa(image_dir: str, mask_dir: str, train_transform=None, val_transfor
     test_dataset = OrigaDataset(image_dir, mask_dir, test_names, transform=test_transform)
 
     return train_dataset, val_dataset, test_dataset
+
+
+def load_fundus():
+    # TODO: implement
+    pass

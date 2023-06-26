@@ -2,30 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as TF
 from torchsummary import summary
+from models.blocks import DoubleConv
+
+__all__ = ['UNet', 'GenericUNet']
 
 
-class DoubleConv(nn.Module):
+class UNet(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int):
-        super(DoubleConv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(UNet, self).__init__()
 
-    def forward(self, x):
-        return self.conv(x)
-
-
-class GenericUNet(nn.Module):
-
-    def __init__(self, in_channels: int = 3, out_channels: int = 1):
-        super(GenericUNet, self).__init__()
-        features: list[int] = [64, 128, 256, 512, 1024]
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'U-Net requires a list of 5 features'
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
@@ -48,6 +38,22 @@ class GenericUNet(nn.Module):
 
         self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # Use zero bias
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, x):
         # Encoder
         en1 = self.conv1(x)
@@ -68,11 +74,15 @@ class GenericUNet(nn.Module):
         return self.output(de4)
 
 
-class UNet(nn.Module):
+class GenericUNet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = [64, 128, 256, 512, 1024],
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  init_weights: bool = True):
-        super(UNet, self).__init__()
+        super(GenericUNet, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
 
@@ -146,18 +156,15 @@ if __name__ == '__main__':
     _batch_size = 8
     _in_channels, _out_channels = 3, 1
     _height, _width = 128, 128
-    _layers = [32, 64, 128, 256, 512]
-
-    model = GenericUNet(in_channels=_in_channels, out_channels=_out_channels)
-    print(model)
+    _layers = [16, 32, 64, 128, 256]
+    _models = [
+        UNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        GenericUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+    ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
-
-    model = UNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers)
-    print(model)
-    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
+    for model in _models:
+        predictions = model(random_data)
+        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(model)
+        summary(model.cuda(), (_in_channels, _height, _width))
+        print()

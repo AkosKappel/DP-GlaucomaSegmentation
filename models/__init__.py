@@ -1,2 +1,4 @@
-from .unet import UNet, GenericUNet
-from .unetplusplus import UNetPlusPlus, GenericUNetPlusPlus
+from .blocks import *
+from .unet import *
+from .unetplusplus import *
+from .unet3plus import *

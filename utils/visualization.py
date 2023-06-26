@@ -1,7 +1,21 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torchviz
+from torchview import draw_graph
 from matplotlib.patches import Patch
+
+
+def show_model_graph(model, input_size, expand_nested=True):
+    model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)
+    return model_graph.visual_graph
+
+
+def show_model(model, input_size, name='model', format='png'):
+    x = torch.zeros(input_size, dtype=torch.float32)
+    graph = torchviz.make_dot(model(x), params=dict(model.named_parameters()))
+    graph.render(name, format=format)
+    graph.view()
 
 
 def restore_image(image, mean, std):

@@ -1,30 +1,20 @@
 import torch
 import torch.nn as nn
 from torchsummary import summary
+from models.blocks import DoubleConv
+
+__all__ = ['UNetPlusPlus', 'GenericUNetPlusPlus']
 
 
-class DoubleConv(nn.Module):
+class UNetPlusPlus(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int):
-        super(DoubleConv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 deep_supervision: bool = False, init_weights: bool = True):
+        super(UNetPlusPlus, self).__init__()
 
-    def forward(self, x):
-        return self.conv(x)
-
-
-class GenericUNetPlusPlus(nn.Module):
-
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, deep_supervision: bool = False):
-        super(GenericUNetPlusPlus, self).__init__()
-        features: list[int] = [64, 128, 256, 512, 1024]
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'U-Net++ requires a list of 5 features'
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
@@ -70,14 +60,32 @@ class GenericUNetPlusPlus(nn.Module):
         # Output
         if self.deep_supervision:
             # Accurate mode (the output from all branches in top row are averaged to produce the final result)
-            self.output = nn.ModuleList()
-            self.output.append(nn.Conv2d(features[0], out_channels, kernel_size=1))
-            self.output.append(nn.Conv2d(features[0], out_channels, kernel_size=1))
-            self.output.append(nn.Conv2d(features[0], out_channels, kernel_size=1))
-            self.output.append(nn.Conv2d(features[0], out_channels, kernel_size=1))
+            self.output = nn.ModuleList([
+                nn.Conv2d(features[0], out_channels, kernel_size=1),
+                nn.Conv2d(features[0], out_channels, kernel_size=1),
+                nn.Conv2d(features[0], out_channels, kernel_size=1),
+                nn.Conv2d(features[0], out_channels, kernel_size=1),
+            ])
         else:
             # Fast mode (only the output from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+        # Initialize weights
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # Use zero bias
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x0_0 = self.rows[0][0](x)
@@ -101,20 +109,23 @@ class GenericUNetPlusPlus(nn.Module):
         x0_4 = self.rows[0][4](torch.cat([x0_0, x0_1, x0_2, x0_3, self.up(x1_3)], dim=1))
 
         if self.deep_supervision:
-            final1 = self.output[0](x0_1)
-            final2 = self.output[1](x0_2)
-            final3 = self.output[2](x0_3)
-            final4 = self.output[3](x0_4)
-            return (final1 + final2 + final3 + final4) / 4
+            output1 = self.output[0](x0_1)
+            output2 = self.output[1](x0_2)
+            output3 = self.output[2](x0_3)
+            output4 = self.output[3](x0_4)
+            return (output1 + output2 + output3 + output4) / 4
         else:
             return self.output(x0_4)
 
 
-class UNetPlusPlus(nn.Module):
+class GenericUNetPlusPlus(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = [64, 128, 256, 512, 1024],
-                 init_weights: bool = True, deep_supervision: bool = False):
-        super(UNetPlusPlus, self).__init__()
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 deep_supervision: bool = False, init_weights: bool = True):
+        super(GenericUNetPlusPlus, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
 
         self.n_rows = len(features)
         self.deep_supervision = deep_supervision
@@ -145,14 +156,33 @@ class UNetPlusPlus(nn.Module):
             # Fast mode (only the output from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
+        # Initialize weights
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # Use zero bias
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(self, x):
         x_values = [[None] * self.n_rows for _ in range(self.n_rows)]
 
         for i in range(self.n_rows):
             if i == 0:
+                # Backbone
                 for j in range(self.n_rows):
                     x_values[j][i] = self.rows[j][i](x) if j == 0 else self.rows[j][i](self.pool(x_values[j - 1][i]))
             else:
+                # Nested and dense skip connections
                 for j in range(self.n_rows - i):
                     skips = [x_values[j][k] for k in range(i)]
                     x = torch.cat([*skips, self.up(x_values[j + 1][i - 1])], dim=1)
@@ -172,43 +202,21 @@ if __name__ == '__main__':
     _batch_size = 8
     _in_channels, _out_channels = 3, 1
     _height, _width = 128, 128
-    _layers = [32, 64, 128, 256, 512]
-    _deep_supervision = True
-
-    model = GenericUNetPlusPlus(
-        in_channels=_in_channels, out_channels=_out_channels, deep_supervision=_deep_supervision
-    )
-    print(model)
+    _layers = [16, 32, 64, 128, 256]
+    _models = [
+        UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                     deep_supervision=False),
+        UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                     deep_supervision=True),
+        GenericUNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                            deep_supervision=False),
+        GenericUNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                            deep_supervision=True),
+    ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
-
-    model = UNetPlusPlus(
-        in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=_deep_supervision
-    )
-    print(model)
-    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
-
-    _deep_supervision = False
-
-    model = GenericUNetPlusPlus(
-        in_channels=_in_channels, out_channels=_out_channels, deep_supervision=_deep_supervision
-    )
-    print(model)
-    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
-
-    model = UNetPlusPlus(
-        in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=_deep_supervision
-    )
-    print(model)
-    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    predictions = model(random_data)
-    assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-    summary(model.cuda(), (_in_channels, _height, _width))
+    for model in _models:
+        predictions = model(random_data)
+        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(model)
+        summary(model.cuda(), (_in_channels, _height, _width))
+        print()

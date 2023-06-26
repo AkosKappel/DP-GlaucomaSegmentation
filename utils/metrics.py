@@ -60,12 +60,12 @@ def get_performance_metrics(truth, prediction, average: str = 'macro',
     return metrics
 
 
-def get_confusion_matrix(truth, prediction, n_classes=3):
+def get_confusion_matrix(truth, prediction, n_classes: int = 3):
     conf_mat = np.zeros((n_classes, n_classes), dtype=np.int32)
     for cls in range(n_classes):
         pred = prediction == cls
         for c in range(n_classes):
-            conf_mat[cls, c] = (pred & (truth == c)).sum()
+            conf_mat[c, cls] = (pred & (truth == c)).sum()
     return conf_mat
 
 
@@ -73,10 +73,10 @@ def get_accuracy_score(truth, prediction):
     return (prediction == truth).mean()
 
 
-def get_precision_score(truth, prediction, n_classes=3):
-    def get_precision(truth, prediction, cls):
-        pred = prediction == cls
-        mask = truth == cls
+def get_precision_score(truth, prediction, n_classes: int = 3):
+    def get_precision(y_true, y_pred, class_id):
+        pred = y_pred == class_id
+        mask = y_true == class_id
         tp = (pred & mask).sum()
         fp = (pred & (~mask)).sum()
         return tp / (tp + fp)
@@ -93,10 +93,10 @@ def get_precision_score(truth, prediction, n_classes=3):
     return np.mean(precisions)
 
 
-def get_sensitivity_score(truth, prediction, n_classes=3):
-    def get_sensitivity(truth, prediction, cls):
-        pred = prediction == cls
-        mask = truth == cls
+def get_sensitivity_score(truth, prediction, n_classes: int = 3):
+    def get_sensitivity(y_true, y_pred, class_id):
+        pred = y_pred == class_id
+        mask = y_true == class_id
         tp = (pred & mask).sum()
         fn = (~pred & mask).sum()
         return tp / (tp + fn)
@@ -113,10 +113,10 @@ def get_sensitivity_score(truth, prediction, n_classes=3):
     return np.mean(recalls)
 
 
-def get_specificity_score(truth, prediction, n_classes=3):
-    def get_specificity(truth, prediction, cls):
-        pred = prediction == cls
-        mask = truth == cls
+def get_specificity_score(truth, prediction, n_classes: int = 3):
+    def get_specificity(y_true, y_pred, class_id):
+        pred = y_pred == class_id
+        mask = y_true == class_id
         tn = (~pred & ~mask).sum()
         fp = (~pred & mask).sum()
         return tn / (tn + fp)
@@ -133,7 +133,7 @@ def get_specificity_score(truth, prediction, n_classes=3):
     return np.mean(specificities)
 
 
-def iou_score(truth, prediction, smooth=1e-6):
+def iou_score(truth, prediction, smooth: float = 1e-6) -> float:
     """
     Intersection over Union (IoU) / Jaccard Index
 
@@ -147,17 +147,17 @@ def iou_score(truth, prediction, smooth=1e-6):
     return (intersection + smooth) / (union + smooth)
 
 
-def mean_iou_score(truth, prediction, smooth=1e-6, n_classes=3):
+def mean_iou_score(truth, prediction, smooth: float = 1e-6, n_classes: int = 3):
     """
     Mean Intersection over Union (mIoU) / Mean Jaccard Index
 
     MeanIoU = IoU_1 + IoU_2 + ... + IoU_n / n
 
     The parameters are expected to contain integer class labels for each pixel. The labels
-    are assumed to be  in the range [0, n_classes - 1]. This version of the IoU score can
+    are assumed to be  in the range [0, out_channels - 1]. This version of the IoU score can
     be used for multi-class segmentation problems.
     """
-    ious = []
+    ious: list[float] = []
     for cls in range(n_classes):
         pred = prediction == cls
         mask = truth == cls
@@ -166,7 +166,7 @@ def mean_iou_score(truth, prediction, smooth=1e-6, n_classes=3):
     return np.mean(ious)
 
 
-def dice_score(truth, prediction, smooth=1e-6):
+def dice_score(truth, prediction, smooth: float = 1e-6) -> float:
     """
     Dice Coefficient
 
@@ -181,17 +181,17 @@ def dice_score(truth, prediction, smooth=1e-6):
     return (2 * intersection + smooth) / (prediction_sum + truth_sum + smooth)
 
 
-def mean_dice_score(truth, prediction, smooth=1e-6, n_classes=3):
+def mean_dice_score(truth, prediction, smooth: float = 1e-6, n_classes: int = 3):
     """
     Mean Dice Coefficient
 
     MeanDSC = (DSC_1 + DSC_2 + ... + DSC_n) / n
 
     The parameters are expected to contain integer class labels for each pixel. The labels
-    are assumed to be in the range [0, n_classes - 1]. This version of the dice score can
+    are assumed to be in the range [0, out_channels - 1]. This version of the dice score can
     be used for multi-class segmentation problems.
     """
-    dices = []
+    dices: list[float] = []
     for cls in range(n_classes):
         pred = prediction == cls
         mask = truth == cls
