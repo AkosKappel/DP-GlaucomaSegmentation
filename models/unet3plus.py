@@ -6,6 +6,14 @@ from models.blocks import SingleConv, DoubleConv
 __all__ = ['UNet3Plus', 'GenericUNet3Plus']
 
 
+def dot_product(x, cgm):
+    B, N, H, W = x.size()
+    x = x.view(B, N, H * W)
+    y = torch.einsum("ijk,ij->ijk", [x, cgm])
+    y = y.view(B, N, H, W)
+    return y
+
+
 class UNet3Plus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
@@ -146,22 +154,32 @@ class UNet3Plus(nn.Module):
         d1_5 = self.de1_5(self.up16(e5))
         d1 = self.de1(torch.cat((d1_1, d1_2, d1_3, d1_4, d1_5), dim=1))  # 320 x 320 x UpChannels
 
-        # Output
+        # Output (Deep Supervision & Classification-guided module
         if self.deep_supervision:
             output1 = self.output[0](d1)
             output2 = self.output[1](self.up2(d2))
             output3 = self.output[2](self.up4(d3))
             output4 = self.output[3](self.up8(d4))
             output5 = self.output[4](self.up16(e5))
+
+            if self.cgm is not None:
+                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
+                cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
+
+                output1 = dot_product(output1, cgm_branch_max)
+                output2 = dot_product(output2, cgm_branch_max)
+                output3 = dot_product(output3, cgm_branch_max)
+                output4 = dot_product(output4, cgm_branch_max)
+                output5 = dot_product(output5, cgm_branch_max)
+
             output = (output1 + output2 + output3 + output4 + output5) / 5
         else:
             output = self.output(d1)
 
-        # Classification-guided module
-        if self.cgm is not None:
-            cgm = self.cgm(e5).squeeze()
-            cgm = torch.argmax(cgm, dim=1).view(output.shape[0], 1, 1, 1)
-            output = output * cgm
+            if self.cgm is not None:
+                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
+                cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
+                output = dot_product(output, cgm_branch_max)
 
         return output
 
@@ -271,20 +289,31 @@ class GenericUNet3Plus(nn.Module):
             d = self.decoder[i](torch.cat(skips, dim=1))
             de.append(d)
 
-        # Deep supervision
+        # Deep supervision and Classification-guided module
         if self.deep_supervision:
-            output = self.output[0](de[-1])
+            outputs = [self.output[0](de[-1])]
             for i, upscale in enumerate(self.ups):
-                output += self.output[i + 1](upscale(de[-(i + 2)]))
+                outputs.append(self.output[i + 1](upscale(de[-(i + 2)])))
+
+            if self.cgm is not None:
+                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
+                cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
+
+                for i, o in enumerate(outputs):
+                    outputs[i] = dot_product(o, cgm_branch_max)
+
+            # average outputs
+            output = outputs[0]
+            for _, o in enumerate(outputs[1:]):
+                output += o
             output /= self.n_features
         else:
             output = self.output(de[-1])
 
-        # Classification-guided module
-        if self.cgm is not None:
-            cgm = self.cgm(de[0]).squeeze()
-            cgm = torch.argmax(cgm, dim=1).view(output.shape[0], 1, 1, 1)
-            output = output * cgm
+            if self.cgm is not None:
+                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
+                cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
+                output = dot_product(output, cgm_branch_max)
 
         return output
 
