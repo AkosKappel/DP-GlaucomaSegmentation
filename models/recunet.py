@@ -30,13 +30,13 @@ class RecurrentBlock(nn.Module):
 
         self.block1 = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1),
-            *([nn.BatchNorm2d(out_channels)] if bn else []),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
             nn.ReLU(inplace=True),
         )
 
         self.block2 = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1),
-            *([nn.BatchNorm2d(out_channels)] if bn else []),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
             nn.ReLU(inplace=True),
         )
 

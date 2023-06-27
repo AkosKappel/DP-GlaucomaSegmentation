@@ -8,18 +8,18 @@ __all__ = ['UNet', 'GenericUNet']
 
 class DoubleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None):
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, bn: bool = True):
         super(DoubleConv, self).__init__()
 
         if mid_channels is None:
             mid_channels = out_channels
 
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn),
+            *([nn.BatchNorm2d(mid_channels), ] if bn else []),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
             nn.ReLU(inplace=True),
         )
 
@@ -161,11 +161,11 @@ class GenericUNet(nn.Module):
             x = self.decoder[i](x)
             skip_connection = skip_connections[i // 2]
 
-            # Resize the skip connection if it is not the same size as the upsampled output
+            # Resize the skip connection if it is not the same size as the upsampled final
             if x.shape != skip_connection.shape:
                 x = TF.resize(x, size=skip_connection.shape[2:])
 
-            # Concatenate the skip connection with the upsampled output
+            # Concatenate the skip connection with the upsampled final
             concat_skip = torch.cat((skip_connection, x), dim=1)
             x = self.decoder[i + 1](concat_skip)
 

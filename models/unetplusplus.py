@@ -83,7 +83,7 @@ class UNetPlusPlus(nn.Module):
 
         # Output
         if self.deep_supervision:
-            # Accurate mode (the output from all branches in top row are averaged to produce the final result)
+            # Accurate mode (the final from all branches in top row are averaged to produce the final result)
             self.output = nn.ModuleList([
                 nn.Conv2d(features[0], out_channels, kernel_size=1),
                 nn.Conv2d(features[0], out_channels, kernel_size=1),
@@ -91,7 +91,7 @@ class UNetPlusPlus(nn.Module):
                 nn.Conv2d(features[0], out_channels, kernel_size=1),
             ])
         else:
-            # Fast mode (only the output from the last branch in top row is used)
+            # Fast mode (only the final from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
         # Initialize weights
@@ -172,12 +172,12 @@ class GenericUNetPlusPlus(nn.Module):
 
         # Output
         if self.deep_supervision:
-            # Accurate mode (the output from all branches in top row are averaged to produce the final result)
+            # Accurate mode (the final from all branches in top row are averaged to produce the final result)
             self.output = nn.ModuleList()
             for i in range(self.n_rows - 1):
                 self.output.append(nn.Conv2d(features[0], out_channels, kernel_size=1))
         else:
-            # Fast mode (only the output from the last branch in top row is used)
+            # Fast mode (only the final from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
         # Initialize weights

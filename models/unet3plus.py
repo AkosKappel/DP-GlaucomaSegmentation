@@ -17,7 +17,7 @@ class SingleConv(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int, bn: bool = True):
         super(SingleConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn)
         self.batch_norm = nn.BatchNorm2d(out_channels) if bn else None
         self.act = nn.ReLU(inplace=True)
 
@@ -37,11 +37,11 @@ class DoubleConv(nn.Module):
         if mid_channels is None:
             mid_channels = out_channels
 
-        self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn)
         self.batch_norm1 = nn.BatchNorm2d(mid_channels) if bn else None
         self.act1 = nn.ReLU(inplace=True)
 
-        self.conv2 = nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.conv2 = nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn)
         self.batch_norm2 = nn.BatchNorm2d(out_channels) if bn else None
         self.act2 = nn.ReLU(inplace=True)
 
@@ -123,7 +123,7 @@ class UNet3Plus(nn.Module):
         self.de1_5 = SingleConv(features[4], concat_channels)
         self.de1 = SingleConv(up_channels, up_channels)
 
-        # output
+        # final
         if self.deep_supervision:
             self.output = nn.ModuleList([
                 nn.Conv2d(up_channels, out_channels, kernel_size=1),
@@ -208,7 +208,7 @@ class UNet3Plus(nn.Module):
             output5 = self.output[4](self.up16(e5))
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
+                cgm_branch = self.cgm(e5).conv(3).conv(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
 
                 output1 = dot_product(output1, cgm_branch_max)
@@ -222,7 +222,7 @@ class UNet3Plus(nn.Module):
             output = self.output(d1)
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
+                cgm_branch = self.cgm(e5).conv(3).conv(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
                 output = dot_product(output, cgm_branch_max)
 
@@ -273,7 +273,7 @@ class GenericUNet3Plus(nn.Module):
         # decoder
         self.decoder = nn.ModuleList([SingleConv(up_channels, up_channels) for _ in range(self.n_features - 1)])
 
-        # output
+        # final
         if self.deep_supervision:
             self.output = nn.ModuleList()
             for _ in range(self.n_features - 1):
@@ -341,7 +341,7 @@ class GenericUNet3Plus(nn.Module):
                 outputs.append(self.output[i + 1](upscale(de[-(i + 2)])))
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
+                cgm_branch = self.cgm(de[0]).conv(3).conv(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
 
                 for i, o in enumerate(outputs):
@@ -356,7 +356,7 @@ class GenericUNet3Plus(nn.Module):
             output = self.output(de[-1])
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
+                cgm_branch = self.cgm(de[0]).conv(3).conv(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
                 output = dot_product(output, cgm_branch_max)
 

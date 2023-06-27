@@ -11,10 +11,10 @@ def show_model_graph(model, input_size, expand_nested=True):
     return model_graph.visual_graph
 
 
-def show_model(model, input_size, name='model', format='png'):
+def show_model_view(model, input_size, name='model', fmt='png'):
     x = torch.zeros(input_size, dtype=torch.float32)
     graph = torchviz.make_dot(model(x), params=dict(model.named_parameters()))
-    graph.render(name, format=format)
+    graph.render(name, format=fmt)
     graph.view()
 
 
