@@ -1,6 +1,7 @@
 from .checkpoint import save_checkpoint, load_checkpoint
-from .data import get_mean_and_standard_deviation, ORIGA_MEANS, ORIGA_STDS
-from .datasets import load_origa, OrigaDataset
+from .datasets import load_origa, OrigaDataset, ORIGA_MEANS, ORIGA_STDS
+# from .evaluation import *
 from .metrics import *
-from .postprocessing import *
+# from .postprocessing import *
+from .training import *
 from .visualization import *

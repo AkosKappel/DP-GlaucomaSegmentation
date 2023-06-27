@@ -3,6 +3,10 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 import os
 
+# calculated from the training set
+ORIGA_MEANS = (0.9400, 0.6225, 0.3316)
+ORIGA_STDS = (0.1557, 0.1727, 0.1556)
+
 
 class OrigaDataset(Dataset):
     def __init__(self, image_dir: str, mask_dir: str, image_names: list[str], transform=None):

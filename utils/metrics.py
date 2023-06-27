@@ -1,5 +1,13 @@
 import numpy as np
 from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score, jaccard_score
+import torch
+
+__all__ = [
+    'calculate_metrics', 'get_performance_metrics', 'get_confusion_matrix',
+    'get_accuracy_score', 'get_precision_score', 'get_recall_score',
+    'get_sensitivity_score', 'get_specificity_score',
+    'iou_score', 'dice_score', 'mean_iou_score', 'mean_dice_score',
+]
 
 
 def calculate_metrics(tp, tn, fp, fn):
@@ -113,6 +121,9 @@ def get_sensitivity_score(truth, prediction, n_classes: int = 3):
     return np.mean(recalls)
 
 
+get_recall_score = get_sensitivity_score
+
+
 def get_specificity_score(truth, prediction, n_classes: int = 3):
     def get_specificity(y_true, y_pred, class_id):
         pred = y_pred == class_id
@@ -198,3 +209,21 @@ def mean_dice_score(truth, prediction, smooth: float = 1e-6, n_classes: int = 3)
         dice = dice_score(mask, pred, smooth)
         dices.append(dice)
     return np.mean(dices)
+
+
+def get_mean_and_standard_deviation(loader):
+    """
+    Calculate the mean and standard deviation of a dataset. The values are calculated per channel
+    across all images. The images should be just from the training set, not the entire dataset.
+    """
+    channels_sum, channels_squared_sum, num_batches = 0, 0, 0
+
+    for data, _ in loader:
+        channels_sum += torch.mean(data, dim=[0, 2, 3])
+        channels_squared_sum += torch.mean(data ** 2, dim=[0, 2, 3])
+        num_batches += 1
+
+    mean = channels_sum / num_batches
+    std = (channels_squared_sum / num_batches - mean ** 2) ** 0.5
+
+    return mean, std
