@@ -37,10 +37,10 @@ class UpConv(nn.Module):
         return self.up(x)
 
 
-class AttentionBlock(nn.Module):
+class AttentionGate(nn.Module):
 
-    def __init__(self, f_g, f_l, f_int):
-        super(AttentionBlock, self).__init__()
+    def __init__(self, f_g: int, f_l: int, f_int: int):
+        super(AttentionGate, self).__init__()
 
         self.w_g = nn.Sequential(
             nn.Conv2d(f_g, f_int, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
@@ -87,19 +87,19 @@ class AttentionUNet(nn.Module):
         self.en5 = ConvBlock(features[3], features[4])
 
         self.up1 = UpConv(features[4], features[3])
-        self.att1 = AttentionBlock(features[3], features[3], features[3] // 2)
+        self.ag1 = AttentionGate(features[3], features[3], features[3] // 2)
         self.de1 = ConvBlock(features[4], features[3])
 
         self.up2 = UpConv(features[3], features[2])
-        self.att2 = AttentionBlock(features[2], features[2], features[2] // 2)
+        self.ag2 = AttentionGate(features[2], features[2], features[2] // 2)
         self.de2 = ConvBlock(features[3], features[2])
 
         self.up3 = UpConv(features[2], features[1])
-        self.att3 = AttentionBlock(features[1], features[1], features[1] // 2)
+        self.ag3 = AttentionGate(features[1], features[1], features[1] // 2)
         self.de3 = ConvBlock(features[2], features[1])
 
         self.up4 = UpConv(features[1], features[0])
-        self.att4 = AttentionBlock(features[0], features[0], features[0] // 2)
+        self.ag4 = AttentionGate(features[0], features[0], features[0] // 2)
         self.de4 = ConvBlock(features[1], features[0])
 
         self.last_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
@@ -112,20 +112,20 @@ class AttentionUNet(nn.Module):
         e5 = self.en5(self.pool(e4))
 
         d1 = self.up1(e5)
-        a1 = self.att1(d1, e4)
+        a1 = self.ag1(d1, e4)
         d1 = torch.cat((a1, d1), dim=1)  # concatenate attention-weighted skip connection with previous layer output
         d1 = self.de1(d1)
 
         d2 = self.up2(d1)
-        a2 = self.att2(d2, e3)
+        a2 = self.ag2(d2, e3)
         d2 = self.de2(torch.cat((a2, d2), dim=1))
 
         d3 = self.up3(d2)
-        a3 = self.att3(d3, e2)
+        a3 = self.ag3(d3, e2)
         d3 = self.de3(torch.cat((a3, d3), dim=1))
 
         d4 = self.up4(d3)
-        a4 = self.att4(d4, e1)
+        a4 = self.ag4(d4, e1)
         d4 = self.de4(torch.cat((a4, d4), dim=1))
 
         out = self.last_conv(d4)

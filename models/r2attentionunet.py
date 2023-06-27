@@ -5,10 +5,23 @@ from torchsummary import summary
 __all__ = ['R2AttentionUNet']
 
 
-class ConvBlock(nn.Module):
+class SingleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super(SingleConv, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class DoubleConv(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int):
-        super(ConvBlock, self).__init__()
+        super(DoubleConv, self).__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.BatchNorm2d(out_channels),
@@ -39,7 +52,7 @@ class UpConv(nn.Module):
 
 class AttentionBlock(nn.Module):
 
-    def __init__(self, f_g, f_l, f_int):
+    def __init__(self, f_g: int, f_l: int, f_int: int):
         super(AttentionBlock, self).__init__()
 
         self.w_g = nn.Sequential(
@@ -69,9 +82,43 @@ class AttentionBlock(nn.Module):
         return out
 
 
+class RecurrentBlock(nn.Module):
+    def __init__(self, out_channels: int, t: int = 2):
+        super(RecurrentBlock, self).__init__()
+        self.t = t
+        self.conv = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        x1 = None
+        for i in range(self.t):
+            if i == 0:
+                x1 = self.conv(x)
+            x1 = self.conv(x + x1)
+        return x1
+
+
+class RecurrentResidualBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, t=2):
+        super(RecurrentResidualBlock, self).__init__()
+        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
+        self.recursion = nn.Sequential(
+            RecurrentBlock(out_channels, t=t),
+            RecurrentBlock(out_channels, t=t),
+        )
+
+    def forward(self, x):
+        x = self.conv1x1(x)
+        x1 = self.recursion(x)
+        return x + x1
+
+
 class R2AttentionUNet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None, t: int = 2):
         super(R2AttentionUNet, self).__init__()
 
         if features is None:
@@ -79,56 +126,52 @@ class R2AttentionUNet(nn.Module):
         assert len(features) == 5, 'Attention U-Net requires a list of 5 features'
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.up = nn.Upsample(scale_factor=2)
 
-        self.en1 = ConvBlock(in_channels, features[0])
-        self.en2 = ConvBlock(features[0], features[1])
-        self.en3 = ConvBlock(features[1], features[2])
-        self.en4 = ConvBlock(features[2], features[3])
-        self.en5 = ConvBlock(features[3], features[4])
+        self.en_rr1 = RecurrentResidualBlock(in_channels, features[0], t)
+        self.en_rr2 = RecurrentResidualBlock(features[0], features[1], t)
+        self.en_rr3 = RecurrentResidualBlock(features[1], features[2], t)
+        self.en_rr4 = RecurrentResidualBlock(features[2], features[3], t)
+        self.en_rr5 = RecurrentResidualBlock(features[3], features[4], t)
 
         self.up1 = UpConv(features[4], features[3])
         self.att1 = AttentionBlock(features[3], features[3], features[3] // 2)
-        self.de1 = ConvBlock(features[4], features[3])
+        self.de_rr1 = RecurrentResidualBlock(features[4], features[3], t)
 
         self.up2 = UpConv(features[3], features[2])
         self.att2 = AttentionBlock(features[2], features[2], features[2] // 2)
-        self.de2 = ConvBlock(features[3], features[2])
+        self.de_rr2 = RecurrentResidualBlock(features[3], features[2], t)
 
         self.up3 = UpConv(features[2], features[1])
         self.att3 = AttentionBlock(features[1], features[1], features[1] // 2)
-        self.de3 = ConvBlock(features[2], features[1])
+        self.de_rr3 = RecurrentResidualBlock(features[2], features[1], t)
 
         self.up4 = UpConv(features[1], features[0])
         self.att4 = AttentionBlock(features[0], features[0], features[0] // 2)
-        self.de4 = ConvBlock(features[1], features[0])
+        self.de_rr4 = RecurrentResidualBlock(features[1], features[0], t)
 
-        self.last_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
+        self.final = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
-        e1 = self.en1(x)
-        e2 = self.en2(self.pool(e1))
-        e3 = self.en3(self.pool(e2))
-        e4 = self.en4(self.pool(e3))
-        e5 = self.en5(self.pool(e4))
+        e1 = self.en_rr1(x)
+        e2 = self.en_rr2(self.pool(e1))
+        e3 = self.en_rr3(self.pool(e2))
+        e4 = self.en_rr4(self.pool(e3))
+        e5 = self.en_rr5(self.pool(e4))
 
         d1 = self.up1(e5)
-        a1 = self.att1(d1, e4)
-        d1 = torch.cat((a1, d1), dim=1)  # concatenate attention-weighted skip connection with previous layer output
-        d1 = self.de1(d1)
+        d1 = self.de_rr1(torch.cat((self.att1(d1, e4), d1), dim=1))
 
         d2 = self.up2(d1)
-        a2 = self.att2(d2, e3)
-        d2 = self.de2(torch.cat((a2, d2), dim=1))
+        d2 = self.de_rr2(torch.cat((self.att2(d2, e3), d2), dim=1))
 
         d3 = self.up3(d2)
-        a3 = self.att3(d3, e2)
-        d3 = self.de3(torch.cat((a3, d3), dim=1))
+        d3 = self.de_rr3(torch.cat((self.att3(d3, e2), d3), dim=1))
 
         d4 = self.up4(d3)
-        a4 = self.att4(d4, e1)
-        d4 = self.de4(torch.cat((a4, d4), dim=1))
+        d4 = self.de_rr4(torch.cat((self.att4(d4, e1), d4), dim=1))
 
-        out = self.last_conv(d4)
+        out = self.final(d4)
         return out
 
 
