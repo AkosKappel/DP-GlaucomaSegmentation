@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['AttentionUNet']
+__all__ = ['R2AttentionUNet']
 
 
 class ConvBlock(nn.Module):
@@ -69,10 +69,10 @@ class AttentionBlock(nn.Module):
         return out
 
 
-class AttentionUNet(nn.Module):
+class R2AttentionUNet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
-        super(AttentionUNet, self).__init__()
+        super(R2AttentionUNet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        AttentionUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        R2AttentionUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

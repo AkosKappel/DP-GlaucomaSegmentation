@@ -123,7 +123,7 @@ class UNet3Plus(nn.Module):
         self.de1_5 = SingleConv(features[4], concat_channels)
         self.de1 = SingleConv(up_channels, up_channels)
 
-        # final
+        # deep supervision
         if self.deep_supervision:
             self.output = nn.ModuleList([
                 nn.Conv2d(up_channels, out_channels, kernel_size=1),
@@ -135,6 +135,7 @@ class UNet3Plus(nn.Module):
         else:
             self.output = nn.Conv2d(up_channels, out_channels, kernel_size=1)
 
+        # classification-guided module
         if cgm:
             self.cgm = nn.Sequential(
                 nn.Dropout(0.5),
@@ -152,13 +153,10 @@ class UNet3Plus(nn.Module):
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
@@ -199,7 +197,7 @@ class UNet3Plus(nn.Module):
         d1_5 = self.de1_5(self.up16(e5))
         d1 = self.de1(torch.cat((d1_1, d1_2, d1_3, d1_4, d1_5), dim=1))  # 320 x 320 x UpChannels
 
-        # Output (Deep Supervision & Classification-guided module
+        # Output (Deep Supervision & Classification-guided module)
         if self.deep_supervision:
             output1 = self.output[0](d1)
             output2 = self.output[1](self.up2(d2))
@@ -208,7 +206,7 @@ class UNet3Plus(nn.Module):
             output5 = self.output[4](self.up16(e5))
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(e5).conv(3).conv(2)
+                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
 
                 output1 = dot_product(output1, cgm_branch_max)
@@ -222,7 +220,7 @@ class UNet3Plus(nn.Module):
             output = self.output(d1)
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(e5).conv(3).conv(2)
+                cgm_branch = self.cgm(e5).squeeze(3).squeeze(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
                 output = dot_product(output, cgm_branch_max)
 
@@ -341,7 +339,7 @@ class GenericUNet3Plus(nn.Module):
                 outputs.append(self.output[i + 1](upscale(de[-(i + 2)])))
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(de[0]).conv(3).conv(2)
+                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
 
                 for i, o in enumerate(outputs):
@@ -356,7 +354,7 @@ class GenericUNet3Plus(nn.Module):
             output = self.output(de[-1])
 
             if self.cgm is not None:
-                cgm_branch = self.cgm(de[0]).conv(3).conv(2)
+                cgm_branch = self.cgm(de[0]).squeeze(3).squeeze(2)
                 cgm_branch_max = cgm_branch.argmax(dim=1).unsqueeze(1).float()
                 output = dot_product(output, cgm_branch_max)
 

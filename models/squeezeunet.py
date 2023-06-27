@@ -27,10 +27,10 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 
-class Fire(nn.Module):
+class FireModule(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int, squeeze_channels: int = None):
-        super(Fire, self).__init__()
+        super(FireModule, self).__init__()
 
         if not squeeze_channels:
             squeeze_channels = out_channels // 4
@@ -52,10 +52,10 @@ class Fire(nn.Module):
         return torch.cat([x1, x3], dim=1)
 
 
-class TransposedFire(nn.Module):
+class TransposedFireModule(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int, squeeze_channels: int = None):
-        super(TransposedFire, self).__init__()
+        super(TransposedFireModule, self).__init__()
 
         if not squeeze_channels:
             squeeze_channels = in_channels // 4
@@ -91,8 +91,8 @@ class DownSample(nn.Module):
             mid_channels = out_channels
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.f1 = Fire(in_channels, mid_channels)
-        self.f2 = Fire(mid_channels, out_channels)
+        self.f1 = FireModule(in_channels, mid_channels)
+        self.f2 = FireModule(mid_channels, out_channels)
 
     def forward(self, x):
         x = self.pool(x)
@@ -110,10 +110,10 @@ class UpSample(nn.Module):
             mid_channels = out_channels
 
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.tf1 = TransposedFire(in_channels, out_channels)
+        self.tf1 = TransposedFireModule(in_channels, out_channels)
         # multiply by 2 because of concatenation
-        self.f1 = Fire(out_channels * 2, mid_channels)
-        self.f2 = Fire(mid_channels, out_channels)
+        self.f1 = FireModule(out_channels * 2, mid_channels)
+        self.f2 = FireModule(mid_channels, out_channels)
 
     def forward(self, x, skip_x):
         x = self.up(x)
@@ -145,7 +145,7 @@ class SqueezeUNet(nn.Module):
         self.us1 = UpSample(features[4], features[3])
         self.us2 = UpSample(features[3], features[2])
         self.us3 = UpSample(features[2], features[1])
-        self.de1 = TransposedFire(features[1], features[0])
+        self.de1 = TransposedFireModule(features[1], features[0])
         # multiply by 2 because of concatenation
         self.de2 = DoubleConv(features[0] * 2, features[0])
 

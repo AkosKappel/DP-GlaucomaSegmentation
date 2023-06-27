@@ -15,6 +15,8 @@ class UpConv(nn.Module):
             self.up = nn.Sequential(
                 nn.Upsample(scale_factor=scale_factor, mode=mode, align_corners=True),
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
             )
 
     def forward(self, x):
@@ -42,20 +44,22 @@ class RecurrentBlock(nn.Module):
 
     def forward(self, x):
         # 1x1 convolution to set correct number of channels for recurrent blocks
-        x = self.conv1x1(x)
+        out = self.conv1x1(x)
 
-        # one pass is done before the recursion loop begins
-        out = self.block1(x)
+        x = out
         # first recurrent block
         for i in range(self.t):
+            # one pass is done before the recursion loop begins
+            if i == 0:
+                out = self.block1(x)
             out = self.block1(out + x)
 
         # reset input for second recurrent block
         x = out
-        # one pass is guaranteed before the recursion loop starts
-        out = self.block2(x)
         # second recurrent block
         for i in range(self.t):
+            if i == 0:
+                out = self.block2(x)
             out = self.block2(out + x)
 
         return out

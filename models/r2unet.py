@@ -35,6 +35,8 @@ class UpConv(nn.Module):
             self.up = nn.Sequential(
                 nn.Upsample(scale_factor=scale_factor, mode=mode, align_corners=True),
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
             )
 
     def forward(self, x):

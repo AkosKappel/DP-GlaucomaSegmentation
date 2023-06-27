@@ -47,38 +47,43 @@ class UNetPlusPlus(nn.Module):
         self.rows = nn.ModuleList()
 
         # Row 1
-        row1 = nn.ModuleList()
-        row1.append(DoubleConv(in_channels, features[0]))
-        row1.append(DoubleConv(features[0] * 1 + features[1], features[0]))
-        row1.append(DoubleConv(features[0] * 2 + features[1], features[0]))
-        row1.append(DoubleConv(features[0] * 3 + features[1], features[0]))
-        row1.append(DoubleConv(features[0] * 4 + features[1], features[0]))
+        row1 = nn.ModuleList([
+            DoubleConv(in_channels, features[0]),
+            DoubleConv(features[0] * 1 + features[1], features[0]),
+            DoubleConv(features[0] * 2 + features[1], features[0]),
+            DoubleConv(features[0] * 3 + features[1], features[0]),
+            DoubleConv(features[0] * 4 + features[1], features[0]),
+        ])
         self.rows.append(row1)
 
         # Row 2
-        row2 = nn.ModuleList()
-        row2.append(DoubleConv(features[0], features[1]))
-        row2.append(DoubleConv(features[1] * 1 + features[2], features[1]))
-        row2.append(DoubleConv(features[1] * 2 + features[2], features[1]))
-        row2.append(DoubleConv(features[1] * 3 + features[2], features[1]))
+        row2 = nn.ModuleList([
+            DoubleConv(features[0], features[1]),
+            DoubleConv(features[1] * 1 + features[2], features[1]),
+            DoubleConv(features[1] * 2 + features[2], features[1]),
+            DoubleConv(features[1] * 3 + features[2], features[1]),
+        ])
         self.rows.append(row2)
 
         # Row 3
-        row3 = nn.ModuleList()
-        row3.append(DoubleConv(features[1], features[2]))
-        row3.append(DoubleConv(features[2] * 1 + features[3], features[2]))
-        row3.append(DoubleConv(features[2] * 2 + features[3], features[2]))
+        row3 = nn.ModuleList([
+            DoubleConv(features[1], features[2]),
+            DoubleConv(features[2] * 1 + features[3], features[2]),
+            DoubleConv(features[2] * 2 + features[3], features[2]),
+        ])
         self.rows.append(row3)
 
         # Row 4
-        row4 = nn.ModuleList()
-        row4.append(DoubleConv(features[2], features[3]))
-        row4.append(DoubleConv(features[3] * 1 + features[4], features[3]))
+        row4 = nn.ModuleList([
+            DoubleConv(features[2], features[3]),
+            DoubleConv(features[3] * 1 + features[4], features[3]),
+        ])
         self.rows.append(row4)
 
         # Row 5
-        row5 = nn.ModuleList()
-        row5.append(DoubleConv(features[3], features[4]))
+        row5 = nn.ModuleList([
+            DoubleConv(features[3], features[4]),
+        ])
         self.rows.append(row5)
 
         # Output

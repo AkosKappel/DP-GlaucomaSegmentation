@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as TF
 from torchsummary import summary
 
 __all__ = ['UNet', 'GenericUNet']
@@ -27,6 +26,28 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 
+class UpConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, mode: str = 'transpose', scale_factor: int = 2,
+                 align_corners: bool = True):
+        super(UpConv, self).__init__()
+        if mode == 'transpose':
+            self.up = nn.ConvTranspose2d(
+                in_channels, out_channels, kernel_size=scale_factor, stride=scale_factor,
+                padding=0, dilation=1, bias=True,
+            )
+        else:
+            self.up = nn.Sequential(
+                nn.Upsample(scale_factor=scale_factor, mode=mode, align_corners=align_corners),
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+            )
+
+    def forward(self, x):
+        return self.up(x)
+
+
 class UNet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
@@ -39,24 +60,28 @@ class UNet(nn.Module):
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
+        # Encoder
         self.conv1 = DoubleConv(in_channels, features[0])
         self.conv2 = DoubleConv(features[0], features[1])
         self.conv3 = DoubleConv(features[1], features[2])
         self.conv4 = DoubleConv(features[2], features[3])
 
+        # Bottleneck
         self.bridge = DoubleConv(features[3], features[4])
 
-        self.up1 = nn.ConvTranspose2d(features[4], features[3], kernel_size=2, stride=2)
-        self.up2 = nn.ConvTranspose2d(features[3], features[2], kernel_size=2, stride=2)
-        self.up3 = nn.ConvTranspose2d(features[2], features[1], kernel_size=2, stride=2)
-        self.up4 = nn.ConvTranspose2d(features[1], features[0], kernel_size=2, stride=2)
+        # Decoder
+        self.up1 = UpConv(features[4], features[3], 'transpose', scale_factor=2)
+        self.up2 = UpConv(features[3], features[2], 'transpose', scale_factor=2)
+        self.up3 = UpConv(features[2], features[1], 'transpose', scale_factor=2)
+        self.up4 = UpConv(features[1], features[0], 'transpose', scale_factor=2)
 
         self.conv6 = DoubleConv(features[4], features[3])
         self.conv7 = DoubleConv(features[3], features[2])
         self.conv8 = DoubleConv(features[2], features[1])
         self.conv9 = DoubleConv(features[1], features[0])
 
-        self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        # Output
+        self.final = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
         if init_weights:
             self.initialize_weights()
@@ -65,7 +90,7 @@ class UNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
                 # Use zero bias
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
@@ -75,23 +100,23 @@ class UNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # Encoder
+        # Contracting path
         en1 = self.conv1(x)
         en2 = self.conv2(self.pool(en1))
         en3 = self.conv3(self.pool(en2))
         en4 = self.conv4(self.pool(en3))
 
         # Bridge
-        bridge = self.bridge(self.pool(en4))
+        br1 = self.bridge(self.pool(en4))
 
-        # Decoder
-        de1 = self.conv6(torch.cat([self.up1(bridge), en4], dim=1))
+        # Expanding path
+        de1 = self.conv6(torch.cat([self.up1(br1), en4], dim=1))
         de2 = self.conv7(torch.cat([self.up2(de1), en3], dim=1))
         de3 = self.conv8(torch.cat([self.up3(de2), en2], dim=1))
         de4 = self.conv9(torch.cat([self.up4(de3), en1], dim=1))
 
-        # Output
-        return self.output(de4)
+        # Last 1x1 convolution
+        return self.final(de4)
 
 
 class GenericUNet(nn.Module):
@@ -119,6 +144,7 @@ class GenericUNet(nn.Module):
 
         # Decoder
         for feature in reversed(features[:-1]):
+            # Multiply by 2 because of skip connection concatenation
             self.decoder.append(nn.ConvTranspose2d(feature * 2, feature, kernel_size=2, stride=2))
             self.decoder.append(DoubleConv(feature * 2, feature))
 
@@ -160,10 +186,6 @@ class GenericUNet(nn.Module):
         for i in range(0, len(self.decoder), 2):
             x = self.decoder[i](x)
             skip_connection = skip_connections[i // 2]
-
-            # Resize the skip connection if it is not the same size as the upsampled final
-            if x.shape != skip_connection.shape:
-                x = TF.resize(x, size=skip_connection.shape[2:])
 
             # Concatenate the skip connection with the upsampled final
             concat_skip = torch.cat((skip_connection, x), dim=1)

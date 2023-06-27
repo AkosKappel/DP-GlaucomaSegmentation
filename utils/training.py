@@ -198,5 +198,44 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     return history
 
 
-def train_with_scaler():
-    pass  # TODO
+# TODO: finish implementation of training with scaler
+def train_with_scaler(model, criterion, optimizer, epochs, device, train_loader, val_loader, scaler):
+    model = model.to(device=device)
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        loop = tqdm(train_loader, leave=True, desc='Training')
+        for batch_idx, (images, masks) in enumerate(loop):
+            images = images.to(device=device)
+            masks = masks.to(device=device)
+
+            # forward pass
+            with torch.cuda.amp.autocast():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+
+            # backward pass
+            optimizer.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            # update progress bar
+            loop.set_postfix(loss=loss.item())
+
+        # validation
+        model.eval()
+        loop = tqdm(val_loader, leave=True, desc='Validation')
+        for batch_idx, (images, masks) in enumerate(loop):
+            images = images.to(device=device)
+            masks = masks.to(device=device)
+
+            # forward pass
+            with torch.cuda.amp.autocast():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+
+            # update progress bar
+            loop.set_postfix(loss=loss.item())
+
+    return model
