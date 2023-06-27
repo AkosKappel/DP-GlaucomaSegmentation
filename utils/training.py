@@ -17,7 +17,7 @@ CLASS_LABELS = {
 }
 
 
-def train_one_epoch(model, criterion, optimizer, device, loader):
+def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
     model.train()
     history = defaultdict(list)
     total = len(loader)
@@ -28,16 +28,28 @@ def train_one_epoch(model, criterion, optimizer, device, loader):
     for batch_idx, (images, masks) in enumerate(loop):
         # move data to device
         images = images.to(device=device)
-        masks = masks.to(device=device)
+        masks = masks.long().to(device=device)
 
-        # forward pass
-        outputs = model(images)
-        loss = criterion(outputs, masks.long())
+        if scaler:
+            # forward pass
+            with torch.cuda.amp.autocast():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
 
-        # backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # backward pass
+            optimizer.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # forward pass
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+
+            # backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         # calculate metrics
         preds = torch.argmax(outputs, dim=1)
@@ -57,7 +69,7 @@ def train_one_epoch(model, criterion, optimizer, device, loader):
     return mean_metrics
 
 
-def validate_one_epoch(model, criterion, device, loader):
+def validate_one_epoch(model, criterion, device, loader, scaler=None):
     model.eval()
     history = defaultdict(list)
     total = len(loader)
@@ -69,11 +81,17 @@ def validate_one_epoch(model, criterion, device, loader):
         # iterate once over all batches in the validation dataset
         for batch_idx, (images, masks) in enumerate(loop):
             images = images.to(device=device)
-            masks = masks.to(device=device)
+            masks = masks.long().to(device=device)
 
-            # forward pass
-            outputs = model(images)
-            loss = criterion(outputs, masks.long())
+            if scaler:
+                # forward pass
+                with torch.cuda.amp.autocast():
+                    outputs = model(images)
+                    loss = criterion(outputs, masks)
+            else:
+                # forward pass
+                outputs = model(images)
+                loss = criterion(outputs, masks)
 
             # calculate metrics
             preds = torch.argmax(outputs, dim=1)
@@ -135,7 +153,7 @@ def log_progress(model, loader, optimizer, history, epoch, device, part='validat
         wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
 
 
-def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
+def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
           early_stopping_patience=0, save_best_model=True, save_interval=0, log_to_wandb=False,
           checkpoint_dir='.', log_dir='.'):
     history = defaultdict(list)
@@ -151,14 +169,14 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         print(f'Epoch {epoch}:')
 
         # training
-        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader)
+        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader, scaler)
         for k, v in train_metrics.items():
             history[f'train_{k}'].append(v)
 
         # skip validation part if data loader was not provided
         if val_loader is not None:
             # validation
-            val_metrics = validate_one_epoch(model, criterion, device, val_loader)
+            val_metrics = validate_one_epoch(model, criterion, device, val_loader, scaler)
             for k, v in val_metrics.items():
                 history[f'val_{k}'].append(v)
 
@@ -221,46 +239,3 @@ def init_weights(net, init_type='normal', gain=0.02):
 
     print(f'initialize network with {init_type}')
     net.apply(init_func)
-
-
-# TODO: finish implementation of training with scaler
-def train_with_scaler(model, criterion, optimizer, epochs, device, train_loader, val_loader, scaler):
-    model = model.to(device=device)
-
-    for epoch in range(1, epochs + 1):
-        model.train()
-        loop = tqdm(train_loader, leave=True, desc='Training')
-        for batch_idx, (images, masks) in enumerate(loop):
-            images = images.to(device=device)
-            masks = masks.to(device=device)
-
-            # forward pass
-            with torch.cuda.amp.autocast():
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-
-            # backward pass
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-
-            # update progress bar
-            loop.set_postfix(loss=loss.item())
-
-        # validation
-        model.eval()
-        loop = tqdm(val_loader, leave=True, desc='Validation')
-        for batch_idx, (images, masks) in enumerate(loop):
-            images = images.to(device=device)
-            masks = masks.to(device=device)
-
-            # forward pass
-            with torch.cuda.amp.autocast():
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-
-            # update progress bar
-            loop.set_postfix(loss=loss.item())
-
-    return model

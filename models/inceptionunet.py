@@ -118,18 +118,17 @@ class DownConv(nn.Module):
         return self.conv(x)
 
 
-# TODO: finish Inception U-Net
 class InceptionUNet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True, bilinear: bool = True):
+                 init_weights: bool = True):
         super(InceptionUNet, self).__init__()
 
         if features is None:
             features = [64, 128, 256, 512, 1024]
         assert len(features) == 5, 'Inception U-Net requires a list of 5 features'
 
-        self.inception1 = InceptionBlock(features[0], 32)
+        self.inception1 = InceptionBlock(features[0], features[0] // 2)
         self.inception2 = InceptionBlock(features[1], features[0])
         self.inception3 = InceptionBlock(features[2], features[1])
         self.inception4 = InceptionBlock(features[3], features[1])
@@ -139,15 +138,29 @@ class InceptionUNet(nn.Module):
         self.en3 = DownConv(features[1], features[2])
         self.en4 = DownConv(features[2], features[3])
 
+        bilinear = True
         factor = 2 if bilinear else 1
         self.bridge = DownConv(features[3], features[4] // factor)
 
         self.de1 = UpConv(features[4] + features[3], features[2] // factor, bilinear)
-        self.de2 = UpConv(896, features[1] // factor, bilinear)
-        self.de3 = UpConv(448, 32 // factor, bilinear)
-        self.de4 = UpConv(208, 16, bilinear)
+        self.de2 = UpConv(features[3] + features[2] + features[1], features[1] // factor, bilinear)
+        self.de3 = UpConv(features[2] + features[1] + features[0], features[0] // 2 // factor, bilinear)
+        self.de4 = UpConv(features[1] + features[0] + features[0] // 4, features[0] // 4, bilinear)
 
-        self.output = nn.Conv2d(16, out_channels, kernel_size=1)
+        self.output = nn.Conv2d(features[0] // 4, out_channels, kernel_size=1)
+
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # Contracting path
@@ -182,7 +195,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        InceptionUNet(in_channels=_in_channels, out_channels=_out_channels, ),
+        InceptionUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:
