@@ -1,9 +1,75 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchsummary import summary
-from models.blocks import RecurrentResidualBlock, UpConv
 
 __all__ = ['R2UNet']
+
+
+class ConvBatchRelu(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, stride: int = 1, padding: int = 1,
+                 dilation: int = 1, bias: bool = False, bn: bool = True):
+        super(ConvBatchRelu, self).__init__()
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size=kernel_size,
+            stride=stride, padding=padding, dilation=dilation, bias=bias,
+        )
+        self.batch_norm = nn.BatchNorm2d(out_channels) if bn else None
+
+    def forward(self, x):
+        out = self.conv(x)
+        if self.batch_norm:
+            out = self.batch_norm(out)
+        out = F.relu(out)
+        return out
+
+
+class UpConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, scale_factor: int = 2, mode: str = 'bilinear'):
+        super(UpConv, self).__init__()
+        if mode == 'transpose':
+            self.up = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=scale_factor, stride=scale_factor)
+        else:
+            self.up = nn.Sequential(
+                nn.Upsample(scale_factor=scale_factor, mode=mode, align_corners=True),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=False),
+            )
+
+    def forward(self, x):
+        return self.up(x)
+
+
+class RecurrentResidualBlock(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, t: int = 2, bn: bool = True):
+        super(RecurrentResidualBlock, self).__init__()
+        self.t = t
+        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
+        self.conv1 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
+        self.conv2 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
+
+    def forward(self, x):
+        # 1x1 convolution to set correct number of channels for recurrent blocks
+        x = self.conv1x1(x)
+
+        # identity mapping
+        residual = x
+
+        # one pass is done before the recursion loop
+        out = self.conv1(x)
+        # first recurrent block
+        for i in range(self.t):
+            out = self.conv1(out + x)
+
+        # second recurrent block
+        x = out
+        out = self.conv2(x)
+        for i in range(self.t):
+            out = self.conv2(out + x)
+
+        return out + residual
 
 
 class R2UNet(nn.Module):
@@ -18,21 +84,21 @@ class R2UNet(nn.Module):
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
-        self.encoder1 = RecurrentResidualBlock(in_channels, features[0], n_repeats)
-        self.encoder2 = RecurrentResidualBlock(features[0], features[1], n_repeats)
-        self.encoder3 = RecurrentResidualBlock(features[1], features[2], n_repeats)
-        self.encoder4 = RecurrentResidualBlock(features[2], features[3], n_repeats)
-        self.encoder5 = RecurrentResidualBlock(features[3], features[4], n_repeats)
+        self.en1 = RecurrentResidualBlock(in_channels, features[0], n_repeats)
+        self.en2 = RecurrentResidualBlock(features[0], features[1], n_repeats)
+        self.en3 = RecurrentResidualBlock(features[1], features[2], n_repeats)
+        self.en4 = RecurrentResidualBlock(features[2], features[3], n_repeats)
+        self.en5 = RecurrentResidualBlock(features[3], features[4], n_repeats)
 
-        self.up1 = UpConv(features[4], features[3], scale_factor=2)
-        self.up2 = UpConv(features[3], features[2], scale_factor=2)
-        self.up3 = UpConv(features[2], features[1], scale_factor=2)
-        self.up4 = UpConv(features[1], features[0], scale_factor=2)
+        self.up1 = UpConv(features[4], features[3], scale_factor=2, mode='transpose')
+        self.up2 = UpConv(features[3], features[2], scale_factor=2, mode='transpose')
+        self.up3 = UpConv(features[2], features[1], scale_factor=2, mode='transpose')
+        self.up4 = UpConv(features[1], features[0], scale_factor=2, mode='transpose')
 
-        self.decoder1 = RecurrentResidualBlock(features[4], features[3], n_repeats)
-        self.decoder2 = RecurrentResidualBlock(features[3], features[2], n_repeats)
-        self.decoder3 = RecurrentResidualBlock(features[2], features[1], n_repeats)
-        self.decoder4 = RecurrentResidualBlock(features[1], features[0], n_repeats)
+        self.de1 = RecurrentResidualBlock(features[4], features[3], n_repeats)
+        self.de2 = RecurrentResidualBlock(features[3], features[2], n_repeats)
+        self.de3 = RecurrentResidualBlock(features[2], features[1], n_repeats)
+        self.de4 = RecurrentResidualBlock(features[1], features[0], n_repeats)
 
         self.conv1x1 = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
@@ -54,20 +120,20 @@ class R2UNet(nn.Module):
 
     def forward(self, x):
         # Contracting path
-        en1 = self.encoder1(x)
-        en2 = self.encoder2(self.pool(en1))
-        en3 = self.encoder3(self.pool(en2))
-        en4 = self.encoder4(self.pool(en3))
-        en5 = self.encoder5(self.pool(en4))
+        e1 = self.en1(x)
+        e2 = self.en2(self.pool(e1))
+        e3 = self.en3(self.pool(e2))
+        e4 = self.en4(self.pool(e3))
+        e5 = self.en5(self.pool(e4))
 
         # Expanding path
-        de1 = self.decoder1(torch.cat([self.up1(en5), en4], dim=1))
-        de2 = self.decoder2(torch.cat([self.up2(de1), en3], dim=1))
-        de3 = self.decoder3(torch.cat([self.up3(de2), en2], dim=1))
-        de4 = self.decoder4(torch.cat([self.up4(de3), en1], dim=1))
+        d1 = self.de1(torch.cat([self.up1(e5), e4], dim=1))
+        d2 = self.de2(torch.cat([self.up2(d1), e3], dim=1))
+        d3 = self.de3(torch.cat([self.up3(d2), e2], dim=1))
+        d4 = self.de4(torch.cat([self.up4(d3), e1], dim=1))
 
         # Output
-        return self.conv1x1(de4)
+        return self.conv1x1(d4)
 
 
 if __name__ == '__main__':

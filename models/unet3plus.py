@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torchsummary import summary
-from models.blocks import SingleConv, DoubleConv
 
 __all__ = ['UNet3Plus', 'GenericUNet3Plus']
 
@@ -12,6 +11,52 @@ def dot_product(x, cgm):
     y = torch.einsum("ijk,ij->ijk", [x, cgm])
     y = y.view(B, N, H, W)
     return y
+
+
+class SingleConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, bn: bool = True):
+        super(SingleConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.batch_norm = nn.BatchNorm2d(out_channels) if bn else None
+        self.act = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        out = self.conv(x)
+        if self.batch_norm:
+            out = self.batch_norm(out)
+        out = self.act(out)
+        return out
+
+
+class DoubleConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, bn: bool = True):
+        super(DoubleConv, self).__init__()
+
+        if mid_channels is None:
+            mid_channels = out_channels
+
+        self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.batch_norm1 = nn.BatchNorm2d(mid_channels) if bn else None
+        self.act1 = nn.ReLU(inplace=True)
+
+        self.conv2 = nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
+        self.batch_norm2 = nn.BatchNorm2d(out_channels) if bn else None
+        self.act2 = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        out = self.conv1(x)
+        if self.batch_norm1:
+            out = self.batch_norm1(out)
+        out = self.act1(out)
+
+        out = self.conv2(out)
+        if self.batch_norm2:
+            out = self.batch_norm2(out)
+        out = self.act2(out)
+
+        return out
 
 
 class UNet3Plus(nn.Module):
