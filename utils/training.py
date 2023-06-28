@@ -90,7 +90,7 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
                     loss = criterion(outputs, masks)
             else:
                 # forward pass
-                outputs = model(images)
+                outputs = model(images)  # model returns logits
                 loss = criterion(outputs, masks)
 
             # calculate metrics

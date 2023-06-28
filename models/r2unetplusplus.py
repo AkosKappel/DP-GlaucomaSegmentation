@@ -86,7 +86,7 @@ class R2UNetPlusPlus(nn.Module):
         super(R2UNetPlusPlus, self).__init__()
 
         # deep_supervision: switch between fast (no DS) and accurate mode (with DS)
-        # up_mode: 'transpose' or 'bilinear'
+        # up_mode: 'transpose' or one of 'nearest', 'linear', 'bilinear', 'bicubic' and 'trilinear'
         # up_conv: whether to use Conv2d->BN->ReLU after Upsample (it changes number of channels)
         #          has no effect if up_mode is 'transpose'
 
