@@ -37,7 +37,7 @@ class DiceLoss(nn.Module):
         # Average across the batch dimension
         dice_coeffs = dice_coeffs.mean(dim=0)
 
-        # Calculate dice loss
+        # Calculate dice loss for each class
         dice_losses = 1 - dice_coeffs
 
         # Apply class weights
@@ -61,6 +61,9 @@ class IoULoss(nn.Module):
         self.class_weights = torch.tensor(class_weights, device=device) if class_weights is not None else None
 
     def forward(self, logits, targets):
+        # logits: (batch_size, num_classes, height, width)
+        # targets: (batch_size, height, width)
+
         # Apply softmax or sigmoid to convert logits to probabilities
         if self.num_classes > 1:
             targets_one_hot = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
@@ -78,7 +81,7 @@ class IoULoss(nn.Module):
         # Compute mean across all batches
         iou_scores = iou_scores.mean(dim=0)
 
-        # Compute loss
+        # Compute loss for each class
         iou_losses = 1 - iou_scores
 
         # Apply class weights if provided
@@ -87,3 +90,15 @@ class IoULoss(nn.Module):
 
         # Average across all classes
         return iou_losses.mean()
+
+# TODO:
+#  - Focal Loss
+#  - Tversky Loss
+#  - Focal Tversky Loss
+#  - Generalized Dice Loss
+#  - Lovasz Hinge Loss
+#  - Lovasz Softmax Loss
+#  - Combo Loss
+#  - Boundary Loss
+#  - Hausdorff Loss / Hausdorff Distance
+

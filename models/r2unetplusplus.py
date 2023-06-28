@@ -97,8 +97,8 @@ class R2UNetPlusPlus(nn.Module):
             up_conv = True
 
         assert len(features) == 5, 'Recurrent Residual U-Net++ requires a list of 5 features'
+
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.deep_supervision = deep_supervision
 
         self.rows = nn.ModuleList()

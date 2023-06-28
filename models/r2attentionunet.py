@@ -126,7 +126,6 @@ class R2AttentionUNet(nn.Module):
         assert len(features) == 5, 'Attention U-Net requires a list of 5 features'
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.up = nn.Upsample(scale_factor=2)
 
         self.en_rr1 = RecurrentResidualBlock(in_channels, features[0], t)
         self.en_rr2 = RecurrentResidualBlock(features[0], features[1], t)
