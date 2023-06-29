@@ -4,8 +4,8 @@ from .unetplusplus import *
 from .unet3plus import *
 
 # Residual, Recurrent, Recurrent Residual
-from .recunet import *
 from .resunet import *
+from .runet import *
 from .r2unet import *
 
 # Attention, Inception
@@ -18,7 +18,7 @@ from .r2unetplusplus import *
 
 # Prime
 from .raunetplusplus import *
-from .unet3pluscbam import *
+from .refunet3pluscbam import *
 
 # Light-weight
 from .squeezeunet import *

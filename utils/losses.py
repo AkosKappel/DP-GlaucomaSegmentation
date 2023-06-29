@@ -238,11 +238,3 @@ class FocalTverskyLoss(nn.Module):
 
         # Average across all batches
         return focal_tversky.mean()
-
-# TODO:
-#  - Generalized Dice Loss
-#  - Lovasz Hinge Loss
-#  - Lovasz Softmax Loss
-#  - Combo Loss
-#  - Boundary Loss
-#  - Hausdorff Loss / Hausdorff Distance
