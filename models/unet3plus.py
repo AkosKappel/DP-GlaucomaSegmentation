@@ -8,7 +8,7 @@ __all__ = ['UNet3Plus', 'GenericUNet3Plus']
 def dot_product(x, cgm):
     B, N, H, W = x.size()
     x = x.view(B, N, H * W)
-    y = torch.einsum("ijk,ij->ijk", [x, cgm])
+    y = torch.einsum('ijk,ij->ijk', [x, cgm])
     y = y.view(B, N, H, W)
     return y
 

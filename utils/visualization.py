@@ -150,8 +150,8 @@ def plot_results_from_loader(loader, model, device, save_path=None, show=True, m
         batch = next(iter(loader))
         images, masks = batch
 
-        images = images.to(device=device)
-        masks = masks.to(device=device)
+        images = images.float().to(device=device)
+        masks = masks.long().to(device=device)
 
         outputs = model(images)
         # softmax not needed because index of max value is the same before and after calling softmax
@@ -173,16 +173,19 @@ def plot_results(images, masks, preds, save_path=None, show=True, mean=None, std
     4th column: color-coded correct pixels in the OD compared to the GT
     5th column: color-coded correct pixels in the OC compared to the GT
     """
-    tp_color = (0, 1, 0)
-    tn_color = (0, 0, 0)
-    fp_color = (1, 0, 0)
-    fn_color = (1, 1, 0)
+    tp_color = np.array([0, 1, 0])
+    tn_color = np.array([0, 0, 0])
+    fp_color = np.array([1, 0, 0])
+    fn_color = np.array([1, 1, 0])
 
     fig, ax = plt.subplots(len(images), 5, figsize=(15, 3 * len(images)))
     for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
         # un-normalize image with mean and std if necessary
         if mean is not None and std is not None:
             image = restore_image(image, mean, std)
+
+        if np.max(image) > 1:
+            image = image / 255
 
         ax[i, 0].imshow(image)
         if i == 0:

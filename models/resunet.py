@@ -65,7 +65,7 @@ class ResidualBlock(nn.Module):
             residual = self.conv1x1(residual)
 
         # residual shortcut (identity mapping)
-        out += residual
+        out = out + residual
 
         # activation after residual shortcut
         if not self.relu_before:

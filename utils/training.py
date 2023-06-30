@@ -17,6 +17,32 @@ CLASS_LABELS = {
 }
 
 
+def init_weights(net, init_type='kaiming', gain=0.02):
+    def init_func(m):
+        classname = m.__class__.__name__
+        if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
+            if init_type == 'normal':
+                init.normal_(m.weight.data, 0.0, gain)
+            elif init_type == 'xavier':
+                init.xavier_normal_(m.weight.data, gain=gain)
+            elif init_type == 'kaiming':
+                init.kaiming_normal_(m.weight.data, a=0, mode='fan_in', nonlinearity='relu')
+            elif init_type == 'orthogonal':
+                init.orthogonal_(m.weight.data, gain=gain)
+            else:
+                raise NotImplementedError(f'initialization method {init_type} is not implemented')
+            if hasattr(m, 'bias') and m.bias is not None:
+                # Use zero bias
+                init.constant_(m.bias.data, 0.0)
+        elif classname.find('BatchNorm2d') != -1:
+            # Initialize weight to 1 and bias to 0
+            init.normal_(m.weight.data, 1.0, gain)
+            init.constant_(m.bias.data, 0.0)
+
+    print(f'Initialize network parameters with {init_type} method.')
+    net.apply(init_func)
+
+
 def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
     model.train()
     history = defaultdict(list)
@@ -27,7 +53,7 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
     # iterate once over all the batches in the training data loader
     for batch_idx, (images, masks) in enumerate(loop):
         # move data to device
-        images = images.to(device=device)
+        images = images.float().to(device=device)
         masks = masks.long().to(device=device)
 
         if scaler:
@@ -80,7 +106,7 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
     with torch.no_grad():
         # iterate once over all batches in the validation dataset
         for batch_idx, (images, masks) in enumerate(loop):
-            images = images.to(device=device)
+            images = images.float().to(device=device)
             masks = masks.long().to(device=device)
 
             if scaler:
@@ -117,8 +143,8 @@ def log_progress(model, loader, optimizer, history, epoch, device, part='validat
         batch = next(iter(loader))
         images, masks = batch
 
-        images = images.to(device)
-        masks = masks.to(device)
+        images = images.float().to(device)
+        masks = masks.long().to(device)
 
         outputs = model(images)
         preds = torch.argmax(outputs, dim=1)
@@ -145,7 +171,7 @@ def log_progress(model, loader, optimizer, history, epoch, device, part='validat
             break
 
     file = f'{log_dir}/epoch{epoch}.png'
-    plot_results(images, masks, preds, save_path=file, show=False, mean=ORIGA_MEANS, std=ORIGA_STDS)
+    plot_results(images, masks, preds, save_path=file, show=False)
 
     if log_to_wandb:
         wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
@@ -215,27 +241,3 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 break
 
     return history
-
-
-def init_weights(net, init_type='normal', gain=0.02):
-    def init_func(m):
-        classname = m.__class__.__name__
-        if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
-            if init_type == 'normal':
-                init.normal_(m.weight.data, 0.0, gain)
-            elif init_type == 'xavier':
-                init.xavier_normal_(m.weight.data, gain=gain)
-            elif init_type == 'kaiming':
-                init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
-            elif init_type == 'orthogonal':
-                init.orthogonal_(m.weight.data, gain=gain)
-            else:
-                raise NotImplementedError(f'initialization method {init_type} is not implemented')
-            if hasattr(m, 'bias') and m.bias is not None:
-                init.constant_(m.bias.data, 0.0)
-        elif classname.find('BatchNorm2d') != -1:
-            init.normal_(m.weight.data, 1.0, gain)
-            init.constant_(m.bias.data, 0.0)
-
-    print(f'initialize network with {init_type}')
-    net.apply(init_func)

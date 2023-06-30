@@ -11,13 +11,13 @@ class DiceLoss(nn.Module):
             'Number of class weights must be equal to number of classes'
 
         super(DiceLoss, self).__init__()
-        self.num_classes = num_classes
+        self.num_classes = num_classes  # 1 for binary, >1 for multiclass segmentation
         self.smooth = smooth
         self.class_weights = torch.tensor(class_weights, device=device) if class_weights is not None else None
 
     def forward(self, logits, targets):
-        # logits: (batch_size, num_classes, height, width)
-        # targets: (batch_size, height, width)
+        # logits.shape (batch_size, num_classes, height, width)
+        # targets.shape (batch_size, height, width)
 
         # Reshape targets to one-hot encoding and calculate probabilities using softmax or sigmoid
         if self.num_classes > 1:
@@ -93,16 +93,16 @@ class IoULoss(nn.Module):
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, num_classes=3, alpha=0.25, gamma=2, reduction='mean'):
+    def __init__(self, num_classes: int = 3, alpha: float = 0.25, gamma: float = 2, reduction: str = 'mean'):
         super(FocalLoss, self).__init__()
-        self.num_classes = num_classes
+        self.num_classes = num_classes  # 1 for binary classification
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
 
     def forward(self, logits, targets):
-        # logits: (batch_size, num_classes, height, width)
-        # targets: (batch_size, height, width)
+        # logits.shape = (batch_size, num_classes, height, width)
+        # targets.shape = (batch_size, height, width)
 
         if self.num_classes > 1:
             # Apply softmax to convert logits to probabilities and one-hot encode targets
@@ -238,3 +238,7 @@ class FocalTverskyLoss(nn.Module):
 
         # Average across all batches
         return focal_tversky.mean()
+
+
+class BoundaryLoss(nn.Module):
+    pass
