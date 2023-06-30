@@ -18,7 +18,7 @@ def show_model_view(model, input_size, name='model', fmt='png'):
     graph.view()
 
 
-def restore_image(image, mean, std):
+def unnormalize(image, mean, std):
     """
     Restore a normalized image to its original state.
     """
@@ -28,111 +28,138 @@ def restore_image(image, mean, std):
     return restored_image
 
 
-# plot segmentation results
-def plot_side_by_side_results(images, masks, preds, save_path=None, show=True):
-    """
-    Visualize the segmentation results in 3 columns as follows:
-    1st column: input image
-    2nd column: ground truth
-    3rd column: model prediction
-    """
-    fig, ax = plt.subplots(len(images), 3, figsize=(8, 3 * len(images)))
+tp_color = np.array((0, 1, 0), dtype=np.uint8) * 255
+tn_color = np.array((0, 0, 0), dtype=np.uint8) * 255
+fp_color = np.array((1, 0, 0), dtype=np.uint8) * 255
+fn_color = np.array((1, 1, 0), dtype=np.uint8) * 255
 
-    for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
-        ax[i, 0].imshow(image)
-        ax[i, 0].set_title('Image')
-
-        ax[i, 1].imshow(mask)
-        ax[i, 1].set_title('Ground truth')
-
-        ax[i, 2].imshow(pred)
-        ax[i, 2].set_title('Prediction')
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show:
-        plt.show()
-    else:
-        plt.close()
+od_color = np.array((0, 0, 1))
+oc_color = np.array((0, 1, 1))
 
 
-def plot_overlaid_results(images, masks, preds, save_path=None, show=True,
-                          alpha=0.4, od_color=(0, 0, 1), oc_color=(0, 1, 1)):
-    """
-    Visualize the segmentation results in 2 columns as follows:
-    1st column: ground truth overlaid on the input image
-    2nd column: model prediction overlaid on the input image
-    """
-    fig, ax = plt.subplots(len(images), 2, figsize=(6, 3 * len(images)))
-
-    for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
-        overlay_mask = np.zeros_like(image)
-        overlay_mask[mask == 1] = od_color
-        overlay_mask[mask == 2] = oc_color
-        overlay_mask = image * (1 - alpha) + overlay_mask * alpha
-        ax[i, 0].imshow(overlay_mask)
-        ax[i, 0].set_title('Ground truth')
-
-        overlay_pred = np.zeros_like(image)
-        overlay_pred[pred == 1] = od_color
-        overlay_pred[pred == 2] = oc_color
-        overlay_pred = image * (1 - alpha) + overlay_pred * alpha
-        ax[i, 1].imshow(overlay_pred)
-        ax[i, 1].set_title('Prediction')
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show:
-        plt.show()
-    else:
-        plt.close()
+def get_input_images(images):
+    return [get_input_image(img) for img in images]
 
 
-def plot_correct_results(images, masks, preds, save_path=None, show=True,
-                         tp_color=(0, 1, 0), tn_color=(0, 0, 0),
-                         fp_color=(1, 0, 0), fn_color=(1, 1, 0)):
+def get_input_image(img):
+    if img.max() > 1:
+        img = img / 255
+    return img
+
+
+def get_cover_images(masks, preds, **kwargs):
+    return [get_cover_image(mask, pred, **kwargs) for mask, pred in zip(preds, masks)]
+
+
+def get_cover_image(mask, pred, class_ids: list[int] = None):
     """
     Visualize the correctness of the segmentation. The results are color-coded as follows:
     True Positive: green
     True Negative: black
     False Positive: red
     False Negative: yellow
-
-    The results are displayed in 3 columns as follows:
-    1st column: input image
-    2nd column: color-coded correct pixels in the optic disc compared to the ground truth
-    3rd column: color-coded correct pixels in the optic cup compared to the ground truth
     """
-    fig, ax = plt.subplots(len(images), 3, figsize=(9, 3 * len(images)))
-    for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
-        ax[i, 0].imshow(image)
-        ax[i, 0].set_title('Image')
+    cover = np.zeros((*mask.shape, 3), dtype=np.uint8)
 
-        correct_od = np.zeros_like(image)
-        correct_od[(mask != 0) & (pred != 0)] = tp_color
-        correct_od[(mask == 0) & (pred == 0)] = tn_color
-        correct_od[(mask == 0) & (pred != 0)] = fp_color
-        correct_od[(mask != 0) & (pred == 0)] = fn_color
-        ax[i, 1].imshow(correct_od)
-        ax[i, 1].set_title('Optic disc')
+    if class_ids is None:
+        # treat image as binary (0 - background, non-zero - foreground)
+        cover[(mask != 0) & (pred != 0)] = tp_color
+        cover[(mask == 0) & (pred == 0)] = tn_color
+        cover[(mask == 0) & (pred != 0)] = fp_color
+        cover[(mask != 0) & (pred == 0)] = fn_color
+    else:
+        # True positive (TP): both mask and pred have one of the class_ids at the same pixel
+        tp_mask = np.isin(mask, class_ids) & np.isin(mask, pred)
+        cover[tp_mask] = tp_color
 
-        correct_oc = np.zeros_like(image)
-        correct_oc[(mask == 2) & (pred == 2)] = tp_color
-        correct_oc[(mask != 2) & (pred != 2)] = tn_color
-        correct_oc[(mask != 2) & (pred == 2)] = fp_color
-        correct_oc[(mask == 2) & (pred != 2)] = fn_color
-        ax[i, 2].imshow(correct_oc)
-        ax[i, 2].set_title('Optic cup')
+        # True negative (TN): neither mask nor pred have one of the class_ids at the same position
+        tn_mask = np.logical_not(np.isin(mask, class_ids)) & np.logical_not(np.isin(pred, class_ids))
+        cover[tn_mask] = tn_color
 
-    legend_patches = [
-        Patch(color=tp_color, label='True Positive'),
-        Patch(color=fn_color, label='False Negative'),
-        Patch(color=fp_color, label='False Positive'),
-        Patch(color=tn_color, label='True Negative'),
-    ]
-    ax[3, 1].legend(handles=legend_patches, bbox_to_anchor=(0.5, -0.5), loc='lower center', ncol=2)
+        # False positive (FP): pred has one of the class_ids, but mask does not
+        fp_mask = np.logical_not(np.isin(mask, class_ids)) & np.isin(pred, class_ids)
+        cover[fp_mask] = fp_color
+
+        # False negative (FN): pred does not have one of the class_ids, but mask does
+        fn_mask = np.isin(mask, class_ids) & np.logical_not(np.isin(pred, class_ids))
+        cover[fn_mask] = fn_color
+
+    return cover
+
+
+def get_overlay_images(imgs, masks, **kwargs):
+    return [get_overlay_image(img, mask, **kwargs) for img, mask in zip(imgs, masks)]
+
+
+def get_overlay_image(img, mask, alpha=0.3):
+    img = get_input_image(img)
+
+    overlay = np.zeros_like(img)
+    overlay[mask == 1] = od_color
+    overlay[mask == 2] = oc_color
+
+    return img * (1 - alpha) + overlay * alpha
+
+
+def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None,
+                    img_size: int = 3, transpose: bool = False, figsize: tuple = None,
+                    save_path: str = None, show: bool = True,
+                    mask_legend=None, cover_legend=None, contour_legend=None):
+    rows, cols = len(grid), len(grid[0])
+
+    # swap rows and cols
+    if transpose:
+        grid = [[grid[j][i] for j in range(rows)] for i in range(cols)]
+        rows, cols = cols, rows
+
+    # flatten titles if 2D
+    if titles and isinstance(titles[0], list):
+        titles = [t for row in titles for t in row]
+
+    # create figure
+    if figsize is None:
+        figsize = (cols * img_size, rows * img_size)
+    _, axes = plt.subplots(rows, cols, sharex='all', sharey='all', figsize=figsize)
+
+    for ax in axes.flatten():
+        ax.axis('off')
+
+    # plot images
+    i, j = 0, 0
+    for idx, ax in enumerate(axes.flatten()):
+        if grid[i][j] is not None:
+            ax.imshow(grid[i][j])
+            ax.axis('on')
+
+        j = (j + 1) % cols
+        if j == 0:
+            i += 1
+
+        if titles and idx < len(titles):
+            ax.set_title(titles[idx])
+
+    if mask_legend:
+        axes[rows - 1, mask_legend].legend(handles=[
+            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
+            Patch(facecolor=(0.13, 0.56, 0.55), label='OD'),
+            Patch(facecolor=(0.99, 0.91, 0.14), label='OC'),
+        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
+
+    if cover_legend:
+        axes[rows - 1, cover_legend].legend(handles=[
+            Patch(color=tp_color / 255, label='TP'),
+            Patch(color=fn_color / 255, label='FN'),
+            Patch(color=fp_color / 255, label='FP'),
+            Patch(color=tn_color / 255, label='TN'),
+        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
+
+    if contour_legend:
+        axes[rows - 1, contour_legend].legend(handles=[
+            Patch(color=od_color, label='T-OD'),
+            Patch(color=od_color, label='P-OD'),
+            Patch(color=oc_color, label='T-OC'),
+            Patch(color=oc_color, label='P-OC'),
+        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
 
     plt.tight_layout()
     if save_path:
@@ -143,7 +170,64 @@ def plot_correct_results(images, masks, preds, save_path=None, show=True,
         plt.close()
 
 
-def plot_results_from_loader(loader, model, device, save_path=None, show=True, mean=None, std=None):
+def plot_side_by_side(images=None, masks=None, preds=None, types: str | list[str] = None, **kwargs):
+    if types is None:
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+    elif types == 'all':
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD overlay', 'OC overlay', 'contours']
+    elif isinstance(types, str):
+        types = [types]
+
+    titles = []
+    columns = []
+    mask_legend_index = None
+    cover_legend_index = None
+    contour_legend_index = None
+
+    for i, t in enumerate(types):
+        if t == 'image' and images is not None:
+            titles.append('Input image')
+            col = get_input_images(images)
+        elif t == 'mask' and masks is not None:
+            titles.append('Ground truth')
+            col = masks
+            if mask_legend_index is None:
+                mask_legend_index = i
+        elif t == 'prediction' and preds is not None:
+            titles.append('Model prediction')
+            col = preds
+            if mask_legend_index is None:
+                mask_legend_index = i
+        elif t == 'OD cover' and all(x is not None for x in [masks, preds]):
+            titles.append('Optic disc')
+            col = get_cover_images(masks, preds, class_ids=[1, 2])
+            if cover_legend_index is None:
+                cover_legend_index = i
+        elif t == 'OC cover' and all(x is not None for x in [masks, preds]):
+            titles.append('Optic cup')
+            col = get_cover_images(masks, preds, class_ids=[2])
+            if cover_legend_index is None:
+                cover_legend_index = i
+        elif t == 'OD overlay' and all(x is not None for x in [images, masks]):
+            titles.append('True mask')
+            col = get_overlay_images(images, masks)
+        elif t == 'OC overlay' and all(x is not None for x in [images, preds]):
+            titles.append('Predicted mask')
+            col = get_overlay_images(images, preds)
+        elif t == 'contours' and all(x is not None for x in [images, masks, preds]):
+            titles.append('Contours')
+            col = [None] * len(images)  # TODO
+            if contour_legend_index is None:
+                contour_legend_index = i
+        else:
+            continue
+        columns.append(col)
+
+    plot_image_grid(columns, titles=titles, transpose=True, mask_legend=mask_legend_index,
+                    cover_legend=cover_legend_index, contour_legend=contour_legend_index, **kwargs)
+
+
+def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int = 4, save_path=None, show=True):
     model.eval()
     model = model.to(device=device)
     with torch.no_grad():
@@ -161,127 +245,18 @@ def plot_results_from_loader(loader, model, device, save_path=None, show=True, m
         masks = masks.cpu().numpy()
         preds = preds.cpu().numpy()
 
-    plot_results(images, masks, preds, save_path=save_path, show=show, mean=mean, std=std)
+        images = images[:n_samples]
+        masks = masks[:n_samples]
+        preds = preds[:n_samples]
+
+    plot_side_by_side(
+        images, masks, preds, img_size=3, save_path=save_path, show=show,
+        types=['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+    )
 
 
-def plot_results(images, masks, preds, save_path=None, show=True, mean=None, std=None):
-    """
-    Visualize the segmentation results in 5 columns as follows:
-    1st column: input image
-    2nd column: ground truth
-    3rd column: model prediction
-    4th column: color-coded correct pixels in the OD compared to the GT
-    5th column: color-coded correct pixels in the OC compared to the GT
-    """
-    tp_color = np.array([0, 1, 0])
-    tn_color = np.array([0, 0, 0])
-    fp_color = np.array([1, 0, 0])
-    fn_color = np.array([1, 1, 0])
-
-    fig, ax = plt.subplots(len(images), 5, figsize=(15, 3 * len(images)))
-    for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
-        # un-normalize image with mean and std if necessary
-        if mean is not None and std is not None:
-            image = restore_image(image, mean, std)
-
-        if np.max(image) > 1:
-            image = image / 255
-
-        ax[i, 0].imshow(image)
-        if i == 0:
-            ax[i, 0].set_title('Input image')
-
-        ax[i, 1].imshow(mask)
-        if i == 0:
-            ax[i, 1].set_title('Ground truth')
-
-        ax[i, 2].imshow(pred)
-        if i == 0:
-            ax[i, 2].set_title('Model prediction')
-
-        correct_od = np.zeros_like(image)
-        correct_od[(mask != 0) & (pred != 0)] = tp_color
-        correct_od[(mask == 0) & (pred == 0)] = tn_color
-        correct_od[(mask == 0) & (pred != 0)] = fp_color
-        correct_od[(mask != 0) & (pred == 0)] = fn_color
-        ax[i, 3].imshow(correct_od)
-        if i == 0:
-            ax[i, 3].set_title('Optic disc')
-
-        correct_oc = np.zeros_like(image)
-        correct_oc[(mask == 2) & (pred == 2)] = tp_color
-        correct_oc[(mask != 2) & (pred != 2)] = tn_color
-        correct_oc[(mask != 2) & (pred == 2)] = fp_color
-        correct_oc[(mask == 2) & (pred != 2)] = fn_color
-        ax[i, 4].imshow(correct_oc)
-        if i == 0:
-            ax[i, 4].set_title('Optic cup')
-
-    legend_class_patches = [
-        Patch(facecolor=(0.27, 0.01, 0.33), label='Background (BG)'),
-        Patch(facecolor=(0.13, 0.56, 0.55), label='Optic disc (OD)'),
-        Patch(facecolor=(0.99, 0.91, 0.14), label='Optic cup (OC)'),
-    ]
-    ax[3, 1].legend(handles=legend_class_patches, bbox_to_anchor=(0.5, -0.5), loc='lower center', ncol=1)
-
-    legend_color_patches = [
-        Patch(color=tp_color, label='True Positive'),
-        Patch(color=fn_color, label='False Negative'),
-        Patch(color=fp_color, label='False Positive'),
-        Patch(color=tn_color, label='True Negative'),
-    ]
-    ax[3, 3].legend(handles=legend_color_patches, bbox_to_anchor=(0.5, -0.6), loc='lower center', ncol=1)
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
-
-def plot_correct_results_with_more_colors(images, masks, preds, save_path=None, show=True):
-    """
-    Visualize the results of the segmentation with different colors for each case (9 colors in total).
-    This function is not recommended, because it uses too many colors and it is difficult to understand the results.
-    """
-    black = (0, 0, 0)
-    red = (1, 0, 0)
-    green = (0, 1, 0)
-    blue = (0, 0, 1)
-    cyan = (0, 1, 1)
-    magenta = (1, 0, 1)
-    yellow = (1, 1, 0)
-    white = (1, 1, 1)
-    gray = (0.5, 0.5, 0.5)
-
-    fig, ax = plt.subplots(len(images), 2, figsize=(6, 3 * len(images)))
-
-    for i, (image, mask, pred) in enumerate(zip(images, masks, preds)):
-        ax[i, 0].imshow(image)
-        ax[i, 0].set_title('Image')
-
-        correct = np.zeros_like(image)
-        correct[(mask == 0) & (pred == 0)] = black  # true BG
-        correct[(mask == 0) & (pred == 1)] = yellow  # should be BG, but predicted OD
-        correct[(mask == 0) & (pred == 2)] = cyan  # should be BG, but predicted OC
-
-        correct[(mask == 1) & (pred == 1)] = green  # true OD
-        correct[(mask == 1) & (pred == 2)] = white  # should be OD, but predicted OC
-        correct[(mask == 1) & (pred == 0)] = red  # should be OD, but predicted BG
-
-        correct[(mask == 2) & (pred == 2)] = blue  # true OC
-        correct[(mask == 2) & (pred == 1)] = magenta  # should be OC, but predicted OD
-        correct[(mask == 2) & (pred == 0)] = gray  # should be OC, but predicted BG
-
-        ax[i, 1].imshow(correct)
-        ax[i, 1].set_title('Correctness')
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path)
-    if show:
-        plt.show()
-    else:
-        plt.close()
+def plot_results(images, masks, preds, save_path=None, show=True):
+    plot_side_by_side(
+        images, masks, preds, img_size=3, save_path=save_path, show=show,
+        types=['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+    )
