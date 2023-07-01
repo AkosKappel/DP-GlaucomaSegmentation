@@ -1,12 +1,12 @@
 from collections import defaultdict
 import numpy as np
+import os
 import torch
 from torch.nn import init
 from tqdm import tqdm
 import wandb
 
-from utils.checkpoint import save_checkpoint
-from utils.metrics import get_performance_metrics
+from utils.metrics import update_metrics
 from utils.visualization import plot_results
 
 CLASS_LABELS = {
@@ -40,6 +40,28 @@ def init_weights(net, init_type='kaiming', gain=0.02):
 
     print(f'Initialize network parameters with {init_type} method.')
     net.apply(init_func)
+
+
+def save_checkpoint(state, filename='model.pth', checkpoint_dir='.'):
+    # create save directory if not exists
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+
+    # save model checkpoint
+    filename = os.path.join(checkpoint_dir, filename)
+    print(f'=> Saving checkpoint: {filename}')
+    torch.save(state, filename)
+
+
+def load_checkpoint(filename, model, checkpoint_dir='.'):
+    filename = os.path.join(checkpoint_dir, filename)
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f'Checkpoint file not found: {filename}')
+
+    # load model weights
+    print(f'=> Loading checkpoint: {filename}')
+    checkpoint = torch.load(filename)
+    model.load_state_dict(checkpoint['model'])
 
 
 def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
@@ -76,14 +98,12 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
             loss.backward()
             optimizer.step()
 
-        # calculate metrics
+        # convert logits to predictions
         preds = torch.argmax(outputs, dim=1)
-        metrics = get_performance_metrics(masks.cpu(), preds.cpu())
 
-        # update training history
+        # calculate metrics
+        update_metrics(masks, preds, history)
         history['loss'].append(loss.item())
-        for k, v in metrics.items():
-            history[k].append(v)
 
         # display average metrics at the end of the epoch
         last_batch = batch_idx == total - 1
@@ -108,24 +128,21 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
             images = images.float().to(device=device)
             masks = masks.long().to(device=device)
 
+            # forward pass only, no gradient calculation
             if scaler:
-                # forward pass
                 with torch.cuda.amp.autocast():
                     outputs = model(images)
                     loss = criterion(outputs, masks)
             else:
-                # forward pass
                 outputs = model(images)  # model returns logits
                 loss = criterion(outputs, masks)
 
-            # calculate metrics
+            # convert logits to predictions
             preds = torch.argmax(outputs, dim=1)
-            metrics = get_performance_metrics(masks.cpu(), preds.cpu())
 
-            # update validation history
+            # calculate metrics
+            update_metrics(masks, preds, history)
             history['loss'].append(loss.item())
-            for k, v in metrics.items():
-                history[k].append(v)
 
             # show summary after last batch
             last_batch = batch_idx == total - 1
@@ -153,7 +170,18 @@ def log_progress(model, loader, optimizer, history, epoch, device, part: str = '
         masks = masks.cpu().numpy()
         preds = preds.cpu().numpy()
 
+    file = f'{log_dir}/epoch{epoch}.png'
+    plot_results(images, masks, preds, save_path=file, show=show_plot)
+
     if log_to_wandb:
+        # Log plot with example predictions
+        wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
+
+        # Log performance metrics
+        wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
+        wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
+
+        # Log interactive segmentation results
         for i, image in enumerate(images):
             mask = masks[i]
             pred = preds[i]
@@ -170,20 +198,13 @@ def log_progress(model, loader, optimizer, history, epoch, device, part: str = '
             wandb.log({f'Segmentation results ({part})': seg_img}, step=epoch)
             break
 
-    file = f'{log_dir}/epoch{epoch}.png'
-    plot_results(images, masks, preds, save_path=file, show=show_plot)
-
-    if log_to_wandb:
-        wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
-        wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
-        wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
-
 
 def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
           early_stopping_patience=0, save_best_model=True, save_interval=0, log_to_wandb=False, show=False,
           checkpoint_dir='.', log_dir='.'):
     history = defaultdict(list)
     best_loss = np.inf
+    best_metrics = None
     best_epoch = 0
     epochs_without_improvement = 0
 
@@ -220,6 +241,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         # save checkpoint after every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
             save_checkpoint({
+                'epoch': epoch,
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
             }, filename=f'model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
@@ -227,18 +249,20 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         # early stopping
         if val_loss < best_loss:
             best_loss = val_loss
+            best_metrics = {k: v[-1] for k, v in history.items()}
             best_epoch = epoch
             epochs_without_improvement = 0
 
             if save_best_model and checkpoint_dir:
                 save_checkpoint({
+                    'epoch': epoch,
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                 }, filename='best-model.pth', checkpoint_dir=checkpoint_dir)
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
-                print(f'Early stopping: best validation loss = {best_loss:.4f} at epoch {best_epoch}')
+                print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
                 break
 
     return history

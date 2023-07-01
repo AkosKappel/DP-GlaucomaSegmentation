@@ -20,11 +20,9 @@ def show_model_view(model, input_size, name='model', fmt='png'):
 
 
 def unnormalize(image, mean, std):
-    """
-    Restore a normalized image to its original state.
-    """
+    """Restore a normalized image to its original state."""
     restored_image = image.copy()
-    for c in range(restored_image.shape[2]):
+    for c in range(restored_image.shape[-1]):
         restored_image[:, :, c] = (restored_image[:, :, c] * std[c]) + mean[c]
     return restored_image
 
@@ -116,7 +114,7 @@ def get_contour_image(img, mask, pred, class_ids: list[int] = None):
     contour_mask = img.copy()
 
     if class_ids is None:
-        class_ids = [1]
+        class_ids = [1, 2]
 
     for class_id in class_ids:
         class_mask = np.where(mask >= class_id, 1, 0).astype(np.uint8)
@@ -136,7 +134,7 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
                     mask_legend=None, cover_legend=None, contour_legend=None):
     rows, cols = len(grid), len(grid[0])
 
-    # swap rows and cols
+    # swap rows and columns
     if transpose:
         grid = [[grid[j][i] for j in range(rows)] for i in range(cols)]
         rows, cols = cols, rows
@@ -169,9 +167,9 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
 
     if mask_legend:
         axes[rows - 1, mask_legend].legend(handles=[
+            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
             Patch(facecolor=(0.13, 0.56, 0.55), label='OD'),
             Patch(facecolor=(0.99, 0.91, 0.14), label='OC'),
-            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
         ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=2)
 
     if cover_legend:

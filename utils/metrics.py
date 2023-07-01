@@ -1,229 +1,144 @@
 import numpy as np
-from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score, jaccard_score
 import torch
 
 __all__ = [
-    'calculate_metrics', 'get_performance_metrics', 'get_confusion_matrix',
-    'get_accuracy_score', 'get_precision_score', 'get_recall_score',
-    'get_sensitivity_score', 'get_specificity_score',
-    'iou_score', 'dice_score', 'mean_iou_score', 'mean_dice_score',
+    'calculate_metrics', 'get_metrics', 'update_metrics', 'get_mean_and_standard_deviation', 'get_extreme_examples',
+    'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_OC_examples', 'get_worst_OC_examples',
 ]
 
 
-def calculate_metrics(tp, tn, fp, fn):
+def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_id: int) -> dict[str, float]:
+    # Binarize masks - since OC is always inside OD, we can use >= instead of == for extracting
+    # the masks of individual classes. For example, in the masks, the labels are as follows:
+    # 0 = BG, 1 = OD, 2 = OC
+    # but when creating the binary mask we accept:
+    # OD = 1 or 2, OC = 2
+    true = true >= class_id
+    pred = pred >= class_id
+
+    # True Positives, True Negatives, False Positives, False Negatives
+    tp = (true & pred).sum()
+    tn = (~true & ~pred).sum()
+    fp = (~true & pred).sum()
+    fn = (true & ~pred).sum()
+
+    # Calculate individual metrics
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    precision = tp / (tp + fp)
+    sensitivity = tp / (tp + fn)
+    specificity = tn / (tn + fp)
+    dice = 2 * tp / (2 * tp + fp + fn)
+    iou = tp / (tp + fp + fn)
+
     return {
-        'accuracy': (tp + tn) / (tp + tn + fp + fn),  # ACC
-        'precision': tp / (tp + fp),  # PPV
-        'sensitivity': tp / (tp + fn),  # recall, hit rate, TPR
-        'specificity': tn / (tn + fp),  # TNR
-        'dice': 2 * tp / (2 * tp + fp + fn),  # F1 score
-        'iou': tp / (tp + fp + fn)  # Jaccard index
+        'accuracy': accuracy,
+        'precision': precision,  # PPV (Positive Predictive Value)
+        'sensitivity': sensitivity,  # Recall, Hit-rate, TPR (True Positive Rate)
+        'specificity': specificity,  # TNR (True Negative Rate)
+        'dice': dice,  # F1 score
+        'iou': iou,  # Jaccard index
     }
 
 
-def get_performance_metrics(truth, prediction, average: str = 'macro',
-                            combined_only: bool = True, num_classes: int = 3):
+def get_metrics(true: torch.Tensor, pred: torch.Tensor) -> dict[str, float]:
     # Flatten the tensors to 1D
-    truth_flat = truth.flatten().numpy()
-    prediction_flat = prediction.flatten().numpy()
+    true_flat = true.cpu().flatten().numpy()
+    pred_flat = pred.cpu().flatten().numpy()
 
-    # Compute metrics for the all classes combined (averaged)
-    metrics = {'combined': {
-        'accuracy': accuracy_score(truth_flat, prediction_flat),
-        'precision': precision_score(truth_flat, prediction_flat, average=average, zero_division=0),
-        'sensitivity': recall_score(truth_flat, prediction_flat, average=average, zero_division=0),
-        'specificity': get_specificity_score(truth_flat, prediction_flat, n_classes=num_classes),
-        'dice': f1_score(truth_flat, prediction_flat, average=average, zero_division=0),
-        'iou': jaccard_score(truth_flat, prediction_flat, average=average, zero_division=0),
-    }}
+    # Get metrics separately for OD and OC, treating it as binary segmentation
+    metrics_od = calculate_metrics(true_flat, pred_flat, 1)
+    metrics_oc = calculate_metrics(true_flat, pred_flat, 2)
 
-    # Return only the combined metrics of all classes
-    if combined_only:
-        return metrics['combined']
-
-    # Binary metrics for OD (including OC as part of OD)
-    od_truth_flat = (truth_flat != 0).astype(np.uint8)
-    od_prediction_flat = (prediction_flat != 0).astype(np.uint8)
-    tn, fp, fn, tp = confusion_matrix(od_truth_flat, od_prediction_flat).ravel()
-    metrics['OD'] = calculate_metrics(tp, tn, fp, fn)
-
-    # Binary metrics for OC
-    oc_truth_flat = (truth_flat == 2).astype(np.uint8)
-    oc_prediction_flat = (prediction_flat == 2).astype(np.uint8)
-    tn, fp, fn, tp = confusion_matrix(oc_truth_flat, oc_prediction_flat).ravel()
-    metrics['OC'] = calculate_metrics(tp, tn, fp, fn)
-
-    # Compute the confusion matrix
-    conf_mat = confusion_matrix(truth_flat, prediction_flat)
-    num_classes = conf_mat.shape[0]
-
-    # Compute metrics for each class separately as if it were binary
-    for class_id in range(num_classes):
-        tp = conf_mat[class_id, class_id]
-        fp = conf_mat[:, class_id].sum() - tp
-        fn = conf_mat[class_id, :].sum() - tp
-        tn = conf_mat.sum() - tp - fp - fn
-        metrics[class_id] = calculate_metrics(tp, tn, fp, fn)
-
-    return metrics
+    # Combine the metrics and add suffix to the keys
+    return {
+        **{k + '_OD': v for k, v in metrics_od.items()},
+        **{k + '_OC': v for k, v in metrics_oc.items()},
+    }
 
 
-def get_confusion_matrix(truth, prediction, n_classes: int = 3):
-    conf_mat = np.zeros((n_classes, n_classes), dtype=np.int32)
-    for cls in range(n_classes):
-        pred = prediction == cls
-        for c in range(n_classes):
-            conf_mat[c, cls] = (pred & (truth == c)).sum()
-    return conf_mat
+def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[float]]) -> dict[str, float]:
+    new = get_metrics(true, pred)
 
+    # Insert the new metrics at the end of the list in the old dictionary
+    for k, v in new.items():
+        if k not in old:
+            old[k] = []
+        old[k].append(v)
 
-def get_accuracy_score(truth, prediction):
-    return (prediction == truth).mean()
-
-
-def get_precision_score(truth, prediction, n_classes: int = 3):
-    def get_precision(y_true, y_pred, class_id):
-        pred = y_pred == class_id
-        mask = y_true == class_id
-        tp = (pred & mask).sum()
-        fp = (pred & (~mask)).sum()
-        return tp / (tp + fp)
-
-    # Binary
-    if n_classes == 2:
-        return get_precision(truth, prediction, 1)
-
-    # Multi-class
-    precisions = []
-    for cls in range(n_classes):
-        precision = get_precision(truth, prediction, cls)
-        precisions.append(precision)
-    return np.mean(precisions)
-
-
-def get_sensitivity_score(truth, prediction, n_classes: int = 3):
-    def get_sensitivity(y_true, y_pred, class_id):
-        pred = y_pred == class_id
-        mask = y_true == class_id
-        tp = (pred & mask).sum()
-        fn = (~pred & mask).sum()
-        return tp / (tp + fn)
-
-    # Binary
-    if n_classes == 2:
-        return get_sensitivity(truth, prediction, 1)
-
-    # Multi-class
-    recalls = []
-    for cls in range(n_classes):
-        recall = get_sensitivity(truth, prediction, cls)
-        recalls.append(recall)
-    return np.mean(recalls)
-
-
-get_recall_score = get_sensitivity_score
-
-
-def get_specificity_score(truth, prediction, n_classes: int = 3):
-    def get_specificity(y_true, y_pred, class_id):
-        pred = y_pred == class_id
-        mask = y_true == class_id
-        tn = (~pred & ~mask).sum()
-        fp = (~pred & mask).sum()
-        return tn / (tn + fp)
-
-    # Binary
-    if n_classes == 2:
-        return get_specificity(truth, prediction, 1)
-
-    # Multi-class
-    specificities = []
-    for cls in range(n_classes):
-        specificity = get_specificity(truth, prediction, cls)
-        specificities.append(specificity)
-    return np.mean(specificities)
-
-
-def iou_score(truth, prediction, smooth: float = 1e-6) -> float:
-    """
-    Intersection over Union (IoU) / Jaccard Index
-
-    IoU = TP / (TP + FP + FN) = GT ∩ Pred / (GT ∪ Pred)
-
-    The parameters are expected to contain boolean True (object) and False (background) values
-    for each pixel. This version of the IoU score can be used for binary segmentation problems.
-    """
-    intersection = (truth & prediction).sum()
-    union = (truth | prediction).sum()
-    return (intersection + smooth) / (union + smooth)
-
-
-def mean_iou_score(truth, prediction, smooth: float = 1e-6, n_classes: int = 3):
-    """
-    Mean Intersection over Union (mIoU) / Mean Jaccard Index
-
-    MeanIoU = IoU_1 + IoU_2 + ... + IoU_n / n
-
-    The parameters are expected to contain integer class labels for each pixel. The labels
-    are assumed to be  in the range [0, out_channels - 1]. This version of the IoU score can
-    be used for multi-class segmentation problems.
-    """
-    ious: list[float] = []
-    for cls in range(n_classes):
-        pred = prediction == cls
-        mask = truth == cls
-        iou = iou_score(mask, pred, smooth)
-        ious.append(iou)
-    return np.mean(ious)
-
-
-def dice_score(truth, prediction, smooth: float = 1e-6) -> float:
-    """
-    Dice Coefficient
-
-    DSC = 2 * TP / (2 * TP + FP + FN) = 2 * GT ∩ Pred / (GT + Pred)
-
-    The parameters are expected to contain boolean True (object) and False (background) values
-    for each pixel. This version of the dice score can be used for binary segmentation problems.
-    """
-    intersection = (truth & prediction).sum()
-    prediction_sum = prediction.sum()
-    truth_sum = truth.sum()
-    return (2 * intersection + smooth) / (prediction_sum + truth_sum + smooth)
-
-
-def mean_dice_score(truth, prediction, smooth: float = 1e-6, n_classes: int = 3):
-    """
-    Mean Dice Coefficient
-
-    MeanDSC = (DSC_1 + DSC_2 + ... + DSC_n) / n
-
-    The parameters are expected to contain integer class labels for each pixel. The labels
-    are assumed to be in the range [0, out_channels - 1]. This version of the dice score can
-    be used for multi-class segmentation problems.
-    """
-    dices: list[float] = []
-    for cls in range(n_classes):
-        pred = prediction == cls
-        mask = truth == cls
-        dice = dice_score(mask, pred, smooth)
-        dices.append(dice)
-    return np.mean(dices)
+    return new
 
 
 def get_mean_and_standard_deviation(loader):
     """
     Calculate the mean and standard deviation of a dataset. The values are calculated per channel
-    across all images. The images should be just from the training set, not the entire dataset.
+    across all images. The images should be just from the training set, not the entire dataset to
+    avoid data leakage.
     """
     channels_sum, channels_squared_sum, num_batches = 0, 0, 0
 
-    for data, _ in loader:
-        channels_sum += torch.mean(data, dim=[0, 2, 3])
-        channels_squared_sum += torch.mean(data ** 2, dim=[0, 2, 3])
+    for images, _ in loader:
+        channels_sum += torch.mean(images, dim=[0, 2, 3])
+        channels_squared_sum += torch.mean(images ** 2, dim=[0, 2, 3])
         num_batches += 1
 
     mean = channels_sum / num_batches
     std = (channels_squared_sum / num_batches - mean ** 2) ** 0.5
 
     return mean, std
+
+
+def get_best_OD_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=True, class_id=1)
+
+
+def get_worst_OD_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=False, class_id=1)
+
+
+def get_best_OC_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=True, class_id=2)
+
+
+def get_worst_OC_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=False, class_id=2)
+
+
+def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_id: int = 1,
+                         device: str = 'cuda', metric: str = 'iou'):
+    """
+    Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
+    The examples are returned as a list of (image, mask, prediction, score) tuples. The metric for determining the
+    correctness of the segmentation can be one of the following: 'iou', 'dice', 'accuracy', 'precision',
+    'sensitivity', 'specificity'.
+    """
+    if metric not in ('iou', 'dice', 'accuracy', 'precision', 'sensitivity', 'specificity'):
+        raise ValueError(f'Invalid metric: {metric}')
+
+    model = model.to(device)
+    model.eval()  # Don't forget to set the model to evaluation mode (e.g. disable dropout)
+
+    examples = []
+    with torch.no_grad():  # Disable gradient calculation
+        for images, masks in loader:
+            images = images.float().to(device)
+            masks = masks.long().to(device)
+
+            # Forward pass
+            outputs = model(images)
+            preds = torch.argmax(outputs, dim=1)
+
+            # Convert to numpy arrays and transpose the images to (H, W, C) format
+            images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            preds = preds.detach().cpu().numpy()
+            masks = masks.detach().cpu().numpy()
+
+            for i, _ in enumerate(images):
+                score = calculate_metrics(masks[i], preds[i], class_id)[metric]
+                examples.append((images[i], masks[i], preds[i], score))
+
+            # Sort the examples (ascending or descending) based on their scores
+            examples.sort(key=lambda x: x[-1], reverse=best)
+            # Keep only the top n examples
+            examples = examples[:n]
+
+    return examples

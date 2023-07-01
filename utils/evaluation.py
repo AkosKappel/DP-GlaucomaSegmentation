@@ -3,7 +3,7 @@ import torch
 from collections import defaultdict
 from tqdm import tqdm
 
-from utils.metrics import get_performance_metrics
+from utils.metrics import update_metrics
 
 
 def evaluate(model, criterion, device, loader):
@@ -21,16 +21,12 @@ def evaluate(model, criterion, device, loader):
 
             # forward pass
             outputs = model(images)
-            loss = criterion(outputs, masks.long())
+            loss = criterion(outputs, masks)
+            preds = torch.argmax(outputs, dim=1)
 
             # performance metrics
-            preds = torch.argmax(outputs, dim=1)
-            metrics = get_performance_metrics(masks.cpu(), preds.cpu())
-
-            # update history
+            update_metrics(masks, preds, history)
             history['loss'].append(loss.item())
-            for k, v in metrics.items():
-                history[k].append(v)
 
             # show mean metrics after every batch
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
