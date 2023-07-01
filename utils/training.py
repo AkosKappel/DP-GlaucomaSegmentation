@@ -6,7 +6,6 @@ from tqdm import tqdm
 import wandb
 
 from utils.checkpoint import save_checkpoint
-from utils.datasets import ORIGA_MEANS, ORIGA_STDS
 from utils.metrics import get_performance_metrics
 from utils.visualization import plot_results
 
@@ -137,7 +136,8 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
     return mean_metrics
 
 
-def log_progress(model, loader, optimizer, history, epoch, device, part='validation', log_dir='.', log_to_wandb=False):
+def log_progress(model, loader, optimizer, history, epoch, device, part: str = 'validation', log_dir: str = '.',
+                 log_to_wandb: bool = False, show_plot: bool = False):
     model.eval()
     with torch.no_grad():
         batch = next(iter(loader))
@@ -171,7 +171,7 @@ def log_progress(model, loader, optimizer, history, epoch, device, part='validat
             break
 
     file = f'{log_dir}/epoch{epoch}.png'
-    plot_results(images, masks, preds, save_path=file, show=False)
+    plot_results(images, masks, preds, save_path=file, show=show_plot)
 
     if log_to_wandb:
         wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
@@ -180,7 +180,7 @@ def log_progress(model, loader, optimizer, history, epoch, device, part='validat
 
 
 def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
-          early_stopping_patience=0, save_best_model=True, save_interval=0, log_to_wandb=False,
+          early_stopping_patience=0, save_best_model=True, save_interval=0, log_to_wandb=False, show=False,
           checkpoint_dir='.', log_dir='.'):
     history = defaultdict(list)
     best_loss = np.inf
@@ -214,7 +214,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
 
         # log metrics locally and to wandb
         loader = val_loader if val_loader else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device, log_to_wandb=log_to_wandb, log_dir=log_dir)
+        log_progress(model, loader, optimizer, history, epoch, device,
+                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show)
 
         # save checkpoint after every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:

@@ -66,7 +66,10 @@ class RecurrentConv(nn.Module):
 class RecurrentResidualConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, t=2):
         super(RecurrentResidualConv, self).__init__()
-        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
+        self.conv1x1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
+            nn.BatchNorm2d(out_channels),
+        )
         self.recursion = nn.Sequential(
             RecurrentConv(out_channels, t=t),
             RecurrentConv(out_channels, t=t),

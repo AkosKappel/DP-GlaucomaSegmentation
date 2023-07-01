@@ -122,6 +122,57 @@ class OutConv(nn.Module):
         return self.conv(x)
 
 
+class Encoder(nn.Module):
+
+    def __init__(self, in_channels: int, features: list[int]):
+        super(Encoder, self).__init__()
+
+        self.conv1 = ResidualConv(in_channels, features[0])
+        self.conv2 = ResidualConv(features[0], features[1])
+        self.conv3 = ResidualConv(features[1], features[2])
+        self.conv4 = ResidualConv(features[2], features[3])
+        self.conv5 = ResidualConv(features[3], features[4])
+
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        x1 = self.conv1(x)
+        x2 = self.conv2(self.pool(x1))
+        x3 = self.conv3(self.pool(x2))
+        x4 = self.conv4(self.pool(x3))
+        x5 = self.conv5(self.pool(x4))
+        return x1, x2, x3, x4, x5
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, features: list[int], out_channels: int, block: nn.Module,
+                 up_mode: str = 'transpose', up_conv: bool = True):
+        super(Decoder, self).__init__()
+
+        self.branch1 = nn.ModuleList([
+            block(features[0] * 1 + features[0 if up_conv else 1], features[0]),
+        ])
+
+        self.branch2 = nn.ModuleList([
+            block(features[1] * 1 + features[1 if up_conv else 2], features[1]),
+            block(features[0] * 2 + features[0 if up_conv else 1], features[0]),
+        ])
+
+        self.branch3 = nn.ModuleList([
+            block(features[2] * 1 + features[2 if up_conv else 3], features[2]),
+            block(features[1] * 2 + features[1 if up_conv else 2], features[1]),
+            block(features[0] * 3 + features[0 if up_conv else 1], features[0]),
+        ])
+
+        self.branch4 = nn.ModuleList([
+            block(features[3] * 1 + features[3 if up_conv else 4], features[3]),
+            block(features[2] * 2 + features[2 if up_conv else 3], features[2]),
+            block(features[1] * 3 + features[1 if up_conv else 2], features[1]),
+            block(features[0] * 4 + features[0 if up_conv else 1], features[0]),
+        ])
+
+
 class ResAttentionUNetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,

@@ -45,12 +45,16 @@ class UpConv(nn.Module):
 
 class RecurrentResidualBlock(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, t: int = 2, bn: bool = True):
+    def __init__(self, in_channels: int, out_channels: int, t: int = 2):
         super(RecurrentResidualBlock, self).__init__()
         self.t = t
-        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
-        self.conv1 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
-        self.conv2 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bn=bn)
+        self.conv1x1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.conv1 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
+        self.conv2 = ConvBatchRelu(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
 
     def forward(self, x):
         # 1x1 convolution to set correct number of channels for recurrent blocks

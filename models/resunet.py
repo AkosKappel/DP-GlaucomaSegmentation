@@ -26,43 +26,38 @@ class UpConv(nn.Module):
 
 class ResidualBlock(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, bn: bool = True,
-                 relu_before: bool = True, downsample: bool = True):
+    def __init__(self, in_channels: int, out_channels: int, relu_before: bool = False, downsample: bool = True):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1)
 
-        self.bn = bn
+        self.batch_norm1 = nn.BatchNorm2d(out_channels)
+        self.batch_norm2 = nn.BatchNorm2d(out_channels)
+
         self.relu_before = relu_before
-        self.downsample = downsample
-
-        if self.bn:
-            self.batch_norm1 = nn.BatchNorm2d(out_channels)
-            self.batch_norm2 = nn.BatchNorm2d(out_channels)
-
-        if self.downsample:
-            self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
+        self.downsample = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1),
+            nn.BatchNorm2d(out_channels),
+        ) if downsample else None
 
     def forward(self, x):
         residual = x
 
         # first convolution block
         out = self.conv1(x)
-        if self.bn:
-            out = self.batch_norm1(out)
+        out = self.batch_norm1(out)
         out = F.relu(out)
 
         # second convolution block
         out = self.conv2(out)
-        if self.bn:
-            out = self.batch_norm2(out)
+        out = self.batch_norm2(out)
         # activation before residual shortcut
         if self.relu_before:
             out = F.relu(out)
 
         # 1x1 convolution to match channels of residual shortcut to output
-        if self.downsample:
-            residual = self.conv1x1(residual)
+        if self.downsample is not None:
+            residual = self.downsample(residual)
 
         # residual shortcut (identity mapping)
         out = out + residual

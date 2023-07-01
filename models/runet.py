@@ -28,7 +28,10 @@ class RecurrentBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, t: int = 2, bn: bool = True):
         super(RecurrentBlock, self).__init__()
         self.t = t
-        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1)
+        self.conv1x1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
+        )
 
         self.block1 = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1),
@@ -83,10 +86,10 @@ class RUNet(nn.Module):
         self.en4 = RecurrentBlock(features[2], features[3], n_repeats)
         self.en5 = RecurrentBlock(features[3], features[4], n_repeats)
 
-        self.up1 = UpConv(features[4], features[3], scale_factor=2, mode='transpose')
-        self.up2 = UpConv(features[3], features[2], scale_factor=2, mode='transpose')
-        self.up3 = UpConv(features[2], features[1], scale_factor=2, mode='transpose')
-        self.up4 = UpConv(features[1], features[0], scale_factor=2, mode='transpose')
+        self.up1 = UpConv(features[4], features[3], scale_factor=2)
+        self.up2 = UpConv(features[3], features[2], scale_factor=2)
+        self.up3 = UpConv(features[2], features[1], scale_factor=2)
+        self.up4 = UpConv(features[1], features[0], scale_factor=2)
 
         self.de1 = RecurrentBlock(features[4], features[3], n_repeats)
         self.de2 = RecurrentBlock(features[3], features[2], n_repeats)

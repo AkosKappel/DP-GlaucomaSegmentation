@@ -1,3 +1,4 @@
+import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -28,17 +29,23 @@ def unnormalize(image, mean, std):
     return restored_image
 
 
+# Cover colors
 tp_color = np.array((0, 1, 0), dtype=np.uint8) * 255
 tn_color = np.array((0, 0, 0), dtype=np.uint8) * 255
 fp_color = np.array((1, 0, 0), dtype=np.uint8) * 255
 fn_color = np.array((1, 1, 0), dtype=np.uint8) * 255
 
+# Overlay colors
 od_color = np.array((0, 0, 1))
 oc_color = np.array((0, 1, 1))
 
+# Contour colors
+true_color = (0, 0, 255)
+predicted_color = (0, 0, 0)
 
-def get_input_images(images):
-    return [get_input_image(img) for img in images]
+
+def get_input_images(imgs):
+    return [get_input_image(img) for img in imgs]
 
 
 def get_input_image(img):
@@ -48,7 +55,7 @@ def get_input_image(img):
 
 
 def get_cover_images(masks, preds, **kwargs):
-    return [get_cover_image(mask, pred, **kwargs) for mask, pred in zip(preds, masks)]
+    return [get_cover_image(mask, pred, **kwargs) for mask, pred in zip(masks, preds)]
 
 
 def get_cover_image(mask, pred, class_ids: list[int] = None):
@@ -59,32 +66,32 @@ def get_cover_image(mask, pred, class_ids: list[int] = None):
     False Positive: red
     False Negative: yellow
     """
-    cover = np.zeros((*mask.shape, 3), dtype=np.uint8)
+    cover_img = np.zeros((*mask.shape, 3), dtype=np.uint8)
 
     if class_ids is None:
         # treat image as binary (0 - background, non-zero - foreground)
-        cover[(mask != 0) & (pred != 0)] = tp_color
-        cover[(mask == 0) & (pred == 0)] = tn_color
-        cover[(mask == 0) & (pred != 0)] = fp_color
-        cover[(mask != 0) & (pred == 0)] = fn_color
+        cover_img[(mask != 0) & (pred != 0)] = tp_color
+        cover_img[(mask == 0) & (pred == 0)] = tn_color
+        cover_img[(mask == 0) & (pred != 0)] = fp_color
+        cover_img[(mask != 0) & (pred == 0)] = fn_color
     else:
         # True positive (TP): both mask and pred have one of the class_ids at the same pixel
-        tp_mask = np.isin(mask, class_ids) & np.isin(mask, pred)
-        cover[tp_mask] = tp_color
+        tp_mask = np.isin(mask, class_ids) & np.isin(pred, class_ids)
+        cover_img[tp_mask] = tp_color
 
         # True negative (TN): neither mask nor pred have one of the class_ids at the same position
         tn_mask = np.logical_not(np.isin(mask, class_ids)) & np.logical_not(np.isin(pred, class_ids))
-        cover[tn_mask] = tn_color
+        cover_img[tn_mask] = tn_color
 
         # False positive (FP): pred has one of the class_ids, but mask does not
         fp_mask = np.logical_not(np.isin(mask, class_ids)) & np.isin(pred, class_ids)
-        cover[fp_mask] = fp_color
+        cover_img[fp_mask] = fp_color
 
         # False negative (FN): pred does not have one of the class_ids, but mask does
         fn_mask = np.isin(mask, class_ids) & np.logical_not(np.isin(pred, class_ids))
-        cover[fn_mask] = fn_color
+        cover_img[fn_mask] = fn_color
 
-    return cover
+    return cover_img
 
 
 def get_overlay_images(imgs, masks, **kwargs):
@@ -94,11 +101,33 @@ def get_overlay_images(imgs, masks, **kwargs):
 def get_overlay_image(img, mask, alpha=0.3):
     img = get_input_image(img)
 
-    overlay = np.zeros_like(img)
-    overlay[mask == 1] = od_color
-    overlay[mask == 2] = oc_color
+    overlay_img = np.zeros_like(img)
+    overlay_img[mask == 1] = od_color
+    overlay_img[mask == 2] = oc_color
 
-    return img * (1 - alpha) + overlay * alpha
+    return img * (1 - alpha) + overlay_img * alpha
+
+
+def get_contour_images(imgs, masks, preds, **kwargs):
+    return [get_contour_image(img, mask, pred, **kwargs) for img, mask, pred in zip(imgs, masks, preds)]
+
+
+def get_contour_image(img, mask, pred, class_ids: list[int] = None):
+    contour_mask = img.copy()
+
+    if class_ids is None:
+        class_ids = [1]
+
+    for class_id in class_ids:
+        class_mask = np.where(mask >= class_id, 1, 0).astype(np.uint8)
+        contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        cv.drawContours(contour_mask, contours, -1, true_color, thickness=1)
+
+        class_mask = np.where(pred >= class_id, 1, 0).astype(np.uint8)
+        contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        cv.drawContours(contour_mask, contours, -1, predicted_color, thickness=1)
+
+    return get_input_image(contour_mask)
 
 
 def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None,
@@ -140,10 +169,10 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
 
     if mask_legend:
         axes[rows - 1, mask_legend].legend(handles=[
-            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
             Patch(facecolor=(0.13, 0.56, 0.55), label='OD'),
             Patch(facecolor=(0.99, 0.91, 0.14), label='OC'),
-        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
+            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
+        ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=2)
 
     if cover_legend:
         axes[rows - 1, cover_legend].legend(handles=[
@@ -151,15 +180,13 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
             Patch(color=fn_color / 255, label='FN'),
             Patch(color=fp_color / 255, label='FP'),
             Patch(color=tn_color / 255, label='TN'),
-        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
+        ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=2)
 
     if contour_legend:
         axes[rows - 1, contour_legend].legend(handles=[
-            Patch(color=od_color, label='T-OD'),
-            Patch(color=od_color, label='P-OD'),
-            Patch(color=oc_color, label='T-OC'),
-            Patch(color=oc_color, label='P-OC'),
-        ], bbox_to_anchor=(0.5, -0.4), loc='lower center', ncol=2)
+            Patch(color=np.array(true_color) / 255, label='True'),
+            Patch(color=np.array(predicted_color) / 255, label='Predicted'),
+        ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=1)
 
     plt.tight_layout()
     if save_path:
@@ -170,11 +197,18 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
         plt.close()
 
 
-def plot_side_by_side(images=None, masks=None, preds=None, types: str | list[str] = None, **kwargs):
+def plot_side_by_side():
+    pass
+
+
+def plot_results(images=None, masks=None, preds=None, types: str | list[str] = None, **kwargs):
+    # kwargs: img_size, transpose, figsize, save_path, show
+
     if types is None:
         types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
     elif types == 'all':
-        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD overlay', 'OC overlay', 'contours']
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover',
+                 'OD overlay', 'OC overlay', 'OD contour', 'OC contour', 'contours']
     elif isinstance(types, str):
         types = [types]
 
@@ -216,7 +250,17 @@ def plot_side_by_side(images=None, masks=None, preds=None, types: str | list[str
             col = get_overlay_images(images, preds)
         elif t == 'contours' and all(x is not None for x in [images, masks, preds]):
             titles.append('Contours')
-            col = [None] * len(images)  # TODO
+            col = get_contour_images(images, masks, preds, class_ids=[1, 2])
+            if contour_legend_index is None:
+                contour_legend_index = i
+        elif t == 'OD contour' and all(x is not None for x in [images, masks, preds]):
+            titles.append('Optic disc contours')
+            col = get_contour_images(images, masks, preds, class_ids=[1])
+            if contour_legend_index is None:
+                contour_legend_index = i
+        elif t == 'OC contour' and all(x is not None for x in [images, masks, preds]):
+            titles.append('Optic cup contours')
+            col = get_contour_images(images, masks, preds, class_ids=[2])
             if contour_legend_index is None:
                 contour_legend_index = i
         else:
@@ -227,36 +271,52 @@ def plot_side_by_side(images=None, masks=None, preds=None, types: str | list[str
                     cover_legend=cover_legend_index, contour_legend=contour_legend_index, **kwargs)
 
 
-def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int = 4, save_path=None, show=True):
+def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int = 4, **kwargs):
+    # kwargs: save_path, show, types, img_size
+
     model.eval()
     model = model.to(device=device)
+
     with torch.no_grad():
-        batch = next(iter(loader))
-        images, masks = batch
+        samples_so_far = 0
+        images_all, masks_all, preds_all = [], [], []
 
-        images = images.float().to(device=device)
-        masks = masks.long().to(device=device)
+        for batch in loader:
+            images, masks = batch
 
-        outputs = model(images)
-        # softmax not needed because index of max value is the same before and after calling softmax
-        preds = torch.argmax(outputs, dim=1)
+            images = images.float().to(device=device)
+            masks = masks.long().to(device=device)
 
-        images = images.cpu().numpy().transpose(0, 2, 3, 1)
-        masks = masks.cpu().numpy()
-        preds = preds.cpu().numpy()
+            outputs = model(images)
+            # softmax not needed because index of max value is the same before and after calling softmax
+            preds = torch.argmax(outputs, dim=1)
 
-        images = images[:n_samples]
-        masks = masks[:n_samples]
-        preds = preds[:n_samples]
+            images = images.cpu().numpy().transpose(0, 2, 3, 1)
+            masks = masks.cpu().numpy()
+            preds = preds.cpu().numpy()
 
-    plot_side_by_side(
-        images, masks, preds, img_size=3, save_path=save_path, show=show,
-        types=['image', 'mask', 'prediction', 'OD cover', 'OC cover']
-    )
+            images_all.append(images)
+            masks_all.append(masks)
+            preds_all.append(preds)
 
+            samples_so_far += len(images)
 
-def plot_results(images, masks, preds, save_path=None, show=True):
-    plot_side_by_side(
-        images, masks, preds, img_size=3, save_path=save_path, show=show,
-        types=['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+            if samples_so_far >= n_samples:
+                break
+
+        images_all = np.concatenate(images_all, axis=0)
+        masks_all = np.concatenate(masks_all, axis=0)
+        preds_all = np.concatenate(preds_all, axis=0)
+
+        images = images_all[:n_samples]
+        masks = masks_all[:n_samples]
+        preds = preds_all[:n_samples]
+
+    types = kwargs['types'] if 'types' in kwargs else ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+    img_size = kwargs['img_size'] if 'img_size' in kwargs else 3
+    save_path = kwargs['save_path'] if 'save_path' in kwargs else None
+    show = kwargs['show'] if 'show' in kwargs else True
+
+    plot_results(
+        images, masks, preds, img_size=img_size, save_path=save_path, show=show, types=types
     )
