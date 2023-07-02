@@ -1,6 +1,96 @@
+import numpy as np
+from scipy.ndimage import distance_transform_edt as edt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def logits_to_probs(logits: torch.Tensor, dim: int = 1) -> torch.Tensor:
+    """Convert logits from a model to probabilities by applying softmax."""
+    # logits.shape = (batch_size, num_classes, height, width)
+    # returns.shape = (batch_size, num_classes, height, width)
+    return F.softmax(logits, dim=dim)
+
+
+def probs_to_labels(probs: torch.Tensor, dim: int = 1) -> torch.Tensor:
+    """Convert probabilities from a model to labels by choosing the class with the highest probability."""
+    # probs.shape = (batch_size, num_classes, height, width)
+    # returns.shape = (batch_size, height, width)
+    return torch.argmax(probs, dim=dim)
+
+
+def labels_to_onehot(labels: torch.Tensor | np.ndarray, num_classes: int) -> torch.Tensor | np.ndarray:
+    """Convert a label (integers) to one-hot encoding."""
+    # labels.shape = (batch_size, height, width)
+    # returns.shape = (batch_size, num_classes, height, width)
+    if num_classes > 1:
+        return F.one_hot(labels, num_classes=num_classes).permute(0, 3, 1, 2).float()
+    else:
+        return labels.unsqueeze(1).float()
+
+
+def onehot_to_labels(onehot: torch.Tensor, dim: int = 1) -> torch.Tensor:
+    """Convert one-hot encoding to a class label."""
+    # onehot.shape = (batch_size, num_classes, height, width)
+    # returns.shape = (batch_size, height, width)
+    return torch.argmax(onehot, dim=dim)
+
+
+def probs_to_onehot(probs: torch.Tensor, num_classes: int, dim: int = 1) -> torch.Tensor:
+    """Convert probabilities from a model to one-hot encoding."""
+    # probs.shape = (batch_size, num_classes, height, width)
+    # returns.shape = (batch_size, num_classes, height, width)
+    return labels_to_onehot(probs_to_labels(probs, dim=dim), num_classes=num_classes)
+
+
+def onehot_to_dist_maps(onehot: np.ndarray) -> np.ndarray:
+    """Convert a one-hot encoding to a distance map."""
+    # onehot.shape = (num_classes, height, width)
+    # returns.shape = (num_classes, height, width)
+    num_classes = len(onehot)
+    dist_maps = np.zeros_like(onehot)
+
+    for i in range(num_classes):
+        pos_mask = onehot[i].astype(np.uint8)
+
+        if pos_mask.any():
+            neg_mask = 1 - pos_mask
+            pos_dist = edt(pos_mask)
+            neg_dist = edt(neg_mask)
+            dist_maps[i] = neg_dist - pos_dist
+
+    return dist_maps
+
+
+def labels_to_dist_maps(labels: np.ndarray, num_classes: int) -> np.ndarray:
+    """Convert a label map to onehot and then to a set of distance maps."""
+    # labels.shape = (batch_size, height, width)
+    # returns.shape = (batch_size, num_classes, height, width)
+    onehot = labels_to_onehot(labels, num_classes).cpu().numpy()
+
+    dist_maps = np.zeros_like(onehot)
+    for i in range(len(onehot)):
+        dist_maps[i] = onehot_to_dist_maps(onehot[i])
+
+    return torch.from_numpy(dist_maps).float()
+
+
+def onehot_to_hd_maps(onehot: np.ndarray) -> np.ndarray:
+    # onehot.shape = (num_classes, height, width)
+    # returns.shape = (num_classes, height, width)
+    num_classes = len(onehot)
+
+    hd_maps = np.zeros_like(onehot)
+    for i in range(num_classes):
+        pos_mask = onehot[i].astype(np.uint8)
+
+        if pos_mask.any():
+            neg_mask = 1 - pos_mask
+            pos_dist = edt(pos_mask)
+            neg_dist = edt(neg_mask)
+            hd_maps[i] = pos_dist + neg_dist
+
+    return hd_maps
 
 
 # Soft Dice Loss for binary or multi-class segmentation
@@ -24,9 +114,9 @@ class DiceLoss(nn.Module):
 
         if self.num_classes > 1:
             # Calculate probabilities using softmax
-            probabilities = F.softmax(logits, dim=1)
+            probabilities = logits_to_probs(logits)
             # One-hot encode targets (e.g. 1 -> [0, 1, 0], 2 -> [0, 0, 1])
-            targets = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
+            targets = labels_to_onehot(targets, self.num_classes)
         else:
             # Calculate probabilities using sigmoid
             probabilities = torch.sigmoid(logits)
@@ -74,9 +164,9 @@ class GeneralizedDice(nn.Module):
 
         if self.num_classes > 1:
             # Calculate probabilities using softmax
-            probabilities = F.softmax(logits, dim=1)
+            probabilities = logits_to_probs(logits)
             # One-hot encode targets (e.g. 1 -> [0, 1, 0], 2 -> [0, 0, 1])
-            targets = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
+            targets = labels_to_onehot(targets, self.num_classes)
         else:
             # Calculate probabilities using sigmoid
             probabilities = torch.sigmoid(logits)
@@ -124,8 +214,8 @@ class IoULoss(nn.Module):
 
         # Apply softmax or sigmoid to convert logits to probabilities
         if self.num_classes > 1:
-            probabilities = F.softmax(logits, dim=1)
-            targets = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
+            probabilities = logits_to_probs(logits)
+            targets = labels_to_onehot(targets, self.num_classes)
         else:
             probabilities = torch.sigmoid(logits)
             targets = targets.unsqueeze(1).float()
@@ -165,8 +255,8 @@ class FocalLoss(nn.Module):
 
         if self.num_classes > 1:
             # Apply softmax to convert logits to probabilities and one-hot encode targets
-            probabilities = F.softmax(logits, dim=1)
-            targets_one_hot = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
+            probabilities = logits_to_probs(logits)
+            targets_one_hot = labels_to_onehot(targets, self.num_classes)
 
             # Compute categorical cross entropy loss
             ce_loss = F.cross_entropy(logits, targets, reduction='none')
@@ -218,8 +308,8 @@ class TverskyLoss(nn.Module):
 
         # Apply softmax or sigmoid to convert logits to probabilities
         if self.num_classes > 1:
-            targets_one_hot = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
-            probabilities = F.softmax(logits, dim=1)
+            targets_one_hot = labels_to_onehot(targets, self.num_classes)
+            probabilities = logits_to_probs(logits)
         else:
             targets_one_hot = targets.unsqueeze(1).float()
             probabilities = torch.sigmoid(logits)
@@ -270,8 +360,8 @@ class FocalTverskyLoss(nn.Module):
 
         # Apply softmax or sigmoid to convert logits to probabilities
         if self.num_classes > 1:
-            targets_one_hot = F.one_hot(targets, self.num_classes).permute(0, 3, 1, 2).float()
-            probabilities = F.softmax(logits, dim=1)
+            targets_one_hot = labels_to_onehot(targets, self.num_classes)
+            probabilities = logits_to_probs(logits)
         else:
             targets_one_hot = targets.unsqueeze(1).float()
             probabilities = torch.sigmoid(logits)
@@ -299,9 +389,75 @@ class FocalTverskyLoss(nn.Module):
         return focal_tversky.mean()
 
 
+# see: https://github.com/LIVIAETS/boundary-loss/blob/master/losses.py
 class BoundaryLoss(nn.Module):
-    pass
+
+    def __init__(self, idc: list[int] = None, class_weights: list[float] = None):
+        super(BoundaryLoss, self).__init__()
+        self.idc = idc if idc is not None else [0, 1, 2]
+        self.num_classes = len(idc)
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
+
+    def forward(self, logits, targets):
+        if self.num_classes > 1:
+            probs = logits_to_probs(logits)
+        else:
+            probs = torch.sigmoid(logits)
+        dist_maps = labels_to_dist_maps(targets, self.num_classes)
+
+        probs_class = probs[:, self.idc, ...].to(logits.device)
+        dists_class = dist_maps[:, self.idc, ...].to(logits.device)
+
+        multiplied = torch.einsum('bchw,bchw->bchw', probs_class, dists_class)
+        boundary_loss = multiplied.mean(dim=(0, 2, 3))
+
+        if self.class_weights is not None:
+            self.class_weights = self.class_weights.to(logits.device)
+            boundary_loss *= self.class_weights
+
+        return multiplied.mean()
 
 
+# see: https://github.com/JunMa11/SegLoss/blob/master/losses_pytorch/hausdorff.py
 class HausdorffLoss(nn.Module):
-    pass
+
+    def __init__(self, idc: list[int] = None, class_weights: list[float] = None, alpha: float = 2.0):
+        super(HausdorffLoss, self).__init__()
+        self.idc = idc if idc is not None else [0, 1, 2]
+        self.num_classes = len(idc)
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
+        self.alpha = alpha
+
+    def forward(self, logits, targets):
+        if self.num_classes > 1:
+            probs = logits_to_probs(logits)
+        else:
+            probs = torch.sigmoid(logits)
+        batch_size = probs.shape[0]
+
+        targets = labels_to_onehot(targets, num_classes=self.num_classes)
+        preds = probs_to_onehot(probs, num_classes=self.num_classes)
+
+        probs_class = probs[:, self.idc, ...].float()
+        targets_class = targets[:, self.idc, ...].float()
+        preds_class = preds[:, self.idc, ...].float()
+
+        target_dist_maps_np = np.stack(
+            [onehot_to_hd_maps(targets_class[b].cpu().detach().numpy()) for b in range(batch_size)], axis=0)
+        targets_dm = torch.tensor(target_dist_maps_np, device=probs.device, dtype=torch.float32)
+
+        preds_dm_np = np.stack(
+            [onehot_to_hd_maps(preds_class[b].cpu().detach().numpy()) for b in range(batch_size)], axis=0)
+        preds_dm = torch.tensor(preds_dm_np, device=probs.device, dtype=torch.float32)
+
+        pred_error = (probs_class - targets_class) ** 2
+        distance = targets_dm ** self.alpha + preds_dm ** self.alpha
+
+        multiplied = torch.einsum('bchw,bchw->bchw', pred_error, distance)
+        hausdorff_loss = multiplied.mean(dim=(0, 2, 3))
+
+        if self.class_weights is not None:
+            self.class_weights = self.class_weights.to(logits.device)
+            hausdorff_loss *= self.class_weights
+
+        return hausdorff_loss.mean()
