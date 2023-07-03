@@ -56,14 +56,16 @@ def get_metrics(true: torch.Tensor, pred: torch.Tensor) -> dict[str, float]:
     }
 
 
-def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[float]]) -> dict[str, float]:
+def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[float]],
+                   prefix: str = '', postfix: str = '') -> dict[str, float]:
     new = get_metrics(true, pred)
 
     # Insert the new metrics at the end of the list in the old dictionary
-    for k, v in new.items():
+    for key, value in new.items():
+        k = prefix + key + postfix
         if k not in old:
             old[k] = []
-        old[k].append(v)
+        old[k].append(value)
 
     return new
 
