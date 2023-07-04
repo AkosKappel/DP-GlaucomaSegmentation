@@ -110,21 +110,12 @@ class ConvCBAM(nn.Module):
         return F.relu(self.cbam(self.bn(self.conv(x))), inplace=True)
 
 
-class RefUnet3PlusCBAM(nn.Module):
+class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
-        super(RefUnet3PlusCBAM, self).__init__()
+    def __init__(self, in_channels: int, features: list[int]):
+        super(Encoder, self).__init__()
 
-        if features is None:
-            features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Refined U-Net 3+ with CBAM requires a list of 5 features'
-
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.pool4 = nn.MaxPool2d(kernel_size=4, stride=4)
-        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.up4 = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
-        self.up8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
         # Backbone encoder
         self.en1 = DoubleConv(in_channels, features[0])
@@ -133,56 +124,57 @@ class RefUnet3PlusCBAM(nn.Module):
         self.en4 = DoubleConv(features[2], features[3])
         self.en5 = DoubleConv(features[3], features[4])
 
-        concat_features = features[0]  # number of channels from the skip connection that will be concatenated
+    def forward(self, x):
+        # Contracting path
+        e1 = self.en1(x)
+        e2 = self.en2(self.pool(e1))
+        e3 = self.en3(self.pool(e2))
+        e4 = self.en4(self.pool(e3))
+        e5 = self.en5(self.pool(e4))
+        return e1, e2, e3, e4, e5
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, features: list[int], out_channels: int, concat_channels: int):
+        super(Decoder, self).__init__()
+        # concat_features = number of channels per skip connection that will be concatenated
+
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pool4 = nn.MaxPool2d(kernel_size=4, stride=4)
+        self.up2 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.up4 = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
+        self.up8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True)
 
         # Decoder at level 4 (lowest)
-        self.de4_en2 = SingleConv(features[1], concat_features)
-        self.de4_en4 = SingleConv(features[3], concat_features)
-        self.de4_de5 = SingleConv(features[4], concat_features)
-        self.de4 = ConvCBAM(3 * concat_features, features[3])
+        self.de4_en2 = SingleConv(features[1], concat_channels)
+        self.de4_en4 = SingleConv(features[3], concat_channels)
+        self.de4_de5 = SingleConv(features[4], concat_channels)
+        self.de4 = ConvCBAM(3 * concat_channels, features[3])
 
         # Decoder at level 3
-        self.de3_en1 = SingleConv(features[0], concat_features)
-        self.de3_en3 = SingleConv(features[2], concat_features)
-        self.de3_de4 = SingleConv(features[3], concat_features)
-        self.de3 = ConvCBAM(3 * concat_features, features[2])
+        self.de3_en1 = SingleConv(features[0], concat_channels)
+        self.de3_en3 = SingleConv(features[2], concat_channels)
+        self.de3_de4 = SingleConv(features[3], concat_channels)
+        self.de3 = ConvCBAM(3 * concat_channels, features[2])
 
         # Decoder at level 2
-        self.de2_en2 = SingleConv(features[1], concat_features)
-        self.de2_de3 = SingleConv(features[2], concat_features)
-        self.de2 = ConvCBAM(2 * concat_features, features[1])
+        self.de2_en2 = SingleConv(features[1], concat_channels)
+        self.de2_de3 = SingleConv(features[2], concat_channels)
+        self.de2 = ConvCBAM(2 * concat_channels, features[1])
 
         # Decoder at level 1 (highest)
-        self.de1_en1 = SingleConv(features[0], concat_features)
-        self.de1_de2 = SingleConv(features[1], concat_features)
-        self.de1_de3 = SingleConv(features[2], concat_features)
-        self.de1_de4 = SingleConv(features[3], concat_features)
-        self.de1 = ConvCBAM(4 * concat_features, features[0])
+        self.de1_en1 = SingleConv(features[0], concat_channels)
+        self.de1_de2 = SingleConv(features[1], concat_channels)
+        self.de1_de3 = SingleConv(features[2], concat_channels)
+        self.de1_de4 = SingleConv(features[3], concat_channels)
+        self.de1 = ConvCBAM(4 * concat_channels, features[0])
 
         # Final convolution
         self.last = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
-        # initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        # Contracting path
-        e1 = self.en1(x)
-        e2 = self.en2(self.pool2(e1))
-        e3 = self.en3(self.pool2(e2))
-        e4 = self.en4(self.pool2(e3))
-        e5 = self.en5(self.pool2(e4))
+    def forward(self, *x):
+        e1, e2, e3, e4, e5 = x  # skip connections from encoder
 
         # Expanding path with skip connections
         d4 = self.de4(torch.cat((
@@ -210,6 +202,73 @@ class RefUnet3PlusCBAM(nn.Module):
         return self.last(d1)
 
 
+class RefUnet3PlusCBAM(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(RefUnet3PlusCBAM, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Refined U-Net 3+ with CBAM requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder = Decoder(features, out_channels, features[0])
+
+        # initialize weights
+        if init_weights:
+            self.initialize_weights()
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(*x)
+        return x
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+
+class DualRefUnet3PlusCBAM(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(DualRefUnet3PlusCBAM, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Dual Refined U-Net 3+ with CBAM requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder1 = Decoder(features, out_channels, features[0])
+        self.decoder2 = Decoder(features, out_channels, features[0])
+
+        if init_weights:
+            self.initialize_weights()
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x1 = self.decoder1(*x)
+        x2 = self.decoder2(*x)
+        return x1, x2
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+
 if __name__ == '__main__':
     _batch_size = 8
     _in_channels, _out_channels = 3, 1
@@ -217,11 +276,16 @@ if __name__ == '__main__':
     _layers = [16, 32, 64, 128, 256]
     _models = [
         RefUnet3PlusCBAM(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        DualRefUnet3PlusCBAM(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:
         predictions = model(random_data)
-        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        if isinstance(predictions, tuple):
+            for prediction in predictions:
+                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
+        else:
+            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
         print(model)
         summary(model.cuda(), (_in_channels, _height, _width))
         print()
