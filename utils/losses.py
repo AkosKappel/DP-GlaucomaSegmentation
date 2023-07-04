@@ -592,3 +592,49 @@ def onehot_to_inverse_dist_map(onehot_batch: torch.Tensor, normalize: bool = Tru
                 inverse_distance_maps[b, c] = fg_dist_map + bg_dist_map
 
     return torch.tensor(inverse_distance_maps, device=onehot_batch.device, dtype=torch.float32)
+
+
+# Dice + Cross Entropy loss
+class ComboLoss(nn.Module):
+
+    def __init__(self, num_classes: int, class_weights: list[float] = None, alpha: float = 0.5, smooth: float = 1e-7):
+        super(ComboLoss, self).__init__()
+
+        assert num_classes > 0, 'Number of classes must be greater than zero'
+        assert class_weights is None or len(class_weights) == num_classes, \
+            'Number of class weights must be equal to number of classes'
+        assert 0 <= alpha <= 1, 'Alpha must be between 0 and 1'
+
+        self.num_classes = num_classes
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
+        self.alpha = alpha
+        self.smooth = smooth
+
+    def forward(self, logits, targets):
+        probs = logits_to_probs(logits, self.num_classes)
+        targets_onehot = labels_to_onehot(targets, self.num_classes)
+
+        # Calculate Cross Entropy loss
+        if self.num_classes == 1:
+            cross_entropy_loss = F.binary_cross_entropy_with_logits(logits, targets_onehot)
+        else:
+            cross_entropy_loss = F.cross_entropy(logits, targets, weight=self.class_weights)
+
+        # Calculate Dice loss
+        intersection = torch.einsum('bchw,bchw->bc', probs, targets_onehot)
+        targets_sum = torch.einsum('bchw->bc', targets_onehot)
+        probs_sum = torch.einsum('bchw->bc', probs)
+
+        dice_coeffs = (2 * intersection + self.smooth) / (targets_sum + probs_sum + self.smooth)
+        dice_loss = 1 - dice_coeffs.mean(dim=0)
+
+        if self.class_weights is not None:
+            self.class_weights = self.class_weights.to(logits.device)
+            dice_loss *= self.class_weights
+
+        dice_loss = dice_loss.mean()
+
+        # Combine losses with alpha parameter
+        combo_loss = self.alpha * dice_loss + (1 - self.alpha) * cross_entropy_loss
+
+        return combo_loss
