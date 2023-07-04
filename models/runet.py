@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['RUNet']
+__all__ = ['RUnet']
 
 
 class UpConv(nn.Module):
@@ -68,11 +68,11 @@ class RecurrentBlock(nn.Module):
         return out
 
 
-class RUNet(nn.Module):
+class RUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  n_repeats: int = 2, init_weights: bool = True):
-        super(RUNet, self).__init__()
+        super(RUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -139,7 +139,7 @@ if __name__ == '__main__':
     _k = 2
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        RUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, n_repeats=_k),
+        RUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, n_repeats=_k),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

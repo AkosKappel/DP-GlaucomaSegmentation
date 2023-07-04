@@ -22,7 +22,6 @@ from .refunet3pluscbam import *
 
 # Light-weight
 from .squeezeunet import *
-from .miniunet import *
 
 # Vision Transformer
 # TODO: Add ViT

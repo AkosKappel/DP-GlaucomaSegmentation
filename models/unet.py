@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['UNet', 'GenericUNet']
+__all__ = ['Unet', 'GenericUnet']
 
 
 class DoubleConv(nn.Module):
@@ -116,10 +116,10 @@ class Decoder(nn.Module):
         return self.final(x)
 
 
-class UNet(nn.Module):
+class Unet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
-        super(UNet, self).__init__()
+        super(Unet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -134,11 +134,11 @@ class UNet(nn.Module):
         return x
 
 
-class GenericUNet(nn.Module):
+class GenericUnet(nn.Module):
     # generic models can have any number levels and features (e.g. 3 levels with 32, 64, 96 features)
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
-        super(GenericUNet, self).__init__()
+        super(GenericUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -198,8 +198,8 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        UNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
-        GenericUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        GenericUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

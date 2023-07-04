@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['InceptionUNet']
+__all__ = ['InceptionUnet']
 
 
 class ConvBatchRelu(nn.Module):
@@ -118,11 +118,11 @@ class DownConv(nn.Module):
         return self.conv(x)
 
 
-class InceptionUNet(nn.Module):
+class InceptionUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  init_weights: bool = True):
-        super(InceptionUNet, self).__init__()
+        super(InceptionUnet, self).__init__()
 
         if features is None:
             features = [64, 128, 256, 512, 1024]
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        InceptionUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        InceptionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

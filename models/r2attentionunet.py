@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['R2AttentionUNet']
+__all__ = ['R2AttentionUnet']
 
 
 class SingleConv(nn.Module):
@@ -119,10 +119,10 @@ class RecurrentResidualBlock(nn.Module):
         return x + x1
 
 
-class R2AttentionUNet(nn.Module):
+class R2AttentionUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None, t: int = 2):
-        super(R2AttentionUNet, self).__init__()
+        super(R2AttentionUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        R2AttentionUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        R2AttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

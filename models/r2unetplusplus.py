@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['R2UNetPlusPlus']
+__all__ = ['R2UnetPlusPlus']
 
 
 class DoubleConv(nn.Module):
@@ -81,12 +81,12 @@ class RecurrentResidualConv(nn.Module):
         return x1 + x2
 
 
-class R2UNetPlusPlus(nn.Module):
+class R2UnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  deep_supervision: bool = False, init_weights: bool = True,
                  up_mode: str = 'bilinear', up_conv: bool = True):
-        super(R2UNetPlusPlus, self).__init__()
+        super(R2UnetPlusPlus, self).__init__()
 
         # deep_supervision: switch between fast (no DS) and accurate mode (with DS)
         # up_mode: 'transpose' or one of 'nearest', 'linear', 'bilinear', 'bicubic' and 'trilinear'
@@ -228,21 +228,21 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=False, up_mode='transpose', up_conv=True),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=True, up_mode='transpose', up_conv=True),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=False, up_mode='transpose', up_conv=False),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=True, up_mode='transpose', up_conv=False),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=False, up_mode='bilinear', up_conv=True),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=True, up_mode='bilinear', up_conv=True),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=False, up_mode='bilinear', up_conv=False),
-        R2UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        R2UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                        deep_supervision=True, up_mode='bilinear', up_conv=False),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))

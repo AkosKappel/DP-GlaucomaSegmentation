@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['UNet3Plus', 'GenericUNet3Plus']
+__all__ = ['Unet3Plus', 'GenericUnet3Plus']
 
 
 def dot_product(x, cgm):
@@ -59,11 +59,11 @@ class DoubleConv(nn.Module):
         return out
 
 
-class UNet3Plus(nn.Module):
+class Unet3Plus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
-        super(UNet3Plus, self).__init__()
+        super(Unet3Plus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -227,11 +227,11 @@ class UNet3Plus(nn.Module):
         return output
 
 
-class GenericUNet3Plus(nn.Module):
+class GenericUnet3Plus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
-        super(GenericUNet3Plus, self).__init__()
+        super(GenericUnet3Plus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -367,21 +367,21 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        Unet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                   deep_supervision=False, cgm=False),
-        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        Unet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                   deep_supervision=False, cgm=True),
-        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        Unet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                   deep_supervision=True, cgm=False),
-        UNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        Unet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                   deep_supervision=True, cgm=True),
-        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                          deep_supervision=False, cgm=False),
-        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                          deep_supervision=False, cgm=True),
-        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                          deep_supervision=True, cgm=False),
-        GenericUNet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnet3Plus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                          deep_supervision=True, cgm=True),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))

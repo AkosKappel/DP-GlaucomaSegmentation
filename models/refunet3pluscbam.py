@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['RefUNet3PlusCBAM']
+__all__ = ['RefUnet3PlusCBAM']
 
 
 class ChannelAttention(nn.Module):
@@ -110,11 +110,11 @@ class ConvCBAM(nn.Module):
         return F.relu(self.cbam(self.bn(self.conv(x))), inplace=True)
 
 
-class RefUNet3PlusCBAM(nn.Module):
+class RefUnet3PlusCBAM(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  init_weights: bool = True):
-        super(RefUNet3PlusCBAM, self).__init__()
+        super(RefUnet3PlusCBAM, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -216,7 +216,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        RefUNet3PlusCBAM(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        RefUnet3PlusCBAM(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['SqueezeUNet']
+__all__ = ['SqueezeUnet']
 
 
 class DoubleConv(nn.Module):
@@ -124,11 +124,11 @@ class UpSample(nn.Module):
         return x
 
 
-class SqueezeUNet(nn.Module):
+class SqueezeUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  init_weights: bool = True):
-        super(SqueezeUNet, self).__init__()
+        super(SqueezeUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -192,7 +192,7 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        SqueezeUNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        SqueezeUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:

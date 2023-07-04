@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['UNetPlusPlus', 'GenericUNetPlusPlus']
+__all__ = ['UnetPlusPlus', 'GenericUnetPlusPlus']
 
 
 class DoubleConv(nn.Module):
@@ -30,11 +30,11 @@ class DoubleConv(nn.Module):
         return out
 
 
-class UNetPlusPlus(nn.Module):
+class UnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  deep_supervision: bool = False, init_weights: bool = True):
-        super(UNetPlusPlus, self).__init__()
+        super(UnetPlusPlus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -147,11 +147,11 @@ class UNetPlusPlus(nn.Module):
             return self.output(x0_4)
 
 
-class GenericUNetPlusPlus(nn.Module):
+class GenericUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  deep_supervision: bool = False, init_weights: bool = True):
-        super(GenericUNetPlusPlus, self).__init__()
+        super(GenericUnetPlusPlus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -233,13 +233,13 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                      deep_supervision=False),
-        UNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        UnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                      deep_supervision=True),
-        GenericUNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                             deep_supervision=False),
-        GenericUNetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+        GenericUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
                             deep_supervision=True),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))

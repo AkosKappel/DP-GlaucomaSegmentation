@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['R2UNet']
+__all__ = ['R2Unet']
 
 
 class ConvBatchRelu(nn.Module):
@@ -78,11 +78,11 @@ class RecurrentResidualBlock(nn.Module):
         return out + residual
 
 
-class R2UNet(nn.Module):
+class R2Unet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  n_repeats: int = 2, init_weights: bool = True):
-        super(R2UNet, self).__init__()
+        super(R2Unet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     _k = 2
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        R2UNet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, n_repeats=_k),
+        R2Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, n_repeats=_k),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for model in _models:
