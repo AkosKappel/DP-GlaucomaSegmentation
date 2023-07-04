@@ -1,4 +1,5 @@
 from collections import defaultdict
+import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -24,7 +25,8 @@ def evaluate(model, criterion, device, loader):
             # forward pass
             outputs = model(images)
             loss = criterion(outputs, masks)
-            preds = torch.argmax(outputs, dim=1)
+            probs = F.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
 
             # performance metrics
             update_metrics(masks, preds, history)
@@ -117,14 +119,81 @@ def evaluate_tta(model, criterion, device, loader, show_example=False):
             all_averaged_outputs_preds = torch.stack(all_averaged_outputs_preds, dim=0)
             all_averaged_probs_preds = torch.stack(all_averaged_probs_preds, dim=0)
 
-            loss = criterion(all_averaged_outputs_preds, masks)
-            history['loss_logits'].append(loss.item())
-            loss = criterion(all_averaged_probs_preds, masks)
-            history['loss_probs'].append(loss.item())
-
             # performance metrics
             update_metrics(masks, all_averaged_outputs_preds, history, prefix='averaged_logits_')
             update_metrics(masks, all_averaged_probs_preds, history, prefix='averaged_probs_')
+
+            mean_metrics = {k: np.mean(v) for k, v in history.items()}
+            loop.set_postfix(**mean_metrics)
+
+    return mean_metrics
+
+
+def evaluate_morph(model, criterion, device, loader, show_example=False, iterations=1, kernel_size=3):
+    model.eval()
+    model = model.to(device=device)
+    history = defaultdict(list)
+    total = len(loader)
+    loop = tqdm(loader, total=total, leave=True, desc='Evaluating')
+    mean_metrics = None
+
+    struc_elem = cv.getStructuringElement(cv.MORPH_ELLIPSE, (kernel_size, kernel_size))
+
+    with torch.no_grad():
+        for images, masks in loop:
+            images = images.float().to(device=device)
+            masks = masks.long().to(device=device)
+
+            outputs = model(images)
+            probs = F.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
+
+            all_dilated_preds = []
+            all_eroded_preds = []
+            all_opened_preds = []
+            all_closed_preds = []
+
+            for mask, pred in zip(masks, preds):
+                pred = pred.cpu().numpy()
+                pred = pred.astype(np.uint8)
+
+                dilated_pred = cv.dilate(pred, kernel=struc_elem, iterations=iterations)
+                eroded_pred = cv.erode(pred, kernel=struc_elem, iterations=iterations)
+                opened_pred = cv.morphologyEx(pred, cv.MORPH_OPEN, kernel=struc_elem, iterations=iterations)
+                closed_pred = cv.morphologyEx(pred, cv.MORPH_CLOSE, kernel=struc_elem, iterations=iterations)
+
+                all_dilated_preds.append(torch.tensor(dilated_pred))
+                all_eroded_preds.append(torch.tensor(eroded_pred))
+                all_opened_preds.append(torch.tensor(opened_pred))
+                all_closed_preds.append(torch.tensor(closed_pred))
+
+                if show_example:
+                    fig, ax = plt.subplots(1, 6, figsize=(15, 5))
+                    ax[0].title.set_text('Ground truth')
+                    ax[0].imshow(mask.cpu().numpy())
+                    ax[1].title.set_text('Prediction')
+                    ax[1].imshow(pred)
+                    ax[2].title.set_text('Dilated')
+                    ax[2].imshow(dilated_pred)
+                    ax[3].title.set_text('Eroded')
+                    ax[3].imshow(eroded_pred)
+                    ax[4].title.set_text('Opened')
+                    ax[4].imshow(opened_pred)
+                    ax[5].title.set_text('Closed')
+                    ax[5].imshow(closed_pred)
+                    plt.show()
+                    return
+
+            all_dilated_preds = torch.stack(all_dilated_preds, dim=0)
+            all_eroded_preds = torch.stack(all_eroded_preds, dim=0)
+            all_opened_preds = torch.stack(all_opened_preds, dim=0)
+            all_closed_preds = torch.stack(all_closed_preds, dim=0)
+
+            # performance metrics
+            update_metrics(masks, all_dilated_preds, history, prefix='dilated_')
+            update_metrics(masks, all_eroded_preds, history, prefix='eroded_')
+            update_metrics(masks, all_opened_preds, history, prefix='opened_')
+            update_metrics(masks, all_closed_preds, history, prefix='closed_')
 
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics)
