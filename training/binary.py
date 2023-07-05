@@ -36,14 +36,14 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
         print(f'Epoch {epoch}:')
 
         # Training
-        train_metrics = train_one_epoch(model, criterion, optimizer, device,
-                                        train_loader, scaler, target_ids, threshold)
+        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader, scaler,
+                                        target_ids, threshold)
         update_history(history, train_metrics, prefix='train')
 
         # Validation
         if val_loader is not None:
-            val_metrics = validate_one_epoch(model, criterion, device,
-                                             val_loader, scaler, target_ids, threshold)
+            val_metrics = validate_one_epoch(model, criterion, device, val_loader, scaler,
+                                             target_ids, threshold)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -89,9 +89,8 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
     return history
 
 
-def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, target_ids=None, threshold=0.5):
-    if target_ids is None:
-        raise ValueError('target_ids must be specified for binary segmentation')
+def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, target_ids=None, threshold: float = 0.5):
+    assert target_ids is not None, 'target_ids must be specified for binary segmentation'
 
     metric_types = [target_ids.cpu().numpy().tolist()]
     model.train()
@@ -144,9 +143,8 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, ta
     return mean_metrics
 
 
-def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids=None, threshold=0.5):
-    if target_ids is None:
-        raise ValueError('target_ids must be specified for binary segmentation')
+def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids=None, threshold: float = 0.5):
+    assert target_ids is not None, 'target_ids must be specified for binary segmentation'
 
     metric_types = [target_ids.cpu().numpy().tolist()]
     model.eval()
@@ -189,8 +187,7 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids
 
 def log_progress(model, loader, optimizer, history, epoch, device, target_ids=None, threshold: float = 0.5,
                  part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plot: bool = False):
-    if target_ids is None:
-        raise ValueError('target_ids must be specified for binary segmentation')
+    assert target_ids is not None, 'target_ids must be specified for binary segmentation'
 
     cover = 'OC cover' if target_ids.cpu().numpy().tolist() == [2] else 'OD cover'
 

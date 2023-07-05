@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['RefUnet3PlusCBAM']
+__all__ = ['RefUnet3PlusCBAM', 'DualRefUnet3PlusCBAM']
 
 
 class ChannelAttention(nn.Module):
