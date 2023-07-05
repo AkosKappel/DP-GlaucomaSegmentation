@@ -11,11 +11,12 @@ from utils.visualization import plot_results
 __all__ = ['train_dual']
 
 
-def train_dual(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
-               scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
+def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
+               scheduler=None, scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
                checkpoint_dir: str = '.', log_dir: str = '.', od_ids: list[int] = None, oc_ids: list[int] = None,
-               threshold1: float = 0.5, threshold2: float = 0.5):
+               od_threshold: float = 0.5, oc_threshold: float = 0.5,
+               od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     # od_ids: defines which labels are considered as part of optic disc (default: [1, 2])
     # oc_ids: defines which labels are considered as part of optic cup (default: [2])
     # threshold1: threshold for predicted probabilities of first decoder branch (default: 0.5)
@@ -36,20 +37,20 @@ def train_dual(model, criterion, optimizer, epochs, device, train_loader, val_lo
 
     model = model.to(device)
     if log_to_wandb:
-        wandb.watch(model, criterion)
+        wandb.watch(model, od_criterion)
 
     for epoch in range(1, epochs + 1):
         print(f'Epoch {epoch}:')
 
         # Training
-        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader,
-                                        scaler, od_ids, oc_ids, threshold1, threshold2)
+        train_metrics = train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, train_loader, scaler,
+                                        od_ids, oc_ids, od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
         update_history(history, train_metrics, prefix='train')
 
         # Validating
         if val_loader is not None:
-            val_metrics = validate_one_epoch(model, criterion, device, val_loader, scaler,
-                                             od_ids, oc_ids, threshold1, threshold2)
+            val_metrics = validate_one_epoch(model, od_criterion, oc_criterion, device, val_loader, scaler,
+                                             od_ids, oc_ids, od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -60,7 +61,7 @@ def train_dual(model, criterion, optimizer, epochs, device, train_loader, val_lo
 
         # Logger
         loader = val_loader if val_loader is not None else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device, od_ids, oc_ids, threshold1, threshold2,
+        log_progress(model, loader, optimizer, history, epoch, device, od_ids, oc_ids, od_threshold, oc_threshold,
                      log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show_plots)
 
         # Checkpoints
@@ -95,8 +96,9 @@ def train_dual(model, criterion, optimizer, epochs, device, train_loader, val_lo
     return history
 
 
-def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, od_ids=None, oc_ids=None,
-                    threshold1: float = 0.5, threshold2: float = 0.5):
+def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader, scaler=None, od_ids=None, oc_ids=None,
+                    od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                    od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     assert od_ids is not None, 'od_ids must be specified for binary segmentation with dual decoder network'
     assert oc_ids is not None, 'oc_ids must be specified for binary segmentation with dual decoder network'
 
@@ -119,9 +121,9 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, od
             # Forward pass
             with torch.cuda.amp.autocast():
                 od_outputs, oc_outputs = model(images)
-                od_loss = criterion(od_outputs, od_masks)
-                oc_loss = criterion(oc_outputs, oc_masks)
-                total_loss = od_loss + oc_loss
+                od_loss = od_criterion(od_outputs, od_masks)
+                oc_loss = oc_criterion(oc_outputs, oc_masks)
+                total_loss = od_loss * od_loss_weight + oc_loss * oc_loss_weight
 
             # Backward pass
             optimizer.zero_grad()
@@ -131,9 +133,9 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, od
         else:
             # Forward pass
             od_outputs, oc_outputs = model(images)
-            od_loss = criterion(od_outputs, od_masks)
-            oc_loss = criterion(oc_outputs, oc_masks)
-            total_loss = od_loss + oc_loss
+            od_loss = od_criterion(od_outputs, od_masks)
+            oc_loss = oc_criterion(oc_outputs, oc_masks)
+            total_loss = od_loss * od_loss_weight + oc_loss * oc_loss_weight
 
             # Backward pass
             optimizer.zero_grad()
@@ -142,10 +144,10 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, od
 
         # Convert logits to probabilities for OD and OC
         od_probs = torch.sigmoid(od_outputs)
-        od_preds = (od_probs > threshold1).squeeze(1).long()
+        od_preds = (od_probs > od_threshold).squeeze(1).long()
 
         oc_probs = torch.sigmoid(oc_outputs)
-        oc_preds = (oc_probs > threshold2).squeeze(1).long()
+        oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
 
         # Add new batch metrics to history
         update_metrics(masks, od_preds, history, [[1, 2]])
@@ -161,8 +163,9 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, od
     return mean_metrics
 
 
-def validate_one_epoch(model, criterion, device, loader, scaler=None, od_ids=None, oc_ids=None,
-                       threshold1: float = 0.5, threshold2: float = 0.5):
+def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler=None, od_ids=None, oc_ids=None,
+                       od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                       od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     assert od_ids is not None, 'od_ids must be specified for binary segmentation with dual decoder network'
     assert oc_ids is not None, 'oc_ids must be specified for binary segmentation with dual decoder network'
 
@@ -186,21 +189,21 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None, od_ids=Non
             if scaler:
                 with torch.cuda.amp.autocast():
                     od_outputs, oc_outputs = model(images)
-                    od_loss = criterion(od_outputs, od_masks)
-                    oc_loss = criterion(oc_outputs, oc_masks)
-                    total_loss = od_loss + oc_loss
+                    od_loss = od_criterion(od_outputs, od_masks)
+                    oc_loss = oc_criterion(oc_outputs, oc_masks)
+                    total_loss = od_loss * od_loss_weight + oc_loss * oc_loss_weight
             else:
                 od_outputs, oc_outputs = model(images)
-                od_loss = criterion(od_outputs, od_masks)
-                oc_loss = criterion(oc_outputs, oc_masks)
-                total_loss = od_loss + oc_loss
+                od_loss = od_criterion(od_outputs, od_masks)
+                oc_loss = oc_criterion(oc_outputs, oc_masks)
+                total_loss = od_loss * od_loss_weight + oc_loss * oc_loss_weight
 
             # Convert logits to predictions
             od_probs = torch.sigmoid(od_outputs)
-            od_preds = (od_probs > threshold1).squeeze(1).long()
+            od_preds = (od_probs > od_threshold).squeeze(1).long()
 
             oc_probs = torch.sigmoid(oc_outputs)
-            oc_preds = (oc_probs > threshold2).squeeze(1).long()
+            oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
 
             # calculate metrics
             update_metrics(masks, od_preds, history, [[1, 2]])
