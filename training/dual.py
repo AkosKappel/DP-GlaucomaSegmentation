@@ -1,7 +1,7 @@
 # TODO: training dual-decoder networks
 
-__all__ = ['train']
+__all__ = ['train_dual']
 
 
-def train():
+def train_dual():
     pass

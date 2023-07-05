@@ -195,8 +195,8 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
         plt.close()
 
 
-def plot_side_by_side():
-    pass
+def plot_side_by_side(*args, **kwargs):
+    plot_results(*args, **kwargs)
 
 
 def plot_results(images=None, masks=None, preds=None, types: str | list[str] = None, **kwargs):

@@ -7,14 +7,14 @@ __all__ = [
 ]
 
 
-def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_id: int) -> dict[str, float]:
+def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) -> dict[str, float]:
     # Binarize masks - since OC is always inside OD, we can use >= instead of == for extracting
     # the masks of individual classes. For example, in the masks, the labels are as follows:
     # 0 = BG, 1 = OD, 2 = OC
     # but when creating the binary mask we accept:
     # OD = 1 or 2, OC = 2
-    true = true >= class_id
-    pred = pred >= class_id
+    true = np.isin(true, class_ids)
+    pred = np.isin(pred, class_ids)
 
     # True Positives, True Negatives, False Positives, False Negatives
     tp = (true & pred).sum()
@@ -40,25 +40,33 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_id: int) -> dict
     }
 
 
-def get_metrics(true: torch.Tensor, pred: torch.Tensor) -> dict[str, float]:
+def get_metrics(true: torch.Tensor, pred: torch.Tensor, types: list) -> dict[str, float]:
     # Flatten the tensors to 1D
-    true_flat = true.cpu().flatten().numpy()
-    pred_flat = pred.cpu().flatten().numpy()
+    true_flat = true.flatten().cpu().numpy()
+    pred_flat = pred.flatten().cpu().numpy()
 
     # Get metrics separately for OD and OC, treating it as binary segmentation
-    metrics_od = calculate_metrics(true_flat, pred_flat, 1)
-    metrics_oc = calculate_metrics(true_flat, pred_flat, 2)
+    metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in types else {}
+    metrics_od_ring = calculate_metrics(true_flat, pred_flat, [1]) if [1] in types else {}
+    metrics_od = calculate_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in types else {}
+    metrics_oc = calculate_metrics(true_flat, pred_flat, [2]) if [2] in types else {}
 
     # Combine the metrics and add suffix to the keys
     return {
+        # background
+        **{k + '_BG': v for k, v in metrics_bg.items()},
+        # only the outer ring of optic disc is considered (not the overlap with optic cup)
+        **{k + '_OD_ring': v for k, v in metrics_od_ring.items()},
+        # entire optic disc is used for evaluation (including the inner overlap with optic cup)
         **{k + '_OD': v for k, v in metrics_od.items()},
+        # optic cup
         **{k + '_OC': v for k, v in metrics_oc.items()},
     }
 
 
 def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[float]],
-                   prefix: str = '', postfix: str = '') -> dict[str, float]:
-    new = get_metrics(true, pred)
+                   types: list, prefix: str = '', postfix: str = '') -> dict[str, float]:
+    new = get_metrics(true, pred, types)
 
     # Insert the new metrics at the end of the list in the old dictionary
     for key, value in new.items():
@@ -90,22 +98,22 @@ def get_mean_and_standard_deviation(loader):
 
 
 def get_best_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, class_id=1)
+    return get_extreme_examples(*args, **kwargs, best=True, class_ids=[1, 2])
 
 
 def get_worst_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, class_id=1)
+    return get_extreme_examples(*args, **kwargs, best=False, class_ids=[1, 2])
 
 
 def get_best_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, class_id=2)
+    return get_extreme_examples(*args, **kwargs, best=True, class_ids=[2])
 
 
 def get_worst_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, class_id=2)
+    return get_extreme_examples(*args, **kwargs, best=False, class_ids=[2])
 
 
-def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_id: int = 1,
+def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_ids: list = None,
                          device: str = 'cuda', metric: str = 'iou'):
     """
     Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
@@ -115,6 +123,9 @@ def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_id:
     """
     if metric not in ('iou', 'dice', 'accuracy', 'precision', 'sensitivity', 'specificity'):
         raise ValueError(f'Invalid metric: {metric}')
+
+    if class_ids is None:
+        class_ids = [1, 2]
 
     model = model.to(device)
     model.eval()  # Don't forget to set the model to evaluation mode (e.g. disable dropout)
@@ -135,7 +146,7 @@ def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_id:
             masks = masks.detach().cpu().numpy()
 
             for i, _ in enumerate(images):
-                score = calculate_metrics(masks[i], preds[i], class_id)[metric]
+                score = calculate_metrics(masks[i], preds[i], class_ids)[metric]
                 examples.append((images[i], masks[i], preds[i], score))
 
             # Sort the examples (ascending or descending) based on their scores

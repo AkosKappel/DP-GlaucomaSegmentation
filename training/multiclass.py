@@ -4,16 +4,17 @@ import torch
 from tqdm import tqdm
 import wandb
 
-from training.common import CLASS_LABELS, save_checkpoint
+from training.tools import CLASS_LABELS, update_history, save_checkpoint
 from utils.metrics import update_metrics
 from utils.visualization import plot_results
 
-__all__ = ['train']
+__all__ = ['train_multiclass']
 
 
-def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
-          early_stopping_patience=0, save_best_model=True, save_interval=0, log_to_wandb=False, show=False,
-          checkpoint_dir='.', log_dir='.'):
+def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
+                     scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
+                     save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
+                     checkpoint_dir: str = '.', log_dir: str = '.'):
     # model: model to train
     # criterion: loss function
     # optimizer: optimizer for gradient descent
@@ -28,7 +29,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # save_best_model: save the model with the best validation loss (True or False)
     # save_interval: save the model every few epochs (0 or None to disable)
     # log_to_wandb: log progress to Weights & Biases (True or False)
-    # show: show plots after each epoch (True or False)
+    # show_plots: show examples from validation set (True or False)
     # checkpoint_dir: directory to save checkpoints (default: current directory)
     # log_dir: directory to save logs (default: current directory)
     # returns: history of training and validation metrics as a dictionary of lists
@@ -63,9 +64,9 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             scheduler.step(val_loss)
 
         # log metrics locally and to wandb
-        loader = val_loader if val_loader else train_loader
+        loader = val_loader if val_loader is not None else train_loader
         log_progress(model, loader, optimizer, history, epoch, device,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show)
+                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show_plots)
 
         # save checkpoint after every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -73,7 +74,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 'epoch': epoch,
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-            }, filename=f'model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
+                'history': history,
+            }, filename=f'multiclass-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
 
         # early stopping
         if val_loss < best_loss:
@@ -87,7 +89,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                     'epoch': epoch,
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
-                }, filename='best-model.pth', checkpoint_dir=checkpoint_dir)
+                    'history': history,
+                }, filename='best-multiclass-model.pth', checkpoint_dir=checkpoint_dir)
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
@@ -132,10 +135,11 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
             optimizer.step()
 
         # convert logits to predictions
-        preds = torch.argmax(outputs, dim=1)
+        probs = torch.softmax(outputs, dim=1)
+        preds = torch.argmax(probs, dim=1)
 
         # calculate metrics
-        update_metrics(masks, preds, history)
+        update_metrics(masks, preds, history, [[1, 2], [2]])
         history['loss'].append(loss.item())
 
         # display average metrics in progress bar
@@ -169,10 +173,11 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
                 loss = criterion(outputs, masks)
 
             # convert logits to predictions
-            preds = torch.argmax(outputs, dim=1)
+            probs = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
 
             # calculate metrics
-            update_metrics(masks, preds, history)
+            update_metrics(masks, preds, history, [[1, 2], [2]])
             history['loss'].append(loss.item())
 
             # show summary of metrics in progress bar
@@ -180,11 +185,6 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
             loop.set_postfix(**mean_metrics)
 
     return mean_metrics
-
-
-def update_history(history, metrics, prefix=''):
-    for k, v in metrics.items():
-        history[f'{prefix}_{k}'].append(v)
 
 
 def log_progress(model, loader, optimizer, history, epoch, device, part: str = 'validation', log_dir: str = '.',
@@ -198,14 +198,16 @@ def log_progress(model, loader, optimizer, history, epoch, device, part: str = '
         masks = masks.long().to(device)
 
         outputs = model(images)
-        preds = torch.argmax(outputs, dim=1)
+        probs = torch.softmax(outputs, dim=1)
+        preds = torch.argmax(probs, dim=1)
 
         images = images.cpu().numpy().transpose(0, 2, 3, 1)
         masks = masks.cpu().numpy()
         preds = preds.cpu().numpy()
 
     file = f'{log_dir}/epoch{epoch}.png'
-    plot_results(images, masks, preds, save_path=file, show=show_plot)
+    plot_results(images, masks, preds, save_path=file, show=show_plot,
+                 types=['image', 'mask', 'prediction', 'OD cover', 'OC cover'])
 
     if log_to_wandb:
         # Log plot with example predictions

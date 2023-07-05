@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn.init as init
 
-__all__ = ['CLASS_LABELS', 'init_weights', 'save_checkpoint', 'load_checkpoint']
+__all__ = ['CLASS_LABELS', 'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint']
 
 CLASS_LABELS = {
     0: 'Background',
@@ -35,6 +35,11 @@ def init_weights(net, init_type='kaiming', gain=0.02):
 
     print(f'Initialize network parameters with {init_type} method.')
     net.apply(init_func)
+
+
+def update_history(history, metrics, prefix=''):
+    for k, v in metrics.items():
+        history[f'{prefix}_{k}'].append(v)
 
 
 def save_checkpoint(state, filename='model.pth', checkpoint_dir='.'):

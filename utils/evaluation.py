@@ -9,6 +9,8 @@ from tqdm import tqdm
 from utils.metrics import update_metrics
 
 
+# TODO: handle update_metrics([[1, 2], [2]]) for multiple types of trained models
+
 def evaluate(model, criterion, device, loader):
     model.eval()
     model = model.to(device=device)
@@ -29,7 +31,7 @@ def evaluate(model, criterion, device, loader):
             preds = torch.argmax(probs, dim=1)
 
             # performance metrics
-            update_metrics(masks, preds, history)
+            update_metrics(masks, preds, history, [[1, 2], [2]])
             history['loss'].append(loss.item())
 
             # show mean metrics after every batch
@@ -120,8 +122,8 @@ def evaluate_tta(model, criterion, device, loader, show_example=False):
             all_averaged_probs_preds = torch.stack(all_averaged_probs_preds, dim=0)
 
             # performance metrics
-            update_metrics(masks, all_averaged_outputs_preds, history, prefix='averaged_logits_')
-            update_metrics(masks, all_averaged_probs_preds, history, prefix='averaged_probs_')
+            update_metrics(masks, all_averaged_outputs_preds, history, [[1, 2], [2]], prefix='averaged_logits_')
+            update_metrics(masks, all_averaged_probs_preds, history, [[1, 2], [2]], prefix='averaged_probs_')
 
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics)
@@ -190,10 +192,10 @@ def evaluate_morph(model, criterion, device, loader, show_example=False, iterati
             all_closed_preds = torch.stack(all_closed_preds, dim=0)
 
             # performance metrics
-            update_metrics(masks, all_dilated_preds, history, prefix='dilated_')
-            update_metrics(masks, all_eroded_preds, history, prefix='eroded_')
-            update_metrics(masks, all_opened_preds, history, prefix='opened_')
-            update_metrics(masks, all_closed_preds, history, prefix='closed_')
+            update_metrics(masks, all_dilated_preds, history, [[1, 2], [2]], prefix='dilated_')
+            update_metrics(masks, all_eroded_preds, history, [[1, 2], [2]], prefix='eroded_')
+            update_metrics(masks, all_opened_preds, history, [[1, 2], [2]], prefix='opened_')
+            update_metrics(masks, all_closed_preds, history, [[1, 2], [2]], prefix='closed_')
 
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics)
