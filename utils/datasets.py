@@ -1,6 +1,6 @@
 import cv2 as cv
 from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import os
 
 # calculated from the training set
@@ -35,8 +35,10 @@ class OrigaDataset(Dataset):
         return image, mask
 
 
-def load_origa(image_dir: str, mask_dir: str, train_transform=None, val_transform=None, test_transform=None,
-               train_size: float = 0.8, val_size: float = 0.1, test_size: float = 0.1, random_state: int = 4118):
+def load_origa(image_dir: str, mask_dir: str, train_size: float = 0.8, val_size: float = 0.1, test_size: float = 0.1,
+               train_transform=None, val_transform=None, test_transform=None,
+               batch_size: int = 4, pin_memory: bool = False, num_workers: int = 1,
+               datasets_only: bool = False, loaders_only: bool = True, random_state: int = 4118):
     assert train_size + val_size + test_size == 1, 'The sum of train_size, val_size, and test_size must be 1'
 
     # Get the names of all images in the image directory
@@ -53,9 +55,36 @@ def load_origa(image_dir: str, mask_dir: str, train_transform=None, val_transfor
     val_dataset = OrigaDataset(image_dir, mask_dir, val_names, transform=val_transform)
     test_dataset = OrigaDataset(image_dir, mask_dir, test_names, transform=test_transform)
 
-    return train_dataset, val_dataset, test_dataset
+    print(f'''Loading ORIGA dataset:
+    Train size: {len(train_dataset)} ({len(train_dataset) / len(image_names) * 100:.2f}%)
+    Validation size: {len(val_dataset)} ({len(val_dataset) / len(image_names) * 100:.2f}%)
+    Test size: {len(test_dataset)} ({len(test_dataset) / len(image_names) * 100:.2f}%)
+    
+    Image shape: {val_dataset[0][0].numpy().shape}
+    Mask shape: {val_dataset[0][1].numpy().shape}
+    Batch size: {batch_size}''')
+
+    if datasets_only:
+        return train_dataset, val_dataset, test_dataset
+
+    # Create the data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin_memory)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                            num_workers=num_workers, pin_memory=pin_memory)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+                             num_workers=num_workers, pin_memory=pin_memory)
+
+    print(f'''
+    Train loader length: {len(train_loader)}
+    Validation loader length: {len(val_loader)}
+    Test loader length: {len(test_loader)}''')
+
+    if loaders_only:
+        return train_loader, val_loader, test_loader
+    return train_dataset, val_dataset, test_dataset, train_loader, val_loader, test_loader
 
 
 def load_fundus():
-    # TODO: implement
+    # TODO: implement when we have the data
     pass
