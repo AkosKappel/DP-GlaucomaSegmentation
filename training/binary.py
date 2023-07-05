@@ -14,7 +14,7 @@ __all__ = ['train_binary']
 def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
                  scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                  save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-                 checkpoint_dir: str = None, log_dir: str = None, target_ids: list[int] = None, threshold: float = 0.5):
+                 checkpoint_dir: str = '.', log_dir: str = '.', target_ids: list[int] = None, threshold: float = 0.5):
     # target_ids: defines which labels are considered as positives for binary segmentation (default: [1, 2])
     # threshold: threshold for predicted probabilities (default: 0.5)
 
@@ -188,8 +188,7 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids
 def log_progress(model, loader, optimizer, history, epoch, device, target_ids=None, threshold: float = 0.5,
                  part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plot: bool = False):
     assert target_ids is not None, 'target_ids must be specified for binary segmentation'
-
-    cover = 'OC cover' if target_ids.cpu().numpy().tolist() == [2] else 'OD cover'
+    optic = 'OC' if target_ids.cpu().numpy().tolist() == [2] else 'OD'
 
     model.eval()
     with torch.no_grad():
@@ -211,7 +210,7 @@ def log_progress(model, loader, optimizer, history, epoch, device, target_ids=No
 
     file = f'{log_dir}/epoch{epoch}.png'
     plot_results(images, masks, preds, save_path=file, show=show_plot,
-                 types=['image', 'mask', 'prediction', cover])
+                 types=['image', 'mask', 'prediction', optic + ' cover'])
 
     if log_to_wandb:
         # Log plot with example predictions
@@ -235,5 +234,5 @@ def log_progress(model, loader, optimizer, history, epoch, device, target_ids=No
                     'class_labels': CLASS_LABELS,
                 },
             })
-            wandb.log({f'Segmentation results ({part})': seg_img}, step=epoch)
+            wandb.log({f'Segmentation results for {optic} ({part})': seg_img}, step=epoch)
             break

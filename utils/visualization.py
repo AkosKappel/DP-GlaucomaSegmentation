@@ -27,6 +27,11 @@ def unnormalize(image, mean, std):
     return restored_image
 
 
+# Label colors
+bg_color = np.array((0.27, 0.01, 0.33), dtype=np.float32)
+od_color = np.array((0.13, 0.56, 0.55), dtype=np.float32)
+oc_color = np.array((0.99, 0.91, 0.14), dtype=np.float32)
+
 # Cover colors
 tp_color = np.array((0, 1, 0), dtype=np.uint8) * 255
 tn_color = np.array((0, 0, 0), dtype=np.uint8) * 255
@@ -34,8 +39,8 @@ fp_color = np.array((1, 0, 0), dtype=np.uint8) * 255
 fn_color = np.array((1, 1, 0), dtype=np.uint8) * 255
 
 # Overlay colors
-od_color = np.array((0, 0, 1))
-oc_color = np.array((0, 1, 1))
+od_overlay_color = np.array((0, 0, 1))
+oc_overlay_color = np.array((0, 1, 1))
 
 # Contour colors
 true_color = (0, 0, 255)
@@ -50,6 +55,30 @@ def get_input_image(img):
     if img.max() > 1:
         img = img / 255
     return img
+
+
+def get_ground_truth_masks(masks):
+    return [get_ground_truth_mask(mask) for mask in masks]
+
+
+def get_ground_truth_mask(mask):
+    gt = np.zeros((*mask.shape, 3), dtype=np.float32)
+    gt[mask == 0] = bg_color
+    gt[mask == 1] = od_color
+    gt[mask == 2] = oc_color
+    return gt
+
+
+def get_prediction_masks(preds):
+    return [get_prediction_mask(pred) for pred in preds]
+
+
+def get_prediction_mask(pred):
+    pr = np.zeros((*pred.shape, 3), dtype=np.float32)
+    pr[pred == 0] = bg_color
+    pr[pred == 1] = od_color
+    pr[pred == 2] = oc_color
+    return pr
 
 
 def get_cover_images(masks, preds, **kwargs):
@@ -100,8 +129,8 @@ def get_overlay_image(img, mask, alpha=0.3):
     img = get_input_image(img)
 
     overlay_img = np.zeros_like(img)
-    overlay_img[mask == 1] = od_color
-    overlay_img[mask == 2] = oc_color
+    overlay_img[mask == 1] = od_overlay_color
+    overlay_img[mask == 2] = oc_overlay_color
 
     return img * (1 - alpha) + overlay_img * alpha
 
@@ -222,12 +251,12 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
             col = get_input_images(images)
         elif t == 'mask' and masks is not None:
             titles.append('Ground truth')
-            col = masks
+            col = get_ground_truth_masks(masks)
             if mask_legend_index is None:
                 mask_legend_index = i
         elif t == 'prediction' and preds is not None:
             titles.append('Model prediction')
-            col = preds
+            col = get_prediction_masks(preds)
             if mask_legend_index is None:
                 mask_legend_index = i
         elif t == 'OD cover' and all(x is not None for x in [masks, preds]):

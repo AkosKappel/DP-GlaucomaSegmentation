@@ -14,20 +14,10 @@ __all__ = ['train_dual']
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-               checkpoint_dir: str = '.', log_dir: str = '.', od_ids: list[int] = None, oc_ids: list[int] = None,
-               od_threshold: float = 0.5, oc_threshold: float = 0.5,
+               checkpoint_dir: str = '.', log_dir: str = '.', od_threshold: float = 0.5, oc_threshold: float = 0.5,
                od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
-    # od_ids: defines which labels are considered as part of optic disc (default: [1, 2])
-    # oc_ids: defines which labels are considered as part of optic cup (default: [2])
     # threshold1: threshold for predicted probabilities of first decoder branch (default: 0.5)
     # threshold2: threshold for predicted probabilities of second decoder branch (default: 0.5)
-
-    if od_ids is None:
-        od_ids = [1, 2]
-    if oc_ids is None:
-        oc_ids = [2]
-    od_ids = torch.tensor(od_ids).to(device)
-    oc_ids = torch.tensor(oc_ids).to(device)
 
     history = defaultdict(list)
     best_loss = np.inf
@@ -37,20 +27,20 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
 
     model = model.to(device)
     if log_to_wandb:
-        wandb.watch(model, od_criterion)
+        wandb.watch(model, oc_criterion)
 
     for epoch in range(1, epochs + 1):
         print(f'Epoch {epoch}:')
 
         # Training
         train_metrics = train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, train_loader, scaler,
-                                        od_ids, oc_ids, od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
+                                        od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
         update_history(history, train_metrics, prefix='train')
 
         # Validating
         if val_loader is not None:
             val_metrics = validate_one_epoch(model, od_criterion, oc_criterion, device, val_loader, scaler,
-                                             od_ids, oc_ids, od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
+                                             od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -61,7 +51,7 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
 
         # Logger
         loader = val_loader if val_loader is not None else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device, od_ids, oc_ids, od_threshold, oc_threshold,
+        log_progress(model, loader, optimizer, history, epoch, device, od_threshold, oc_threshold,
                      log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show_plots)
 
         # Checkpoints
@@ -96,12 +86,9 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
     return history
 
 
-def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader, scaler=None, od_ids=None, oc_ids=None,
+def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader, scaler=None,
                     od_threshold: float = 0.5, oc_threshold: float = 0.5,
                     od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
-    assert od_ids is not None, 'od_ids must be specified for binary segmentation with dual decoder network'
-    assert oc_ids is not None, 'oc_ids must be specified for binary segmentation with dual decoder network'
-
     model.train()
     history = defaultdict(list)
     total = len(loader)
@@ -113,9 +100,9 @@ def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader
         images = images.float().to(device)
         masks = masks.long().to(device)
 
-        # Set target_ids to 1 and all other labels to 0
-        od_masks = torch.where(torch.isin(masks, od_ids), torch.ones_like(masks), torch.zeros_like(masks))
-        oc_masks = torch.where(torch.isin(masks, oc_ids), torch.ones_like(masks), torch.zeros_like(masks))
+        # Create optic disc and optic cup binary masks
+        od_masks = (masks == 1).long() + (masks == 2).long()
+        oc_masks = (masks == 2).long()
 
         if scaler:
             # Forward pass
@@ -163,12 +150,9 @@ def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader
     return mean_metrics
 
 
-def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler=None, od_ids=None, oc_ids=None,
+def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler=None,
                        od_threshold: float = 0.5, oc_threshold: float = 0.5,
                        od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
-    assert od_ids is not None, 'od_ids must be specified for binary segmentation with dual decoder network'
-    assert oc_ids is not None, 'oc_ids must be specified for binary segmentation with dual decoder network'
-
     model.eval()
     history = defaultdict(list)
     total = len(loader)
@@ -182,8 +166,8 @@ def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            od_masks = torch.where(torch.isin(masks, od_ids), torch.ones_like(masks), torch.zeros_like(masks))
-            oc_masks = torch.where(torch.isin(masks, oc_ids), torch.ones_like(masks), torch.zeros_like(masks))
+            od_masks = (masks == 1).long() + (masks == 2).long()
+            oc_masks = (masks == 2).long()
 
             # Forward pass (no backprop)
             if scaler:
@@ -219,12 +203,8 @@ def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler
     return mean_metrics
 
 
-def log_progress(model, loader, optimizer, history, epoch, device,
-                 od_ids=None, oc_ids=None, threshold1: float = 0.5, threshold2: float = 0.5,
+def log_progress(model, loader, optimizer, history, epoch, device, od_threshold: float = 0.5, oc_threshold: float = 0.5,
                  part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plot: bool = False):
-    assert od_ids is not None, 'od_ids must be specified for binary segmentation with dual decoder network'
-    assert oc_ids is not None, 'oc_ids must be specified for binary segmentation with dual decoder network'
-
     model.eval()
     with torch.no_grad():
         batch = next(iter(loader))
@@ -233,14 +213,18 @@ def log_progress(model, loader, optimizer, history, epoch, device,
         images = images.float().to(device)
         masks = masks.long().to(device)
 
-        od_masks = torch.where(torch.isin(masks, od_ids), torch.ones_like(masks), torch.zeros_like(masks))
-        oc_masks = torch.where(torch.isin(masks, oc_ids), torch.ones_like(masks), torch.zeros_like(masks))
+        od_masks = (masks == 1).long() + (masks == 2).long()
+        oc_masks = (masks == 2).long()
 
         od_outputs, oc_outputs = model(images)
         od_probs = torch.sigmoid(od_outputs)
-        od_preds = (od_probs > threshold1).squeeze(1).long()
+        od_preds = (od_probs > od_threshold).squeeze(1).long()
         oc_probs = torch.sigmoid(oc_outputs)
-        oc_preds = (oc_probs > threshold2).squeeze(1).long()
+        oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
+
+        # Shift labels of optic cup from 1 to 2
+        oc_masks[oc_masks == 1] = 2
+        oc_preds[oc_preds == 1] = 2
 
         images = images.cpu().numpy().transpose(0, 2, 3, 1)
         od_masks = od_masks.cpu().numpy()
@@ -252,7 +236,7 @@ def log_progress(model, loader, optimizer, history, epoch, device,
     plot_results(images, od_masks, od_preds, save_path=od_file, show=show_plot,
                  types=['image', 'mask', 'prediction', 'OD cover'])
     oc_file = f'{log_dir}/epoch{epoch}-OC.png'
-    plot_results(images, oc_masks + 1, oc_preds + 1, save_path=oc_file, show=show_plot,
+    plot_results(images, oc_masks, oc_preds, save_path=oc_file, show=show_plot,
                  types=['image', 'mask', 'prediction', 'OC cover'])
 
     if log_to_wandb:
