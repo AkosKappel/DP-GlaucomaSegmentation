@@ -474,10 +474,10 @@ def onehot_to_dist_map(onehot_batch: torch.Tensor, normalize: bool) -> torch.Ten
     return torch.tensor(distance_maps, device=onehot_batch.device, dtype=torch.float32)
 
 
-class CrossEntropy(nn.Module):
+class CrossEntropyLoss(nn.Module):
 
     def __init__(self, num_classes: int = None, smooth: float = 1e-7):
-        super(CrossEntropy, self).__init__()
+        super(CrossEntropyLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
 

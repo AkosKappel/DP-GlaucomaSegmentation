@@ -6,6 +6,8 @@ import torchviz
 from torchview import draw_graph
 from matplotlib.patches import Patch
 
+from utils.metrics import get_best_OD_examples, get_worst_OD_examples, get_best_OC_examples, get_worst_OC_examples
+
 
 def show_model_graph(model, input_size, expand_nested=True):
     model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)
@@ -196,9 +198,9 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
 
     if mask_legend:
         axes[rows - 1, mask_legend].legend(handles=[
-            Patch(facecolor=(0.27, 0.01, 0.33), label='BG'),
-            Patch(facecolor=(0.13, 0.56, 0.55), label='OD'),
-            Patch(facecolor=(0.99, 0.91, 0.14), label='OC'),
+            Patch(facecolor=bg_color, label='BG'),
+            Patch(facecolor=od_color, label='OD'),
+            Patch(facecolor=oc_color, label='OC'),
         ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=2)
 
     if cover_legend:
@@ -347,3 +349,43 @@ def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int
     plot_results(
         images, masks, preds, img_size=img_size, save_path=save_path, show=show, types=types
     )
+
+
+def plot_best_OD_examples(model, loader, n: int = 4, **kwargs):
+    examples = get_best_OD_examples(model, loader, n)
+
+    images = [e[0] for e in examples]
+    masks = [e[1] for e in examples]
+    preds = [e[2] for e in examples]
+
+    plot_results(images, masks, preds, **kwargs)
+
+
+def plot_worst_OD_examples(model, loader, n: int = 4, **kwargs):
+    examples = get_worst_OD_examples(model, loader, n)
+
+    images = [e[0] for e in examples]
+    masks = [e[1] for e in examples]
+    preds = [e[2] for e in examples]
+
+    plot_results(images, masks, preds, **kwargs)
+
+
+def plot_best_OC_examples(model, loader, n: int = 4, **kwargs):
+    examples = get_best_OC_examples(model, loader, n)
+
+    images = [e[0] for e in examples]
+    masks = [e[1] for e in examples]
+    preds = [e[2] for e in examples]
+
+    plot_results(images, masks, preds, **kwargs)
+
+
+def plot_worst_OC_examples(model, loader, n: int = 4, **kwargs):
+    examples = get_worst_OC_examples(model, loader, n)
+
+    images = [e[0] for e in examples]
+    masks = [e[1] for e in examples]
+    preds = [e[2] for e in examples]
+
+    plot_results(images, masks, preds, **kwargs)

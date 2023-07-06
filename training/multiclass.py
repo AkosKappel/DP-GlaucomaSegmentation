@@ -6,7 +6,8 @@ import wandb
 
 from training.tools import CLASS_LABELS, update_history, save_checkpoint
 from utils.metrics import update_metrics
-from utils.visualization import plot_results
+from utils.visualization import plot_results, plot_best_OD_examples, plot_worst_OD_examples, \
+    plot_best_OC_examples, plot_worst_OC_examples
 
 __all__ = ['train_multiclass']
 
@@ -14,7 +15,7 @@ __all__ = ['train_multiclass']
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
                      scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                      save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-                     checkpoint_dir: str = '.', log_dir: str = '.'):
+                     checkpoint_dir: str = '.', log_dir: str = '.', create_plots: str = 'all'):
     # model: model to train
     # criterion: loss function
     # optimizer: optimizer for gradient descent
@@ -66,7 +67,7 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
         # log metrics locally and to wandb
         loader = val_loader if val_loader is not None else train_loader
         log_progress(model, loader, optimizer, history, epoch, device,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show_plots)
+                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plots=show_plots, create_plots=create_plots)
 
         # save checkpoint after every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -188,7 +189,7 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
 
 
 def log_progress(model, loader, optimizer, history, epoch, device, part: str = 'validation', log_dir: str = '.',
-                 log_to_wandb: bool = False, show_plot: bool = False):
+                 log_to_wandb: bool = False, show_plots: bool = False, create_plots: str = 'all'):
     model.eval()
     with torch.no_grad():
         batch = next(iter(loader))
@@ -206,12 +207,36 @@ def log_progress(model, loader, optimizer, history, epoch, device, part: str = '
         preds = preds.cpu().numpy()
 
     file = f'{log_dir}/epoch{epoch}.png'
-    plot_results(images, masks, preds, save_path=file, show=show_plot,
-                 types=['image', 'mask', 'prediction', 'OD cover', 'OC cover'])
+    file_best_od = f'{log_dir}/epoch{epoch}_Best-OD.png'
+    file_worst_od = f'{log_dir}/epoch{epoch}_Worst-OD.png'
+    file_best_oc = f'{log_dir}/epoch{epoch}_Best-OC.png'
+    file_worst_oc = f'{log_dir}/epoch{epoch}_Worst-OC.png'
+    plot_types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+    num_examples = 4
+
+    if create_plots in ['all']:
+        plot_results(images, masks, preds, save_path=file, show=show_plots, types=plot_types)
+    if create_plots in ['all', 'best', 'OD']:
+        plot_best_OD_examples(model, loader, num_examples, save_path=file_best_od, show=show_plots)
+    if create_plots in ['all', 'best', 'OC']:
+        plot_best_OC_examples(model, loader, num_examples, save_path=file_best_oc, show=show_plots)
+    if create_plots in ['all', 'worst', 'OD']:
+        plot_worst_OD_examples(model, loader, num_examples, save_path=file_worst_od, show=show_plots)
+    if create_plots in ['all', 'worst', 'OC']:
+        plot_worst_OC_examples(model, loader, num_examples, save_path=file_worst_oc, show=show_plots)
 
     if log_to_wandb:
         # Log plot with example predictions
-        wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
+        if create_plots in ['all']:
+            wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
+        if create_plots in ['all', 'best', 'OD']:
+            wandb.log({f'Best OD examples ({part})': wandb.Image(file_best_od)}, step=epoch)
+        if create_plots in ['all', 'worst', 'OD']:
+            wandb.log({f'Worst OD examples ({part})': wandb.Image(file_worst_od)}, step=epoch)
+        if create_plots in ['all', 'best', 'OC']:
+            wandb.log({f'Best OC examples ({part})': wandb.Image(file_best_oc)}, step=epoch)
+        if create_plots in ['all', 'worst', 'OC']:
+            wandb.log({f'Worst OC examples ({part})': wandb.Image(file_worst_oc)}, step=epoch)
 
         # Log performance metrics
         wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
