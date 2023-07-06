@@ -6,7 +6,8 @@ import wandb
 
 from training.tools import CLASS_LABELS, update_history, save_checkpoint
 from utils.metrics import update_metrics
-from utils.visualization import plot_results
+from utils.visualization import plot_results, plot_best_OD_examples, plot_worst_OD_examples, \
+    plot_best_OC_examples, plot_worst_OC_examples
 
 __all__ = ['train_dual']
 
@@ -14,8 +15,8 @@ __all__ = ['train_dual']
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-               checkpoint_dir: str = '.', log_dir: str = '.', od_threshold: float = 0.5, oc_threshold: float = 0.5,
-               od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+               checkpoint_dir: str = '.', log_dir: str = '.', create_plots: str = 'all', od_threshold: float = 0.5,
+               oc_threshold: float = 0.5, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     # threshold1: threshold for predicted probabilities of first decoder branch (default: 0.5)
     # threshold2: threshold for predicted probabilities of second decoder branch (default: 0.5)
 
@@ -52,7 +53,7 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
         # Logger
         loader = val_loader if val_loader is not None else train_loader
         log_progress(model, loader, optimizer, history, epoch, device, od_threshold, oc_threshold,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plot=show_plots)
+                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plots=show_plots, create_plots=create_plots)
 
         # Checkpoints
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -204,7 +205,8 @@ def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler
 
 
 def log_progress(model, loader, optimizer, history, epoch, device, od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                 part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plot: bool = False):
+                 part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plots: bool = False,
+                 create_plots: str = 'all'):
     model.eval()
     with torch.no_grad():
         batch = next(iter(loader))
@@ -226,23 +228,32 @@ def log_progress(model, loader, optimizer, history, epoch, device, od_threshold:
         oc_masks[oc_masks == 1] = 2
         oc_preds[oc_preds == 1] = 2
 
-        images = images.cpu().numpy().transpose(0, 2, 3, 1)
-        od_masks = od_masks.cpu().numpy()
-        oc_masks = oc_masks.cpu().numpy()
-        od_preds = od_preds.cpu().numpy()
-        oc_preds = oc_preds.cpu().numpy()
+        images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        od_masks = od_masks.detach().cpu().numpy()
+        oc_masks = oc_masks.detach().cpu().numpy()
+        od_preds = od_preds.detach().cpu().numpy()
+        oc_preds = oc_preds.detach().cpu().numpy()
 
     od_file = f'{log_dir}/epoch{epoch}-OD.png'
-    plot_results(images, od_masks, od_preds, save_path=od_file, show=show_plot,
-                 types=['image', 'mask', 'prediction', 'OD cover'])
     oc_file = f'{log_dir}/epoch{epoch}-OC.png'
-    plot_results(images, oc_masks, oc_preds, save_path=oc_file, show=show_plot,
-                 types=['image', 'mask', 'prediction', 'OC cover'])
+    file_best_od = f'{log_dir}/epoch{epoch}_Best-OD.png'
+    file_worst_od = f'{log_dir}/epoch{epoch}_Worst-OD.png'
+    file_best_oc = f'{log_dir}/epoch{epoch}_Best-OC.png'
+    file_worst_oc = f'{log_dir}/epoch{epoch}_Worst-OC.png'
+    plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
+    plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
+    num_examples = 4
+
+    if create_plots in ['all', 'random']:
+        plot_results(images, od_masks, od_preds, save_path=od_file, show=show_plots, types=plot_types_od)
+        plot_results(images, oc_masks, oc_preds, save_path=oc_file, show=show_plots, types=plot_types_oc)
+    # TODO: Add best/worst plots
 
     if log_to_wandb:
         # Log plot with example predictions
-        wandb.log({f'Plotted results for OD ({part})': wandb.Image(od_file)}, step=epoch)
-        wandb.log({f'Plotted results for OC ({part})': wandb.Image(oc_file)}, step=epoch)
+        if create_plots in ['all', 'random']:
+            wandb.log({f'Plotted results for OD ({part})': wandb.Image(od_file)}, step=epoch)
+            wandb.log({f'Plotted results for OC ({part})': wandb.Image(oc_file)}, step=epoch)
 
         # Log performance metrics
         wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)

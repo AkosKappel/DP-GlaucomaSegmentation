@@ -351,7 +351,7 @@ def labels_to_sdf(labels: torch.Tensor, num_classes: int, normalize: bool) -> to
     """Convert a label map to onehot and then to a set of distance maps."""
     # labels.shape = (batch_size, height, width)
     # returns.shape = (batch_size, num_classes, height, width)
-    onehot = labels_to_onehot(labels, num_classes).cpu().numpy()
+    onehot = labels_to_onehot(labels, num_classes).detach().cpu().numpy()
     dist_maps = np.zeros_like(onehot)
 
     batch_size = len(onehot)
@@ -440,7 +440,7 @@ class HausdorffLoss(nn.Module):
 def onehot_to_dist_map(onehot_batch: torch.Tensor, normalize: bool) -> torch.Tensor:
     # onehot_batch.shape = (batch_size, num_classes, height, width)
     # returns.shape = (batch_size, num_classes, height, width)
-    onehot_batch_np = onehot_batch.cpu().detach().numpy()
+    onehot_batch_np = onehot_batch.detach().cpu().numpy()
     distance_maps = np.zeros_like(onehot_batch_np)
 
     num_items, num_classes, height, width = onehot_batch_np.shape
@@ -562,7 +562,7 @@ class EdgeLoss(nn.Module):
 def onehot_to_inverse_dist_map(onehot_batch: torch.Tensor, normalize: bool = True) -> torch.Tensor:
     # onehot_batch.shape = (batch_size, num_classes, height, width)
     # returns.shape = (batch_size, num_classes, height, width)
-    onehot_batch_np = onehot_batch.cpu().detach().numpy()
+    onehot_batch_np = onehot_batch.detach().cpu().numpy()
     inverse_distance_maps = np.zeros_like(onehot_batch_np)
 
     num_items, num_classes, height, width = onehot_batch_np.shape

@@ -5,9 +5,8 @@ from tqdm import tqdm
 import wandb
 
 from training.tools import CLASS_LABELS, update_history, save_checkpoint
-from utils.metrics import update_metrics
-from utils.visualization import plot_results, plot_best_OD_examples, plot_worst_OD_examples, \
-    plot_best_OC_examples, plot_worst_OC_examples
+from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
+from utils.visualization import plot_results
 
 __all__ = ['train_multiclass']
 
@@ -15,7 +14,7 @@ __all__ = ['train_multiclass']
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
                      scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
                      save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-                     checkpoint_dir: str = '.', log_dir: str = '.', create_plots: str = 'all'):
+                     checkpoint_dir: str = '.', log_dir: str = '.', log_interval: int = 0, plot_examples: str = 'all'):
     # model: model to train
     # criterion: loss function
     # optimizer: optimizer for gradient descent
@@ -33,6 +32,8 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
     # show_plots: show examples from validation set (True or False)
     # checkpoint_dir: directory to save checkpoints (default: current directory)
     # log_dir: directory to save logs (default: current directory)
+    # log_interval: log metrics and plots every few epochs (0 or None to disable)
+    # plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
     # returns: history of training and validation metrics as a dictionary of lists
 
     history = defaultdict(list)
@@ -40,22 +41,25 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
     best_metrics = None
     best_epoch = 0
     epochs_without_improvement = 0
+    logger = MulticlassTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
 
     model = model.to(device)
     if log_to_wandb:
         wandb.watch(model, criterion)
 
+    last_epoch = 0
     for epoch in range(1, epochs + 1):
         print(f'Epoch {epoch}:')
+        last_epoch = epoch
 
         # training
-        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader, scaler)
+        train_metrics = train_one_multiclass_epoch(model, criterion, optimizer, device, train_loader, scaler)
         update_history(history, train_metrics, prefix='train')
 
         # skip validation part if data loader was not provided
         if val_loader is not None:
             # validation
-            val_metrics = validate_one_epoch(model, criterion, device, val_loader, scaler)
+            val_metrics = validate_one_multiclass_epoch(model, criterion, device, val_loader, scaler)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -66,8 +70,7 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
 
         # log metrics locally and to wandb
         loader = val_loader if val_loader is not None else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plots=show_plots, create_plots=create_plots)
+        logger(model, loader, optimizer, history, epoch, device)
 
         # save checkpoint after every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -98,10 +101,15 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
                 print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
                 break
 
+    # if last epoch was not logged, log metrics before ending training
+    if last_epoch % log_interval != 0:
+        loader = val_loader if val_loader is not None else train_loader
+        logger(model, loader, optimizer, history, last_epoch, device, force=True)
+
     return history
 
 
-def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
+def train_one_multiclass_epoch(model, criterion, optimizer, device, loader, scaler=None):
     model.train()
     history = defaultdict(list)
     total = len(loader)
@@ -150,7 +158,7 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None):
     return mean_metrics
 
 
-def validate_one_epoch(model, criterion, device, loader, scaler=None):
+def validate_one_multiclass_epoch(model, criterion, device, loader, scaler=None):
     model.eval()
     history = defaultdict(list)
     total = len(loader)
@@ -188,73 +196,97 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None):
     return mean_metrics
 
 
-def log_progress(model, loader, optimizer, history, epoch, device, part: str = 'validation', log_dir: str = '.',
-                 log_to_wandb: bool = False, show_plots: bool = False, create_plots: str = 'all'):
-    model.eval()
-    with torch.no_grad():
-        batch = next(iter(loader))
-        images, masks = batch
+class MulticlassTrainLogger:
 
-        images = images.float().to(device)
-        masks = masks.long().to(device)
+    def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
+                 plot_type: str = 'edge-case', num_examples: int = 4, part: str = 'validation'):
+        self.dir = log_dir
+        self.interval = interval
+        self.wandb = log_to_wandb
+        self.show = show_plots
+        self.plot_type = plot_type
+        self.num_examples = num_examples
+        self.part = part
 
-        outputs = model(images)
-        probs = torch.softmax(outputs, dim=1)
-        preds = torch.argmax(probs, dim=1)
+    def __call__(self, model, loader, optimizer, history, epoch, device, force: bool = False):
+        if self.wandb:  # Log performance metrics
+            wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
+            wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
 
-        images = images.cpu().numpy().transpose(0, 2, 3, 1)
-        masks = masks.cpu().numpy()
-        preds = preds.cpu().numpy()
+        if not force and (not self.interval or epoch % self.interval != 0):
+            return
 
-    file = f'{log_dir}/epoch{epoch}.png'
-    file_best_od = f'{log_dir}/epoch{epoch}_Best-OD.png'
-    file_worst_od = f'{log_dir}/epoch{epoch}_Worst-OD.png'
-    file_best_oc = f'{log_dir}/epoch{epoch}_Best-OC.png'
-    file_worst_oc = f'{log_dir}/epoch{epoch}_Worst-OC.png'
-    plot_types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
-    num_examples = 4
+        model.eval()
+        with torch.no_grad():
+            images, masks = next(iter(loader))
+            images = images.float().to(device)
+            masks = masks.long().to(device)
 
-    if create_plots in ['all']:
-        plot_results(images, masks, preds, save_path=file, show=show_plots, types=plot_types)
-    if create_plots in ['all', 'best', 'OD']:
-        plot_best_OD_examples(model, loader, num_examples, save_path=file_best_od, show=show_plots)
-    if create_plots in ['all', 'best', 'OC']:
-        plot_best_OC_examples(model, loader, num_examples, save_path=file_best_oc, show=show_plots)
-    if create_plots in ['all', 'worst', 'OD']:
-        plot_worst_OD_examples(model, loader, num_examples, save_path=file_worst_od, show=show_plots)
-    if create_plots in ['all', 'worst', 'OC']:
-        plot_worst_OC_examples(model, loader, num_examples, save_path=file_worst_oc, show=show_plots)
+            outputs = model(images)
+            probs = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
 
-    if log_to_wandb:
-        # Log plot with example predictions
-        if create_plots in ['all']:
-            wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
-        if create_plots in ['all', 'best', 'OD']:
-            wandb.log({f'Best OD examples ({part})': wandb.Image(file_best_od)}, step=epoch)
-        if create_plots in ['all', 'worst', 'OD']:
-            wandb.log({f'Worst OD examples ({part})': wandb.Image(file_worst_od)}, step=epoch)
-        if create_plots in ['all', 'best', 'OC']:
-            wandb.log({f'Best OC examples ({part})': wandb.Image(file_best_oc)}, step=epoch)
-        if create_plots in ['all', 'worst', 'OC']:
-            wandb.log({f'Worst OC examples ({part})': wandb.Image(file_worst_oc)}, step=epoch)
+            images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy()
 
-        # Log performance metrics
-        wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
-        wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
+            images = images[:self.num_examples]
+            masks = masks[:self.num_examples]
+            preds = preds[:self.num_examples]
 
-        # Log interactive segmentation results
-        for i, image in enumerate(images):
-            mask = masks[i]
-            pred = preds[i]
-            seg_img = wandb.Image(image, masks={
-                'prediction': {
-                    'mask_data': pred,
-                    'class_labels': CLASS_LABELS,
-                },
-                'ground_truth': {
-                    'mask_data': mask,
-                    'class_labels': CLASS_LABELS,
-                },
-            })
-            wandb.log({f'Segmentation results ({part})': seg_img}, step=epoch)
-            break
+        if self.wandb:  # Log interactive segmentation results to wandb
+            for image, mask, pred in zip(images, masks, preds):
+                seg_img = wandb.Image(image, masks={
+                    'prediction': {
+                        'mask_data': pred,
+                        'class_labels': CLASS_LABELS,
+                    },
+                    'ground_truth': {
+                        'mask_data': mask,
+                        'class_labels': CLASS_LABELS,
+                    },
+                })
+                wandb.log({f'Segmentation results ({self.part})': seg_img}, step=epoch)
+                break
+
+        file = f'{self.dir}/epoch{epoch}.png'
+        file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'
+        file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
+        file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
+        file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
+        plot_types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+
+        if self.plot_type in ['all', 'random']:
+            plot_results(images, masks, preds, save_path=file, show=self.show, types=plot_types)
+            if self.wandb:
+                wandb.log({f'Plotted results ({self.part})': wandb.Image(file)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
+            best, worst = get_best_and_worst_OD_examples(model, loader, self.num_examples, device=device)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OD']:
+                plot_results(b0, b1, b2, save_path=file_best_od, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Best OD examples ({self.part})': wandb.Image(file_best_od)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OD']:
+                plot_results(w0, w1, w2, save_path=file_worst_od, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
+            best, worst = get_best_and_worst_OC_examples(model, loader, self.num_examples, device=device)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OC']:
+                plot_results(b0, b1, b2, save_path=file_best_oc, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Best OC examples ({self.part})': wandb.Image(file_best_oc)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OC']:
+                plot_results(w0, w1, w2, save_path=file_worst_oc, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Worst OC examples ({self.part})': wandb.Image(file_worst_oc)}, step=epoch)

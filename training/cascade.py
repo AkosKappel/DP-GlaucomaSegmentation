@@ -228,13 +228,14 @@ def log_progress(od_model, oc_model, loader, optimizer, history, epoch, device,
         oc_masks[oc_masks == 1] = 2
         oc_preds[oc_preds == 1] = 2
 
-        images = images.cpu().numpy().transpose(0, 2, 3, 1)
-        oc_masks = oc_masks.cpu().numpy()
-        oc_preds = oc_preds.cpu().numpy()
+        images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        oc_masks = oc_masks.detach().cpu().numpy()
+        oc_preds = oc_preds.detach().cpu().numpy()
 
     file = f'{log_dir}/epoch{epoch}.png'
     plot_results(images, oc_masks, oc_preds, save_path=file, show=show_plot,
                  types=['image', 'mask', 'prediction', 'OC cover'])
+    # TODO: Add best/worst plots
 
     if log_to_wandb:
         # Log plot with example predictions

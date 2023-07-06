@@ -320,9 +320,9 @@ def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int
             # softmax not needed because index of max value is the same before and after calling softmax
             preds = torch.argmax(outputs, dim=1)
 
-            images = images.cpu().numpy().transpose(0, 2, 3, 1)
-            masks = masks.cpu().numpy()
-            preds = preds.cpu().numpy()
+            images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy()
 
             images_all.append(images)
             masks_all.append(masks)

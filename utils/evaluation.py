@@ -89,32 +89,32 @@ def evaluate_tta(model, criterion, device, loader, show_example=False):
                     preds = torch.argmax(probs, dim=1)  # 8 augmented predictions
 
                     # plot original image
-                    plt.imshow(image.cpu().numpy().transpose(1, 2, 0) / 255.0)
+                    plt.imshow(image.detach().cpu().numpy().transpose(1, 2, 0) / 255.0)
                     plt.show()
 
                     # plot rotated images
                     _, ax = plt.subplots(2, 4, figsize=(15, 8))
                     for i in range(8):
-                        ax[i // 4, i % 4].imshow(augmented_images[i].cpu().numpy().transpose(1, 2, 0) / 255.0)
+                        ax[i // 4, i % 4].imshow(augmented_images[i].detach().cpu().numpy().transpose(1, 2, 0) / 255.0)
                     plt.show()
 
                     # plot masks
                     _, ax = plt.subplots(2, 4, figsize=(15, 8))
                     for i in range(8):
-                        ax[i // 4, i % 4].imshow(augmented_masks[i].squeeze(0).cpu().numpy() / 255.0)
+                        ax[i // 4, i % 4].imshow(augmented_masks[i].squeeze(0).detach().cpu().numpy() / 255.0)
                     plt.show()
 
                     # plot predictions
                     _, ax = plt.subplots(2, 4, figsize=(15, 8))
                     for i in range(8):
-                        ax[i // 4, i % 4].imshow(preds[i].cpu().numpy())
+                        ax[i // 4, i % 4].imshow(preds[i].detach().cpu().numpy())
                     plt.show()
 
                     # plot averaged predictions
                     _, ax = plt.subplots(1, 3, figsize=(15, 5))
-                    ax[0].imshow(mask.cpu().numpy())
-                    ax[1].imshow(averaged_outputs_preds.cpu().numpy())
-                    ax[2].imshow(averaged_probs_preds.cpu().numpy())
+                    ax[0].imshow(mask.detach().cpu().numpy())
+                    ax[1].imshow(averaged_outputs_preds.detach().cpu().numpy())
+                    ax[2].imshow(averaged_probs_preds.detach().cpu().numpy())
                     plt.show()
                     return
 
@@ -156,7 +156,7 @@ def evaluate_morph(model, criterion, device, loader, show_example=False, iterati
             all_closed_preds = []
 
             for mask, pred in zip(masks, preds):
-                pred = pred.cpu().numpy()
+                pred = pred.detach().cpu().numpy()
                 pred = pred.astype(np.uint8)
 
                 dilated_pred = cv.dilate(pred, kernel=struc_elem, iterations=iterations)
@@ -172,7 +172,7 @@ def evaluate_morph(model, criterion, device, loader, show_example=False, iterati
                 if show_example:
                     fig, ax = plt.subplots(1, 6, figsize=(15, 5))
                     ax[0].title.set_text('Ground truth')
-                    ax[0].imshow(mask.cpu().numpy())
+                    ax[0].imshow(mask.detach().cpu().numpy())
                     ax[1].title.set_text('Prediction')
                     ax[1].imshow(pred)
                     ax[2].title.set_text('Dilated')

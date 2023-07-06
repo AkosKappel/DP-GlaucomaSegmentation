@@ -3,7 +3,8 @@ import torch
 
 __all__ = [
     'calculate_metrics', 'get_metrics', 'update_metrics', 'get_mean_and_standard_deviation', 'get_extreme_examples',
-    'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_OC_examples', 'get_worst_OC_examples',
+    'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_and_worst_OD_examples',
+    'get_best_OC_examples', 'get_worst_OC_examples', 'get_best_and_worst_OC_examples',
 ]
 
 
@@ -22,13 +23,16 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     fp = (~true & pred).sum()
     fn = (true & ~pred).sum()
 
+    def safe_division(a, b):
+        return a / b if b != 0 else 0
+
     # Calculate individual metrics
-    accuracy = (tp + tn) / (tp + tn + fp + fn)
-    precision = tp / (tp + fp)
-    sensitivity = tp / (tp + fn)
-    specificity = tn / (tn + fp)
-    dice = 2 * tp / (2 * tp + fp + fn)
-    iou = tp / (tp + fp + fn)
+    accuracy = safe_division(tp + tn, tp + tn + fp + fn)
+    precision = safe_division(tp, tp + fp)
+    sensitivity = safe_division(tp, tp + fn)
+    specificity = safe_division(tn, tn + fp)
+    dice = safe_division(2 * tp, 2 * tp + fp + fn)
+    iou = safe_division(tp, tp + fp + fn)
 
     return {
         'accuracy': accuracy,
@@ -42,8 +46,8 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
 
 def get_metrics(true: torch.Tensor, pred: torch.Tensor, types: list) -> dict[str, float]:
     # Flatten the tensors to 1D
-    true_flat = true.flatten().cpu().numpy()
-    pred_flat = pred.flatten().cpu().numpy()
+    true_flat = true.flatten().detach().cpu().numpy()
+    pred_flat = pred.flatten().detach().cpu().numpy()
 
     # Get metrics separately for OD and OC, treating it as binary segmentation
     metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in types else {}
@@ -98,22 +102,30 @@ def get_mean_and_standard_deviation(loader):
 
 
 def get_best_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, class_ids=[1, 2])
+    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=[1, 2])
 
 
 def get_worst_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, class_ids=[1, 2])
+    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=[1, 2])
+
+
+def get_best_and_worst_OD_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=[1, 2])
 
 
 def get_best_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, class_ids=[2])
+    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=[2])
 
 
 def get_worst_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, class_ids=[2])
+    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=[2])
 
 
-def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_ids: list = None,
+def get_best_and_worst_OC_examples(*args, **kwargs):
+    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=[2])
+
+
+def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True, class_ids: list = None,
                          device: str = 'cuda', metric: str = 'iou'):
     """
     Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
@@ -149,9 +161,17 @@ def get_extreme_examples(model, loader, n: int = 5, best: bool = True, class_ids
                 score = calculate_metrics(masks[i], preds[i], class_ids)[metric]
                 examples.append((images[i], masks[i], preds[i], score))
 
-            # Sort the examples (ascending or descending) based on their scores
-            examples.sort(key=lambda x: x[-1], reverse=best)
-            # Keep only the top n examples
-            examples = examples[:n]
+        # Sort the examples based on their scores
+        examples.sort(key=lambda x: x[-1])
 
-    return examples
+        # Keep only the top n best/worst examples
+        best_examples = examples[-n:] if best else []
+        worst_examples = examples[:n] if worst else []
+
+    # Return the best/worst examples
+    if best and worst:
+        return best_examples, worst_examples
+    elif best:
+        return best_examples
+    elif worst:
+        return worst_examples
