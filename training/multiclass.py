@@ -1,4 +1,5 @@
 from collections import defaultdict
+from IPython.display import clear_output
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -13,7 +14,7 @@ __all__ = ['train_multiclass']
 
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
                      scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
-                     save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
+                     save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False, clear: bool = True,
                      checkpoint_dir: str = '.', log_dir: str = '.', log_interval: int = 0, plot_examples: str = 'all'):
     # model: model to train
     # criterion: loss function
@@ -30,6 +31,7 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
     # save_interval: save the model every few epochs (0 or None to disable)
     # log_to_wandb: log progress to Weights & Biases (True or False)
     # show_plots: show examples from validation set (True or False)
+    # clear: clear text from cell output after every couple epoch (True or False)
     # checkpoint_dir: directory to save checkpoints (default: current directory)
     # log_dir: directory to save logs (default: current directory)
     # log_interval: log metrics and plots every few epochs (0 or None to disable)
@@ -41,14 +43,19 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
     best_metrics = None
     best_epoch = 0
     epochs_without_improvement = 0
+    last_epoch = 0
     logger = MulticlassTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
 
     model = model.to(device)
     if log_to_wandb:
         wandb.watch(model, criterion)
 
-    last_epoch = 0
     for epoch in range(1, epochs + 1):
+        # empty cell output after every few epochs
+        if clear and epoch % 3 == 0:
+            clear_output(wait=True)
+
+        # start new epoch
         print(f'Epoch {epoch}:')
         last_epoch = epoch
 
@@ -153,7 +160,7 @@ def train_one_multiclass_epoch(model, criterion, optimizer, device, loader, scal
 
         # display average metrics in progress bar
         mean_metrics = {k: np.mean(v) for k, v in history.items()}
-        loop.set_postfix(**mean_metrics)
+        loop.set_postfix(**mean_metrics, learning_rate=optimizer.param_groups[0]['lr'])
 
     return mean_metrics
 
@@ -199,7 +206,7 @@ def validate_one_multiclass_epoch(model, criterion, device, loader, scaler=None)
 class MulticlassTrainLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
-                 plot_type: str = 'edge-case', num_examples: int = 4, part: str = 'validation'):
+                 plot_type: str = 'all', num_examples: int = 4, part: str = 'validation'):
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb

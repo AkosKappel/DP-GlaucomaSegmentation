@@ -1,22 +1,23 @@
 from collections import defaultdict
+from IPython.display import clear_output
 import numpy as np
 import torch
 from tqdm import tqdm
 import wandb
 
 from training.tools import CLASS_LABELS, update_history, save_checkpoint
-from utils.metrics import update_metrics
-from utils.visualization import plot_results, plot_best_OD_examples, plot_worst_OD_examples, \
-    plot_best_OC_examples, plot_worst_OC_examples
+from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
+from utils.visualization import plot_results
 
 __all__ = ['train_dual']
 
 
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
-               save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-               checkpoint_dir: str = '.', log_dir: str = '.', create_plots: str = 'all', od_threshold: float = 0.5,
-               oc_threshold: float = 0.5, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+               save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False, clear: bool = True,
+               checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all', log_interval: int = 0,
+               od_threshold: float = 0.5, oc_threshold: float = 0.5,
+               od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     # threshold1: threshold for predicted probabilities of first decoder branch (default: 0.5)
     # threshold2: threshold for predicted probabilities of second decoder branch (default: 0.5)
 
@@ -25,23 +26,29 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
     best_metrics = None
     best_epoch = 0
     epochs_without_improvement = 0
+    last_epoch = 0
+    logger = DualTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
 
     model = model.to(device)
     if log_to_wandb:
         wandb.watch(model, oc_criterion)
 
     for epoch in range(1, epochs + 1):
+        if clear and epoch % 3 == 0:
+            clear_output(wait=True)
+
         print(f'Epoch {epoch}:')
+        last_epoch = epoch
 
         # Training
-        train_metrics = train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, train_loader, scaler,
-                                        od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
+        train_metrics = train_one_dual_epoch(model, od_criterion, oc_criterion, optimizer, device, train_loader, scaler,
+                                             od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
         update_history(history, train_metrics, prefix='train')
 
         # Validating
         if val_loader is not None:
-            val_metrics = validate_one_epoch(model, od_criterion, oc_criterion, device, val_loader, scaler,
-                                             od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
+            val_metrics = validate_one_dual_epoch(model, od_criterion, oc_criterion, device, val_loader, scaler,
+                                                  od_threshold, oc_threshold, od_loss_weight, oc_loss_weight)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -52,8 +59,7 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
 
         # Logger
         loader = val_loader if val_loader is not None else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device, od_threshold, oc_threshold,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plots=show_plots, create_plots=create_plots)
+        logger(model, loader, optimizer, history, epoch, device, od_threshold, oc_threshold)
 
         # Checkpoints
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -84,12 +90,16 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
                 print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
                 break
 
+    if last_epoch % log_interval != 0:
+        loader = val_loader if val_loader is not None else train_loader
+        logger(model, loader, optimizer, history, last_epoch, device, od_threshold, oc_threshold, force=True)
+
     return history
 
 
-def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader, scaler=None,
-                    od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                    od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+def train_one_dual_epoch(model, od_criterion, oc_criterion, optimizer, device, loader, scaler=None,
+                         od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                         od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     model.train()
     history = defaultdict(list)
     total = len(loader)
@@ -146,14 +156,14 @@ def train_one_epoch(model, od_criterion, oc_criterion, optimizer, device, loader
 
         # Display mean metrics inside progress bar
         mean_metrics = {k: np.mean(v) for k, v in history.items()}
-        loop.set_postfix(**mean_metrics)
+        loop.set_postfix(**mean_metrics, learning_rate=optimizer.param_groups[0]['lr'])
 
     return mean_metrics
 
 
-def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler=None,
-                       od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                       od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+def validate_one_dual_epoch(model, od_criterion, oc_criterion, device, loader, scaler=None,
+                            od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                            od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     model.eval()
     history = defaultdict(list)
     total = len(loader)
@@ -204,88 +214,134 @@ def validate_one_epoch(model, od_criterion, oc_criterion, device, loader, scaler
     return mean_metrics
 
 
-def log_progress(model, loader, optimizer, history, epoch, device, od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                 part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plots: bool = False,
-                 create_plots: str = 'all'):
-    model.eval()
-    with torch.no_grad():
-        batch = next(iter(loader))
-        images, masks = batch
+class DualTrainLogger:
 
-        images = images.float().to(device)
-        masks = masks.long().to(device)
+    def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
+                 plot_type: str = 'all', num_examples: int = 4, part: str = 'validation'):
+        self.dir = log_dir
+        self.interval = interval
+        self.wandb = log_to_wandb
+        self.show = show_plots
+        self.plot_type = plot_type
+        self.num_examples = num_examples
+        self.part = part
 
-        od_masks = (masks == 1).long() + (masks == 2).long()
-        oc_masks = (masks == 2).long()
+    def __call__(self, model, loader, optimizer, history, epoch, device,
+                 od_threshold: float = 0.5, oc_threshold: float = 0.5, force: bool = False):
+        if self.wandb:
+            wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
+            wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
 
-        od_outputs, oc_outputs = model(images)
-        od_probs = torch.sigmoid(od_outputs)
-        od_preds = (od_probs > od_threshold).squeeze(1).long()
-        oc_probs = torch.sigmoid(oc_outputs)
-        oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
+        if not force and (not self.interval or epoch % self.interval != 0):
+            return
 
-        # Shift labels of optic cup from 1 to 2
-        oc_masks[oc_masks == 1] = 2
-        oc_preds[oc_preds == 1] = 2
+        model.eval()
+        with torch.no_grad():
+            images, masks = next(iter(loader))
+            images = images.float().to(device)
+            masks = masks.long().to(device)
 
-        images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        od_masks = od_masks.detach().cpu().numpy()
-        oc_masks = oc_masks.detach().cpu().numpy()
-        od_preds = od_preds.detach().cpu().numpy()
-        oc_preds = oc_preds.detach().cpu().numpy()
+            od_masks = (masks == 1).long() + (masks == 2).long()
+            oc_masks = (masks == 2).long()
 
-    od_file = f'{log_dir}/epoch{epoch}-OD.png'
-    oc_file = f'{log_dir}/epoch{epoch}-OC.png'
-    file_best_od = f'{log_dir}/epoch{epoch}_Best-OD.png'
-    file_worst_od = f'{log_dir}/epoch{epoch}_Worst-OD.png'
-    file_best_oc = f'{log_dir}/epoch{epoch}_Best-OC.png'
-    file_worst_oc = f'{log_dir}/epoch{epoch}_Worst-OC.png'
-    plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
-    plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
-    num_examples = 4
+            od_outputs, oc_outputs = model(images)
+            od_probs = torch.sigmoid(od_outputs)
+            od_preds = (od_probs > od_threshold).squeeze(1).long()
+            oc_probs = torch.sigmoid(oc_outputs)
+            oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
 
-    if create_plots in ['all', 'random']:
-        plot_results(images, od_masks, od_preds, save_path=od_file, show=show_plots, types=plot_types_od)
-        plot_results(images, oc_masks, oc_preds, save_path=oc_file, show=show_plots, types=plot_types_oc)
-    # TODO: Add best/worst plots
+            # Shift labels of optic cup from 1 to 2
+            oc_masks[oc_masks == 1] = 2
+            oc_preds[oc_preds == 1] = 2
 
-    if log_to_wandb:
-        # Log plot with example predictions
-        if create_plots in ['all', 'random']:
-            wandb.log({f'Plotted results for OD ({part})': wandb.Image(od_file)}, step=epoch)
-            wandb.log({f'Plotted results for OC ({part})': wandb.Image(oc_file)}, step=epoch)
+            images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            od_masks = od_masks.detach().cpu().numpy()
+            oc_masks = oc_masks.detach().cpu().numpy()
+            od_preds = od_preds.detach().cpu().numpy()
+            oc_preds = oc_preds.detach().cpu().numpy()
 
-        # Log performance metrics
-        wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
-        wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
+            images = images[:self.num_examples]
+            od_masks = od_masks[:self.num_examples]
+            oc_masks = oc_masks[:self.num_examples]
+            od_preds = od_preds[:self.num_examples]
+            oc_preds = oc_preds[:self.num_examples]
 
-        # Log interactive segmentation results
-        for i, image in enumerate(images):
-            mask = od_masks[i]
-            pred = od_preds[i]
-            seg_img = wandb.Image(image, masks={
-                'prediction': {
-                    'mask_data': pred,
-                    'class_labels': CLASS_LABELS,
-                },
-                'ground_truth': {
-                    'mask_data': mask,
-                    'class_labels': CLASS_LABELS,
-                },
-            })
-            wandb.log({f'Segmentation results for OD ({part})': seg_img}, step=epoch)
+        if self.wandb:  # Log interactive segmentation results
+            for i, image in enumerate(images):
+                mask = od_masks[i]
+                pred = od_preds[i]
+                seg_img = wandb.Image(image, masks={
+                    'prediction': {
+                        'mask_data': pred,
+                        'class_labels': CLASS_LABELS,
+                    },
+                    'ground_truth': {
+                        'mask_data': mask,
+                        'class_labels': CLASS_LABELS,
+                    },
+                })
+                wandb.log({f'Segmentation results for OD ({self.part})': seg_img}, step=epoch)
 
-            mask = oc_masks[i]
-            pred = oc_preds[i]
-            seg_img = wandb.Image(image, masks={
-                'prediction': {
-                    'mask_data': pred,
-                    'class_labels': CLASS_LABELS,
-                },
-                'ground_truth': {
-                    'mask_data': mask,
-                    'class_labels': CLASS_LABELS,
-                },
-            })
-            wandb.log({f'Segmentation results for OC ({part})': seg_img}, step=epoch)
-            break
+                mask = oc_masks[i]
+                pred = oc_preds[i]
+                seg_img = wandb.Image(image, masks={
+                    'prediction': {
+                        'mask_data': pred,
+                        'class_labels': CLASS_LABELS,
+                    },
+                    'ground_truth': {
+                        'mask_data': mask,
+                        'class_labels': CLASS_LABELS,
+                    },
+                })
+                wandb.log({f'Segmentation results for OC ({self.part})': seg_img}, step=epoch)
+                break
+
+        od_file = f'{self.dir}/epoch{epoch}-OD.png'
+        oc_file = f'{self.dir}/epoch{epoch}-OC.png'
+        file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'
+        file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
+        file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
+        file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
+        plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
+        plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
+        num_examples = 4
+
+        if self.plot_type in ['all', 'random']:
+            plot_results(images, od_masks, od_preds, save_path=od_file, show=self.show, types=plot_types_od)
+            plot_results(images, oc_masks, oc_preds, save_path=oc_file, show=self.show, types=plot_types_oc)
+            if self.wandb:
+                wandb.log({f'Plotted results for OD ({self.part})': wandb.Image(od_file)}, step=epoch)
+                wandb.log({f'Plotted results for OC ({self.part})': wandb.Image(oc_file)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
+            best, worst = get_best_and_worst_OD_examples(
+                model, loader, self.num_examples, device=device, thresh=od_threshold, out_idx=0)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OD']:
+                plot_results(b0, b1, b2, save_path=file_best_od, show=self.show, types=plot_types_od)
+                if self.wandb:
+                    wandb.log({f'Best OD examples ({self.part})': wandb.Image(file_best_od)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OD']:
+                plot_results(w0, w1, w2, save_path=file_worst_od, show=self.show, types=plot_types_od)
+                if self.wandb:
+                    wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
+            best, worst = get_best_and_worst_OC_examples(
+                model, loader, self.num_examples, device=device, thresh=oc_threshold, out_idx=1)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OC']:
+                plot_results(b0, b1, b2, save_path=file_best_oc, show=self.show, types=plot_types_oc)
+                if self.wandb:
+                    wandb.log({f'Best OC examples ({self.part})': wandb.Image(file_best_oc)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OC']:
+                plot_results(w0, w1, w2, save_path=file_worst_oc, show=self.show, types=plot_types_oc)
+                if self.wandb:
+                    wandb.log({f'Worst OC examples ({self.part})': wandb.Image(file_worst_oc)}, step=epoch)

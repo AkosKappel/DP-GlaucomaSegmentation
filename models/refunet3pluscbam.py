@@ -249,6 +249,7 @@ class DualRefUnet3PlusCBAM(nn.Module):
         self.decoder1 = Decoder(features, out_channels, features[0])
         self.decoder2 = Decoder(features, out_channels, features[0])
 
+        # Initialize weights
         if init_weights:
             self.initialize_weights()
 
@@ -261,10 +262,13 @@ class DualRefUnet3PlusCBAM(nn.Module):
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # Use Kaiming initialization for ReLU activation function
                 nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                # Use zero bias
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
+                # Initialize weight to 1 and bias to 0
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
@@ -279,13 +283,13 @@ if __name__ == '__main__':
         DualRefUnet3PlusCBAM(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for model in _models:
-        predictions = model(random_data)
+    for _model in _models:
+        predictions = _model(random_data)
         if isinstance(predictions, tuple):
             for prediction in predictions:
                 assert prediction.shape == (_batch_size, _out_channels, _height, _width)
         else:
             assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(model)
-        summary(model.cuda(), (_in_channels, _height, _width))
+        print(_model)
+        summary(_model.cuda(), (_in_channels, _height, _width))
         print()

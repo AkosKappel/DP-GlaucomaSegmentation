@@ -310,15 +310,13 @@ def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int
         samples_so_far = 0
         images_all, masks_all, preds_all = [], [], []
 
-        for batch in loader:
-            images, masks = batch
-
+        for images, masks in loader:
             images = images.float().to(device=device)
             masks = masks.long().to(device=device)
 
             outputs = model(images)
-            # softmax not needed because index of max value is the same before and after calling softmax
-            preds = torch.argmax(outputs, dim=1)
+            probs = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(probs, dim=1)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
             masks = masks.detach().cpu().numpy()
@@ -329,7 +327,6 @@ def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int
             preds_all.append(preds)
 
             samples_so_far += len(images)
-
             if samples_so_far >= n_samples:
                 break
 

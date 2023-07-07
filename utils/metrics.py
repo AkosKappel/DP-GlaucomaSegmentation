@@ -102,31 +102,38 @@ def get_mean_and_standard_deviation(loader):
 
 
 def get_best_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=[1, 2])
+    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=class_ids)
 
 
 def get_worst_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=[1, 2])
+    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=class_ids)
 
 
 def get_best_and_worst_OD_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=[1, 2])
+    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 
 def get_best_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=[2])
+    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=class_ids)
 
 
 def get_worst_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=[2])
+    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=class_ids)
 
 
 def get_best_and_worst_OC_examples(*args, **kwargs):
-    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=[2])
+    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 
 def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True, class_ids: list = None,
-                         device: str = 'cuda', metric: str = 'iou'):
+                         device: str = 'cuda', metric: str = 'iou', thresh: int = None, out_idx: int = None,
+                         first_model=None):
     """
     Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
     The examples are returned as a list of (image, mask, prediction, score) tuples. The metric for determining the
@@ -148,9 +155,36 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
             images = images.float().to(device)
             masks = masks.long().to(device)
 
+            # Apply the first model to the images when cascading
+            if first_model is not None:
+                first_model.eval()
+                outputs = first_model(images)
+                probs = torch.sigmoid(outputs)
+                preds = (probs > thresh).long()
+                images = images * preds
+
             # Forward pass
             outputs = model(images)
-            preds = torch.argmax(outputs, dim=1)
+
+            # Select specific output from models with multiple outputs (e.g. Dual, Cascade)
+            if out_idx is not None:
+                outputs = outputs[out_idx]
+
+            if thresh is not None:
+                probs = torch.sigmoid(outputs)
+                preds = (probs > thresh).squeeze(1).long()
+
+                # Convert the predictions to correct labels in ground truth format
+                if class_ids == [1, 2]:
+                    masks[masks == 2] = 1  # turn OC labels to OD labels
+                elif class_ids == [1]:
+                    masks[masks == 2] = 0  # hide OC labels
+                elif class_ids == [2]:
+                    preds[preds == 1] = 2  # change predicted positive labels to OC labels
+                    masks[masks == 1] = 0  # hide OD from ground truth
+            else:
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
 
             # Convert to numpy arrays and transpose the images to (H, W, C) format
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)

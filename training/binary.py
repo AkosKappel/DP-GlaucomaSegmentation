@@ -1,21 +1,21 @@
 from collections import defaultdict
+from IPython.display import clear_output
 import numpy as np
 import torch
 from tqdm import tqdm
 import wandb
 
 from training.tools import CLASS_LABELS, update_history, save_checkpoint
-from utils.metrics import update_metrics
-from utils.visualization import plot_results, plot_best_OD_examples, plot_worst_OD_examples, \
-    plot_best_OC_examples, plot_worst_OC_examples
+from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
+from utils.visualization import plot_results
 
 __all__ = ['train_binary']
 
 
 def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
                  scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
-                 save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-                 checkpoint_dir: str = '.', log_dir: str = '.', create_plots: str = 'all',
+                 save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False, clear: bool = True,
+                 checkpoint_dir: str = '.', log_dir: str = '.', log_interval: int = 0, plot_examples: str = 'all',
                  target_ids: list[int] = None, threshold: float = 0.5):
     # target_ids: defines which labels are considered as positives for binary segmentation (default: [1, 2])
     # threshold: threshold for predicted probabilities (default: 0.5)
@@ -29,23 +29,29 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
     best_metrics = None
     best_epoch = 0
     epochs_without_improvement = 0
+    last_epoch = 0
+    logger = BinaryTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
 
     model = model.to(device)
     if log_to_wandb:
         wandb.watch(model, criterion)
 
     for epoch in range(1, epochs + 1):
+        if clear and epoch % 3 == 0:
+            clear_output(wait=True)
+
         print(f'Epoch {epoch}:')
+        last_epoch = epoch
 
         # Training
-        train_metrics = train_one_epoch(model, criterion, optimizer, device, train_loader, scaler,
-                                        target_ids, threshold)
+        train_metrics = train_one_binary_epoch(
+            model, criterion, optimizer, device, train_loader, scaler, target_ids, threshold)
         update_history(history, train_metrics, prefix='train')
 
         # Validation
         if val_loader is not None:
-            val_metrics = validate_one_epoch(model, criterion, device, val_loader, scaler,
-                                             target_ids, threshold)
+            val_metrics = validate_one_binary_epoch(
+                model, criterion, device, val_loader, scaler, target_ids, threshold)
             update_history(history, val_metrics, prefix='val')
 
         val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
@@ -56,8 +62,7 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
 
         # Logging
         loader = val_loader if val_loader is not None else train_loader
-        log_progress(model, loader, optimizer, history, epoch, device, target_ids, threshold,
-                     log_to_wandb=log_to_wandb, log_dir=log_dir, show_plots=show_plots, create_plots=create_plots)
+        logger(model, loader, optimizer, history, epoch, device, target_ids, threshold)
 
         # Checkpoints
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -88,13 +93,18 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
                 print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
                 break
 
+    # Force final log after training is done
+    if last_epoch % log_interval != 0:
+        loader = val_loader if val_loader is not None else train_loader
+        logger(model, loader, optimizer, history, last_epoch, device, target_ids, threshold, force=True)
+
     return history
 
 
-def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, target_ids=None, threshold: float = 0.5):
+def train_one_binary_epoch(model, criterion, optimizer, device, loader, scaler=None,
+                           target_ids=None, threshold: float = 0.5):
     assert target_ids is not None, 'target_ids must be specified for binary segmentation'
 
-    metric_types = [target_ids.detach().cpu().numpy().tolist()]
     model.train()
     history = defaultdict(list)
     total = len(loader)
@@ -135,17 +145,17 @@ def train_one_epoch(model, criterion, optimizer, device, loader, scaler=None, ta
         preds = (probs > threshold).squeeze(1).long()
 
         # calculate metrics
-        update_metrics(masks, preds, history, metric_types)
+        update_metrics(masks, preds, history, [[1]])
         history['loss'].append(loss.item())
 
         # display average metrics in progress bar
         mean_metrics = {k: np.mean(v) for k, v in history.items()}
-        loop.set_postfix(**mean_metrics)
+        loop.set_postfix(**mean_metrics, learning_rate=optimizer.param_groups[0]['lr'])
 
     return mean_metrics
 
 
-def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids=None, threshold: float = 0.5):
+def validate_one_binary_epoch(model, criterion, device, loader, scaler=None, target_ids=None, threshold: float = 0.5):
     assert target_ids is not None, 'target_ids must be specified for binary segmentation'
 
     metric_types = [target_ids.detach().cpu().numpy().tolist()]
@@ -187,80 +197,112 @@ def validate_one_epoch(model, criterion, device, loader, scaler=None, target_ids
     return mean_metrics
 
 
-def log_progress(model, loader, optimizer, history, epoch, device, target_ids=None, threshold: float = 0.5,
-                 part: str = 'validation', log_dir: str = '.', log_to_wandb: bool = False, show_plots: bool = False,
-                 create_plots: str = 'all'):
-    assert target_ids is not None, 'target_ids must be specified for binary segmentation'
-    optic = 'OC' if target_ids.detach().cpu().numpy().tolist() == [2] else 'OD'
+class BinaryTrainLogger:
 
-    model.eval()
-    with torch.no_grad():
-        batch = next(iter(loader))
-        images, masks = batch
+    def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
+                 plot_type: str = 'all', num_examples: int = 4, part: str = 'validation'):
+        self.dir = log_dir
+        self.interval = interval
+        self.wandb = log_to_wandb
+        self.show = show_plots
+        self.plot_type = plot_type
+        self.num_examples = num_examples
+        self.part = part
 
-        images = images.float().to(device)
-        masks = masks.long().to(device)
+    def __call__(self, model, loader, optimizer, history, epoch, device, target_ids=None, threshold: float = 0.5,
+                 force: bool = False):
+        if self.wandb:
+            wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
+            wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
 
-        masks = torch.where(torch.isin(masks, target_ids), torch.ones_like(masks), torch.zeros_like(masks))
+        if not force and (not self.interval or epoch % self.interval != 0):
+            return
 
-        outputs = model(images)
-        probs = torch.sigmoid(outputs)
-        preds = (probs > threshold).squeeze(1).long()
+        assert target_ids is not None, 'target_ids must be specified for binary segmentation'
+        target_ids_list = target_ids.detach().cpu().numpy().tolist()
+        optic = 'OC' if target_ids_list == [2] else 'OD'
 
-        images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        masks = masks.detach().cpu().numpy()
-        preds = preds.detach().cpu().numpy()
+        model.eval()
+        with torch.no_grad():
+            batch = next(iter(loader))
+            images, masks = batch
 
-    file = f'{log_dir}/epoch{epoch}.png'
-    file_best_od = f'{log_dir}/epoch{epoch}_Best-OD.png'
-    file_worst_od = f'{log_dir}/epoch{epoch}_Worst-OD.png'
-    file_best_oc = f'{log_dir}/epoch{epoch}_Best-OC.png'
-    file_worst_oc = f'{log_dir}/epoch{epoch}_Worst-OC.png'
-    plot_types = ['image', 'mask', 'prediction', optic + ' cover']
-    num_examples = 4
+            images = images.float().to(device)
+            masks = masks.long().to(device)
 
-    # TODO: verify whether getting extremes works for binary segmentation
-    if create_plots in ['all', 'random']:
-        plot_results(images, masks, preds, save_path=file, show=show_plots, types=plot_types)
-    if create_plots in ['all', 'extreme', 'best', 'OD'] and optic == 'OD':
-        plot_best_OD_examples(model, loader, num_examples, save_path=file_best_od, show=show_plots)
-    if create_plots in ['all', 'extreme', 'best', 'OC'] and optic == 'OC':
-        plot_best_OC_examples(model, loader, num_examples, save_path=file_best_oc, show=show_plots)
-    if create_plots in ['all', 'extreme', 'worst', 'OD'] and optic == 'OD':
-        plot_worst_OD_examples(model, loader, num_examples, save_path=file_worst_od, show=show_plots)
-    if create_plots in ['all', 'extreme', 'worst', 'OC'] and optic == 'OC':
-        plot_worst_OC_examples(model, loader, num_examples, save_path=file_worst_oc, show=show_plots)
+            masks = torch.where(torch.isin(masks, target_ids), torch.ones_like(masks), torch.zeros_like(masks))
 
-    if log_to_wandb:
-        # Log plot with example predictions
-        if create_plots in ['all', 'random']:
-            wandb.log({f'Plotted results ({part})': wandb.Image(file)}, step=epoch)
-        if create_plots in ['all', 'extreme', 'best', 'OD'] and optic == 'OD':
-            wandb.log({f'Plotted best OD examples ({part})': wandb.Image(file_best_od)}, step=epoch)
-        if create_plots in ['all', 'extreme', 'best', 'OC'] and optic == 'OC':
-            wandb.log({f'Plotted best OC examples ({part})': wandb.Image(file_best_oc)}, step=epoch)
-        if create_plots in ['all', 'extreme', 'worst', 'OD'] and optic == 'OD':
-            wandb.log({f'Plotted worst OD examples ({part})': wandb.Image(file_worst_od)}, step=epoch)
-        if create_plots in ['all', 'extreme', 'worst', 'OC'] and optic == 'OC':
-            wandb.log({f'Plotted worst OC examples ({part})': wandb.Image(file_worst_oc)}, step=epoch)
+            outputs = model(images)
+            probs = torch.sigmoid(outputs)
+            preds = (probs > threshold).squeeze(1).long()
 
-        # Log performance metrics
-        wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
-        wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
+            if optic == 'OC':
+                preds[preds == 1] = 2
+                masks[masks == 1] = 2
 
-        # Log interactive segmentation results
-        for i, image in enumerate(images):
-            mask = masks[i]
-            pred = preds[i]
-            seg_img = wandb.Image(image, masks={
-                'prediction': {
-                    'mask_data': pred,
-                    'class_labels': CLASS_LABELS,
-                },
-                'ground_truth': {
-                    'mask_data': mask,
-                    'class_labels': CLASS_LABELS,
-                },
-            })
-            wandb.log({f'Segmentation results for {optic} ({part})': seg_img}, step=epoch)
-            break
+            images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy()
+
+            images = images[:self.num_examples]
+            masks = masks[:self.num_examples]
+            preds = preds[:self.num_examples]
+
+        if self.wandb:  # Log interactive segmentation results to wandb
+            for image, mask, pred in zip(images, masks, preds):
+                seg_img = wandb.Image(image, masks={
+                    'prediction': {
+                        'mask_data': pred,
+                        'class_labels': CLASS_LABELS,
+                    },
+                    'ground_truth': {
+                        'mask_data': mask,
+                        'class_labels': CLASS_LABELS,
+                    },
+                })
+                wandb.log({f'Segmentation results for {optic} ({self.part})': seg_img}, step=epoch)
+                break
+
+        file = f'{self.dir}/epoch{epoch}.png'
+        file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'
+        file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
+        file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
+        file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
+        plot_types = ['image', 'mask', 'prediction', optic + ' cover']
+
+        if self.plot_type in ['all', 'random']:
+            plot_results(images, masks, preds, save_path=file, show=self.show, types=plot_types)
+            if self.wandb:
+                wandb.log({f'Plotted results ({self.part})': wandb.Image(file)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD'] and optic == 'OD':
+            best, worst = get_best_and_worst_OD_examples(
+                model, loader, self.num_examples, device=device, thresh=threshold)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OD']:
+                plot_results(b0, b1, b2, save_path=file_best_od, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Best OD examples ({self.part})': wandb.Image(file_best_od)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OD']:
+                plot_results(w0, w1, w2, save_path=file_worst_od, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
+
+        if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC'] and optic == 'OC':
+            best, worst = get_best_and_worst_OC_examples(
+                model, loader, self.num_examples, device=device, thresh=threshold)
+
+            b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
+            w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
+
+            if self.plot_type in ['all', 'extreme', 'best', 'OC']:
+                plot_results(b0, b1, b2, save_path=file_best_oc, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Best OC examples ({self.part})': wandb.Image(file_best_oc)}, step=epoch)
+            if self.plot_type in ['all', 'extreme', 'worst', 'OC']:
+                plot_results(w0, w1, w2, save_path=file_worst_oc, show=self.show, types=plot_types)
+                if self.wandb:
+                    wandb.log({f'Worst OC examples ({self.part})': wandb.Image(file_worst_oc)}, step=epoch)
