@@ -69,23 +69,32 @@ class ResidualBlock(nn.Module):
         return out
 
 
-class ResUnet(nn.Module):
+class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
-        super(ResUnet, self).__init__()
-
-        if features is None:
-            features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Residual U-Net requires a list of 5 features'
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+    def __init__(self, in_channels: int, features: list[int]):
+        super(Encoder, self).__init__()
 
         self.en1 = ResidualBlock(in_channels, features[0])
         self.en2 = ResidualBlock(features[0], features[1])
         self.en3 = ResidualBlock(features[1], features[2])
         self.en4 = ResidualBlock(features[2], features[3])
         self.en5 = ResidualBlock(features[3], features[4])
+
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):  # Contracting path
+        e1 = self.en1(x)
+        e2 = self.en2(self.pool(e1))
+        e3 = self.en3(self.pool(e2))
+        e4 = self.en4(self.pool(e3))
+        e5 = self.en5(self.pool(e4))
+        return e1, e2, e3, e4, e5
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, features: list[int], out_channels: int):
+        super(Decoder, self).__init__()
 
         self.up1 = UpConv(features[4], features[3], scale_factor=2, mode='transpose')
         self.up2 = UpConv(features[3], features[2], scale_factor=2, mode='transpose')
@@ -98,6 +107,27 @@ class ResUnet(nn.Module):
         self.de4 = ResidualBlock(features[1], features[0])
 
         self.conv1x1 = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+    def forward(self, x1, x2, x3, x4, x5):  # Expanding path
+        d1 = self.de1(torch.cat([self.up1(x5), x4], dim=1))
+        d2 = self.de2(torch.cat([self.up2(d1), x3], dim=1))
+        d3 = self.de3(torch.cat([self.up3(d2), x2], dim=1))
+        d4 = self.de4(torch.cat([self.up4(d3), x1], dim=1))
+        return self.conv1x1(d4)
+
+
+class ResUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(ResUnet, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Residual U-Net requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder = Decoder(features, out_channels)
 
         if init_weights:
             self.initialize_weights()
@@ -113,21 +143,8 @@ class ResUnet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # Contracting path
-        e1 = self.en1(x)
-        e2 = self.en2(self.pool(e1))
-        e3 = self.en3(self.pool(e2))
-        e4 = self.en4(self.pool(e3))
-        e5 = self.en5(self.pool(e4))
-
-        # Expanding path
-        d1 = self.de1(torch.cat([self.up1(e5), e4], dim=1))
-        d2 = self.de2(torch.cat([self.up2(d1), e3], dim=1))
-        d3 = self.de3(torch.cat([self.up3(d2), e2], dim=1))
-        d4 = self.de4(torch.cat([self.up4(d3), e1], dim=1))
-
-        # Output
-        return self.conv1x1(d4)
+        e1, e2, e3, e4, e5 = self.encoder(x)
+        return self.decoder(e1, e2, e3, e4, e5)
 
 
 if __name__ == '__main__':

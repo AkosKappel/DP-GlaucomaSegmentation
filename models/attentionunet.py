@@ -69,22 +69,32 @@ class AttentionGate(nn.Module):
         return out
 
 
-class AttentionUnet(nn.Module):
+class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
-        super(AttentionUnet, self).__init__()
-
-        if features is None:
-            features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Attention U-Net requires a list of 5 features'
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+    def __init__(self, in_channels: int, features: list[int]):
+        super(Encoder, self).__init__()
 
         self.en1 = ConvBlock(in_channels, features[0])
         self.en2 = ConvBlock(features[0], features[1])
         self.en3 = ConvBlock(features[1], features[2])
         self.en4 = ConvBlock(features[2], features[3])
         self.en5 = ConvBlock(features[3], features[4])
+
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        e1 = self.en1(x)
+        e2 = self.en2(self.pool(e1))
+        e3 = self.en3(self.pool(e2))
+        e4 = self.en4(self.pool(e3))
+        e5 = self.en5(self.pool(e4))
+        return e1, e2, e3, e4, e5
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, features: list[int], out_channels: int):
+        super(Decoder, self).__init__()
 
         self.up1 = UpConv(features[4], features[3])
         self.ag1 = AttentionGate(features[3], features[3], features[3] // 2)
@@ -104,13 +114,7 @@ class AttentionUnet(nn.Module):
 
         self.last_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
 
-    def forward(self, x):
-        e1 = self.en1(x)
-        e2 = self.en2(self.pool(e1))
-        e3 = self.en3(self.pool(e2))
-        e4 = self.en4(self.pool(e3))
-        e5 = self.en5(self.pool(e4))
-
+    def forward(self, e1, e2, e3, e4, e5):
         d1 = self.up1(e5)
         a1 = self.ag1(d1, e4)
         d1 = torch.cat((a1, d1), dim=1)  # concatenate attention-weighted skip connection with previous layer output
@@ -129,6 +133,24 @@ class AttentionUnet(nn.Module):
         d4 = self.de4(torch.cat((a4, d4), dim=1))
 
         out = self.last_conv(d4)
+        return out
+
+
+class AttentionUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+        super(AttentionUnet, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Attention U-Net requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder = Decoder(features, out_channels)
+
+    def forward(self, x):
+        e1, e2, e3, e4, e5 = self.encoder(x)
+        out = self.decoder(e1, e2, e3, e4, e5)
         return out
 
 

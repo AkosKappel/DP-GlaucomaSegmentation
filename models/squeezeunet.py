@@ -124,6 +124,54 @@ class UpSample(nn.Module):
         return x
 
 
+class Encoder(nn.Module):
+
+    def __init__(self, in_channels: int, features: list[int]):
+        super(Encoder, self).__init__()
+
+        self.en1 = DoubleConv(in_channels, features[0])
+        self.ds1 = DownSample(features[0], features[1])
+        self.ds2 = DownSample(features[1], features[2])
+        self.ds3 = DownSample(features[2], features[3])
+        self.ds4 = DownSample(features[3], features[4])
+
+    def forward(self, x):
+        x1 = self.en1(x)
+        x2 = self.ds1(x1)
+        x3 = self.ds2(x2)
+        x4 = self.ds3(x3)
+        x5 = self.ds4(x4)
+        return x1, x2, x3, x4, x5
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, features: list[int], out_channels: int):
+        super(Decoder, self).__init__()
+
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+
+        self.us1 = UpSample(features[4], features[3])
+        self.us2 = UpSample(features[3], features[2])
+        self.us3 = UpSample(features[2], features[1])
+        self.de1 = TransposedFireModule(features[1], features[0])
+        # multiply by 2 because of concatenation
+        self.de2 = DoubleConv(features[0] * 2, features[0])
+
+        self.final = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+    def forward(self, x1, x2, x3, x4, x5):
+        x = self.us1(x5, x4)
+        x = self.us2(x, x3)
+        x = self.us3(x, x2)
+        x = self.de1(x)
+        x = self.up(x)
+        x = torch.cat([x, x1], dim=1)
+        x = self.de2(x)
+        x = self.final(x)
+        return x
+
+
 class SqueezeUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
@@ -134,22 +182,8 @@ class SqueezeUnet(nn.Module):
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Residual U-Net requires a list of 5 features'
 
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-
-        self.en1 = DoubleConv(in_channels, features[0])
-        self.ds1 = DownSample(features[0], features[1])
-        self.ds2 = DownSample(features[1], features[2])
-        self.ds3 = DownSample(features[2], features[3])
-        self.ds4 = DownSample(features[3], features[4])
-
-        self.us1 = UpSample(features[4], features[3])
-        self.us2 = UpSample(features[3], features[2])
-        self.us3 = UpSample(features[2], features[1])
-        self.de1 = TransposedFireModule(features[1], features[0])
-        # multiply by 2 because of concatenation
-        self.de2 = DoubleConv(features[0] * 2, features[0])
-
-        self.final = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        self.encoder = Encoder(in_channels, features)
+        self.decoder = Decoder(features, out_channels)
 
         if init_weights:
             self.initialize_weights()
@@ -165,24 +199,8 @@ class SqueezeUnet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # Encoder
-        x1 = self.en1(x)
-        x2 = self.ds1(x1)
-        x3 = self.ds2(x2)
-        x4 = self.ds3(x3)
-        x5 = self.ds4(x4)
-
-        # Decoder
-        x = self.us1(x5, x4)
-        x = self.us2(x, x3)
-        x = self.us3(x, x2)
-        x = self.de1(x)
-        x = self.up(x)
-        x = torch.cat([x, x1], dim=1)
-        x = self.de2(x)
-
-        # Final output
-        x = self.final(x)
+        x1, x2, x3, x4, x5 = self.encoder(x)
+        x = self.decoder(x1, x2, x3, x4, x5)
         return x
 
 

@@ -118,15 +118,14 @@ class DownConv(nn.Module):
         return self.conv(x)
 
 
-class InceptionUnet(nn.Module):
+class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
-        super(InceptionUnet, self).__init__()
+    def __init__(self, in_channels: int, features: list[int], factor: int):
+        super(Encoder, self).__init__()
 
         if features is None:
             features = [64, 128, 256, 512, 1024]
-        assert len(features) == 5, 'Inception U-Net requires a list of 5 features'
+        assert len(features) == 5, 'Encoder requires a list of 5 features'
 
         self.inception1 = InceptionBlock(features[0], features[0] // 2)
         self.inception2 = InceptionBlock(features[1], features[0])
@@ -137,30 +136,7 @@ class InceptionUnet(nn.Module):
         self.en2 = DownConv(features[0], features[1])
         self.en3 = DownConv(features[1], features[2])
         self.en4 = DownConv(features[2], features[3])
-
-        bilinear = True
-        factor = 2 if bilinear else 1
         self.bridge = DownConv(features[3], features[4] // factor)
-
-        self.de1 = UpConv(features[4] + features[3], features[2] // factor, bilinear)
-        self.de2 = UpConv(features[3] + features[2] + features[1], features[1] // factor, bilinear)
-        self.de3 = UpConv(features[2] + features[1] + features[0], features[0] // 2 // factor, bilinear)
-        self.de4 = UpConv(features[1] + features[0] + features[0] // 4, features[0] // 4, bilinear)
-
-        self.output = nn.Conv2d(features[0] // 4, out_channels, kernel_size=1)
-
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # Contracting path
@@ -178,6 +154,26 @@ class InceptionUnet(nn.Module):
         i3 = self.inception3(i2)
         i4 = self.inception4(i3)
 
+        return e1, e2, e3, e4, e5, i1, i2, i3, i4
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, out_channels: int, features: list[int], factor: int, bilinear: bool):
+        super(Decoder, self).__init__()
+
+        if features is None:
+            features = [64, 128, 256, 512, 1024]
+        assert len(features) == 5, 'Decoder requires a list of 5 features'
+
+        self.de1 = UpConv(features[4] + features[3], features[2] // factor, bilinear)
+        self.de2 = UpConv(features[3] + features[2] + features[1], features[1] // factor, bilinear)
+        self.de3 = UpConv(features[2] + features[1] + features[0], features[0] // 2 // factor, bilinear)
+        self.de4 = UpConv(features[1] + features[0] + features[0] // 4, features[0] // 4, bilinear)
+
+        self.output = nn.Conv2d(features[0] // 4, out_channels, kernel_size=1)
+
+    def forward(self, e1, e2, e3, e4, e5, i1, i2, i3, i4):
         # Expanding path
         d1 = self.de1(e5, e4, i4)
         d2 = self.de2(d1, e3, i3)
@@ -187,6 +183,39 @@ class InceptionUnet(nn.Module):
         # Output
         out = self.output(d4)
         return out
+
+
+class InceptionUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(InceptionUnet, self).__init__()
+
+        if features is None:
+            features = [64, 128, 256, 512, 1024]
+        assert len(features) == 5, 'Inception U-Net requires a list of 5 features'
+
+        bilinear = True
+        factor = 2 if bilinear else 1
+
+        self.encoder = Encoder(in_channels, features, factor)
+        self.decoder = Decoder(out_channels, features, factor, bilinear)
+
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        return self.decoder(*self.encoder(x))
 
 
 if __name__ == '__main__':

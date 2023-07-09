@@ -11,6 +11,7 @@ from .r2unet import *
 # Attention, Inception
 from .attentionunet import *
 from .inceptionunet import *
+from .doubleattentionunet import *
 
 # Combined
 from .r2attentionunet import *
