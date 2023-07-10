@@ -1,217 +1,123 @@
 from collections import defaultdict
-from IPython.display import clear_output
 import numpy as np
 import torch
 from tqdm import tqdm
 import wandb
 
-from training.tools import CLASS_LABELS, update_history, save_checkpoint
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['train_multiclass']
+__all__ = ['MulticlassTrainer', 'MulticlassTrainLogger']
 
 
-def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None,
-                     scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
-                     save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False, clear: bool = True,
-                     checkpoint_dir: str = '.', log_dir: str = '.', log_interval: int = 0, plot_examples: str = 'all'):
-    # model: model to train
-    # criterion: loss function
-    # optimizer: optimizer for gradient descent
-    # epochs: number of epochs to train
-    # device: 'cuda' or 'cpu'
-    # train_loader: data loader for training set
-    # val_loader: data loader for validation set
-    # scheduler: learning rate scheduler (Optional)
-    # scaler: scaler for mixed precision training (Optional)
-    # early_stopping_patience: number of epochs to wait before stopping training if the loss does not improve
-    #                          (0 or None to disable early stopping)
-    # save_best_model: save the model with the best validation loss (True or False)
-    # save_interval: save the model every few epochs (0 or None to disable)
-    # log_to_wandb: log progress to Weights & Biases (True or False)
-    # show_plots: show examples from validation set (True or False)
-    # clear: clear text from cell output after every couple epoch (True or False)
-    # checkpoint_dir: directory to save checkpoints (default: current directory)
-    # log_dir: directory to save logs (default: current directory)
-    # log_interval: log metrics and plots every few epochs (0 or None to disable)
-    # plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
-    # returns: history of training and validation metrics as a dictionary of lists
+class MulticlassTrainer:
 
-    history = defaultdict(list)
-    best_loss = np.inf
-    best_metrics = None
-    best_epoch = 0
-    epochs_without_improvement = 0
-    last_epoch = 0
-    logger = MulticlassTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
+    def __init__(self, model, criterion, optimizer, device, scaler=None):
+        self.model = model
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.device = device
+        self.scaler = scaler
+        self.od_label = [1, 2]
+        self.oc_label = [2]
+        self.labels = [self.od_label, self.oc_label]
 
-    model = model.to(device)
-    if log_to_wandb:
-        wandb.watch(model, criterion)
+    def train_one_epoch(self, loader):
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
+        mean_metrics = None
 
-    for epoch in range(1, epochs + 1):
-        # empty cell output after every few epochs
-        if clear and epoch % 3 == 0:
-            clear_output(wait=True)
-
-        # start new epoch
-        print(f'Epoch {epoch}:')
-        last_epoch = epoch
-
-        # training
-        train_metrics = train_one_multiclass_epoch(model, criterion, optimizer, device, train_loader, scaler)
-        update_history(history, train_metrics, prefix='train')
-
-        # skip validation part if data loader was not provided
-        if val_loader is not None:
-            # validation
-            val_metrics = validate_one_multiclass_epoch(model, criterion, device, val_loader, scaler)
-            update_history(history, val_metrics, prefix='val')
-
-        val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
-
-        # learning rate scheduler
-        if scheduler is not None:
-            scheduler.step(val_loss)
-
-        # log metrics locally and to wandb
-        loader = val_loader if val_loader is not None else train_loader
-        logger(model, loader, optimizer, history, epoch, device)
-
-        # save checkpoint after every few epochs
-        if save_interval and epoch % save_interval == 0 and checkpoint_dir:
-            save_checkpoint({
-                'epoch': epoch,
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'history': history,
-            }, filename=f'multiclass-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
-
-        # early stopping
-        if val_loss < best_loss:
-            best_loss = val_loss
-            best_metrics = {k: v[-1] for k, v in history.items()}
-            best_epoch = epoch
-            epochs_without_improvement = 0
-
-            if save_best_model and checkpoint_dir:
-                save_checkpoint({
-                    'epoch': epoch,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'history': history,
-                }, filename='best-multiclass-model.pth', checkpoint_dir=checkpoint_dir)
-        else:
-            epochs_without_improvement += 1
-            if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
-                print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
-                break
-
-    # if last epoch was not logged, log metrics before ending training
-    if last_epoch % log_interval != 0:
-        loader = val_loader if val_loader is not None else train_loader
-        logger(model, loader, optimizer, history, last_epoch, device, force=True)
-
-    return history
-
-
-def train_one_multiclass_epoch(model, criterion, optimizer, device, loader, scaler=None):
-    model.train()
-    history = defaultdict(list)
-    total = len(loader)
-    loop = tqdm(loader, total=total, leave=True, desc='Training')
-    mean_metrics = None
-
-    # iterate once over all the batches in the training data loader
-    for batch_idx, (images, masks) in enumerate(loop):
-        # move data to device
-        images = images.float().to(device)
-        masks = masks.long().to(device)
-
-        if scaler:
-            # forward pass
-            with torch.cuda.amp.autocast():
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-
-            # backward pass
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            # forward pass
-            outputs = model(images)
-            loss = criterion(outputs, masks)
-
-            # backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        # convert logits to predictions
-        probs = torch.softmax(outputs, dim=1)
-        preds = torch.argmax(probs, dim=1)
-
-        # calculate metrics
-        update_metrics(masks, preds, history, [[1, 2], [2]])
-        history['loss'].append(loss.item())
-
-        # display average metrics in progress bar
-        mean_metrics = {k: np.mean(v) for k, v in history.items()}
-        loop.set_postfix(**mean_metrics, learning_rate=optimizer.param_groups[0]['lr'])
-
-    return mean_metrics
-
-
-def validate_one_multiclass_epoch(model, criterion, device, loader, scaler=None):
-    model.eval()
-    history = defaultdict(list)
-    total = len(loader)
-    loop = tqdm(loader, total=total, leave=True, desc='Validation')
-    mean_metrics = None
-
-    # disable gradient calculation
-    with torch.no_grad():
-        # iterate once over all batches in the validation dataset
+        # Set model to train mode
+        self.model.train()
+        # Iterate once over all the batches in the training data loader
         for batch_idx, (images, masks) in enumerate(loop):
-            images = images.float().to(device)
-            masks = masks.long().to(device)
+            # Move data to device
+            images = images.float().to(self.device)
+            masks = masks.long().to(self.device)
 
-            # forward pass only, no gradient calculation
-            if scaler:
-                with torch.cuda.amp.autocast():
-                    outputs = model(images)
-                    loss = criterion(outputs, masks)
+            if self.scaler is None:
+                # Forward pass
+                outputs = self.model(images)  # Model returns logits
+                loss = self.criterion(outputs, masks)
+
+                # Backward pass
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
             else:
-                outputs = model(images)  # model returns logits
-                loss = criterion(outputs, masks)
+                # Forward pass
+                with torch.cuda.amp.autocast():
+                    outputs = self.model(images)
+                    loss = self.criterion(outputs, masks)
 
-            # convert logits to predictions
+                # Backward pass
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+            # Convert logits to probabilities and then to label predictions
             probs = torch.softmax(outputs, dim=1)
             preds = torch.argmax(probs, dim=1)
 
-            # calculate metrics
-            update_metrics(masks, preds, history, [[1, 2], [2]])
+            # Calculate metrics
+            update_metrics(masks, preds, history, self.labels)
             history['loss'].append(loss.item())
 
-            # show summary of metrics in progress bar
+            # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics)
+            loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
 
-    return mean_metrics
+        return mean_metrics
+
+    def validate_one_epoch(self, loader):
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
+        mean_metrics = None
+
+        # Set model to evaluation mode
+        self.model.eval()
+        # Disable gradient calculation
+        with torch.no_grad():
+            # Iterate once over all batches in the validation dataset
+            for batch_idx, (images, masks) in enumerate(loop):
+                images = images.float().to(self.device)
+                masks = masks.long().to(self.device)
+
+                # Forward pass only, no gradient calculation
+                if self.scaler is None:
+                    outputs = self.model(images)
+                    loss = self.criterion(outputs, masks)
+                else:
+                    with torch.cuda.amp.autocast():
+                        outputs = self.model(images)
+                        loss = self.criterion(outputs, masks)
+
+                # Convert logits to probabilities and predictions
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+
+                # Calculate metrics
+                update_metrics(masks, preds, history, self.labels)
+                history['loss'].append(loss.item())
+
+                # Show summary of metrics in progress bar
+                mean_metrics = {k: np.mean(v) for k, v in history.items()}
+                loop.set_postfix(**mean_metrics)
+
+        return mean_metrics
 
 
 class MulticlassTrainLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
-                 plot_type: str = 'all', num_examples: int = 4, part: str = 'validation'):
+                 plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation'):
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
         self.show = show_plots
         self.plot_type = plot_type
+        self.class_labels = class_labels
         self.num_examples = num_examples
         self.part = part
 
@@ -241,16 +147,17 @@ class MulticlassTrainLogger:
             masks = masks[:self.num_examples]
             preds = preds[:self.num_examples]
 
-        if self.wandb:  # Log interactive segmentation results to wandb
+        if self.wandb and self.class_labels is not None and self.plot_type not in ['none', '']:
+            # Log interactive segmentation results to wandb
             for image, mask, pred in zip(images, masks, preds):
                 seg_img = wandb.Image(image, masks={
                     'prediction': {
                         'mask_data': pred,
-                        'class_labels': CLASS_LABELS,
+                        'class_labels': self.class_labels,
                     },
                     'ground_truth': {
                         'mask_data': mask,
-                        'class_labels': CLASS_LABELS,
+                        'class_labels': self.class_labels,
                     },
                 })
                 wandb.log({f'Segmentation results ({self.part})': seg_img}, step=epoch)

@@ -1,238 +1,155 @@
 from collections import defaultdict
-from IPython.display import clear_output
 import numpy as np
 import torch
 from tqdm import tqdm
 import wandb
 
-from training.tools import CLASS_LABELS, update_history, save_checkpoint
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['train_cascade']
+__all__ = ['CascadeTrainer', 'CascadeTrainLogger']
 
 
-def train_cascade(od_model, oc_model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
-                  scheduler=None, scaler=None, early_stopping_patience: int = 0, save_best_model: bool = True,
-                  save_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False, clear: bool = True,
-                  od_threshold: float = 0.5, oc_threshold: float = 0.5, checkpoint_dir: str = '.', log_dir: str = '.',
-                  log_interval: int = 0, plot_examples: str = 'all'):
-    # od_model: pre-trained model for optic disc segmentation
-    # oc_model: model for optic cup segmentation that will be trained from scratch
-    # od_threshold: decides whether a predicted optic disc probability is considered as a positive sample (default: 0.5)
-    # oc_threshold: decides whether a predicted optic cup probability is considered as a positive sample (default: 0.5)
+class CascadeTrainer:
 
-    history = defaultdict(list)
-    best_loss = np.inf
-    best_metrics = None
-    best_epoch = 0
-    epochs_without_improvement = 0
-    last_epoch = 0
-    logger = CascadeTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples)
+    def __init__(self, od_model, oc_model, criterion, optimizer, device, scaler=None,
+                 od_threshold: float = 0.5, oc_threshold: float = 0.5):
+        self.od_model = od_model
+        self.oc_model = oc_model
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.device = device
+        self.scaler = scaler
+        self.od_threshold = od_threshold
+        self.oc_threshold = oc_threshold
+        self.labels = [[2]]
 
-    # Freeze the pre-trained model
-    od_model.eval()
-    for param in od_model.parameters():
-        param.requires_grad = False
+    def train_one_epoch(self, loader):
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
+        mean_metrics = None
 
-    od_model = od_model.to(device)
-    oc_model = oc_model.to(device)
-    if log_to_wandb:
-        wandb.watch(oc_model, criterion)
-
-    for epoch in range(1, epochs + 1):
-        if clear and epoch % 3 == 0:
-            clear_output(wait=True)
-
-        print(f'Epoch {epoch}:')
-        last_epoch = epoch
-
-        # Training
-        train_metrics = train_one_cascade_epoch(
-            od_model, oc_model, criterion, optimizer, device, train_loader, scaler, od_threshold, oc_threshold)
-        update_history(history, train_metrics, prefix='train')
-
-        # Validating
-        if val_loader is not None:
-            val_metrics = validate_one_cascade_epoch(
-                od_model, oc_model, criterion, device, val_loader, scaler, od_threshold, oc_threshold)
-            update_history(history, val_metrics, prefix='val')
-
-        val_loss = history['val_loss'][-1] if val_loader is not None else history['train_loss'][-1]
-
-        # LR scheduler
-        if scheduler is not None:
-            scheduler.step(val_loss)
-
-        # Logging and plotting
-        loader = val_loader if val_loader is not None else train_loader
-        logger(od_model, oc_model, loader, optimizer, history, epoch, device, od_threshold, oc_threshold)
-
-        # Checkpoints saving
-        if save_interval and epoch % save_interval == 0 and checkpoint_dir:
-            save_checkpoint({
-                'epoch': epoch,
-                'model': oc_model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'history': history,
-            }, filename=f'cascade-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
-
-        # Early stopping
-        if val_loss < best_loss:
-            best_loss = val_loss
-            best_metrics = {k: v[-1] for k, v in history.items()}
-            best_epoch = epoch
-            epochs_without_improvement = 0
-
-            if save_best_model and checkpoint_dir:
-                save_checkpoint({
-                    'epoch': epoch,
-                    'model': oc_model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'history': history,
-                }, filename='best-cascade-model.pth', checkpoint_dir=checkpoint_dir)
-        else:
-            epochs_without_improvement += 1
-            if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
-                print(f'=> Early stopping: best validation loss at epoch {best_epoch} with metrics {best_metrics}')
-                break
-
-    # Final logging and plotting
-    if last_epoch % log_interval != 0:
-        loader = val_loader if val_loader is not None else train_loader
-        logger(od_model, oc_model, loader, optimizer, history, last_epoch, device, od_threshold, oc_threshold,
-               force=True)
-
-    return history
-
-
-def train_one_cascade_epoch(od_model, oc_model, criterion, optimizer, device, loader, scaler=None,
-                            od_threshold: float = 0.5, oc_threshold: float = 0.5):
-    od_model.eval()
-    oc_model.train()
-    history = defaultdict(list)
-    total = len(loader)
-    loop = tqdm(loader, total=total, leave=True, desc='Training')
-    mean_metrics = None
-
-    # Training loop
-    for batch_idx, (images, masks) in enumerate(loop):
-        images = images.float().to(device)
-        masks = masks.long().to(device)
-
-        # Apply first model to get optic disc masks which get passed to the second model
-        with torch.no_grad():
-            od_outputs = od_model(images)
-            od_probs = torch.sigmoid(od_outputs)
-            od_preds = (od_probs > od_threshold).long()
-
-        # Crop images to optic disc boundaries
-        cropped_images = images * od_preds
-
-        # Create optic cup only masks
-        oc_masks = (masks == 2).long()
-
-        if scaler:
-            # Forward pass
-            with torch.cuda.amp.autocast():
-                oc_outputs = oc_model(cropped_images)
-                loss = criterion(oc_outputs, oc_masks)
-
-            # Backward pass
-            optimizer.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            # Forward pass
-            oc_outputs = oc_model(cropped_images)
-            loss = criterion(oc_outputs, oc_masks)
-
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        # Convert logits to probabilities
-        oc_probs = torch.sigmoid(oc_outputs)
-        oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
-
-        # calculate metrics
-        update_metrics(masks, oc_preds + 1, history, [[2]])
-        history['loss'].append(loss.item())
-
-        # display average metrics in progress bar
-        mean_metrics = {k: np.mean(v) for k, v in history.items()}
-        loop.set_postfix(**mean_metrics, learning_rate=optimizer.param_groups[0]['lr'])
-
-    return mean_metrics
-
-
-def validate_one_cascade_epoch(od_model, oc_model, criterion, device, loader, scaler=None,
-                               od_threshold: float = 0.5, oc_threshold: float = 0.5):
-    od_model.eval()
-    oc_model.eval()
-    history = defaultdict(list)
-    total = len(loader)
-    loop = tqdm(loader, total=total, leave=True, desc='Validation')
-    mean_metrics = None
-
-    # Validation loop
-    with torch.no_grad():
+        # Training loop
+        self.od_model.eval()
+        self.oc_model.train()
         for batch_idx, (images, masks) in enumerate(loop):
-            # Prepare data
-            images = images.float().to(device)
-            masks = masks.long().to(device)
+            images = images.float().to(self.device)
+            masks = masks.long().to(self.device)
 
-            # Create optic disc masks
-            od_outputs = od_model(images)
-            od_probs = torch.sigmoid(od_outputs)
-            od_preds = (od_probs > od_threshold).long()
+            # Apply first model to get optic disc masks which get passed to the second model
+            with torch.no_grad():
+                od_outputs = self.od_model(images)
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > self.od_threshold).long()
 
-            # Apply masks to images
+            # Crop images to optic disc boundaries
             cropped_images = images * od_preds
 
             # Create optic cup only masks
             oc_masks = (masks == 2).long()
 
-            # Forward pass (no backprop)
-            if scaler:
-                with torch.cuda.amp.autocast():
-                    oc_outputs = oc_model(cropped_images)
-                    loss = criterion(oc_outputs, oc_masks)
-            else:
-                oc_outputs = oc_model(cropped_images)
-                loss = criterion(oc_outputs, oc_masks)
+            if self.scaler is None:
+                # Forward pass
+                oc_outputs = self.oc_model(cropped_images)
+                loss = self.criterion(oc_outputs, oc_masks)
 
-            # Convert logits to predictions
+                # Backward pass
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+            else:
+                # Forward pass
+                with torch.cuda.amp.autocast():
+                    oc_outputs = self.oc_model(cropped_images)
+                    loss = self.criterion(oc_outputs, oc_masks)
+
+                # Backward pass
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+            # Convert logits to probabilities
             oc_probs = torch.sigmoid(oc_outputs)
-            oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
+            oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
             # calculate metrics
-            update_metrics(masks, oc_preds + 1, history, [[2]])
+            update_metrics(masks, oc_preds + 1, history, self.labels)
             history['loss'].append(loss.item())
 
-            # show summary of metrics in progress bar
+            # display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics)
+            loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
 
-    return mean_metrics
+        return mean_metrics
+
+    def validate_one_epoch(self, loader):
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
+        mean_metrics = None
+
+        # Validation loop
+        self.od_model.eval()
+        self.oc_model.eval()
+        with torch.no_grad():
+            for batch_idx, (images, masks) in enumerate(loop):
+                # Prepare data
+                images = images.float().to(self.device)
+                masks = masks.long().to(self.device)
+
+                # Create optic disc masks
+                od_outputs = self.od_model(images)
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > self.od_threshold).long()
+
+                # Apply masks to images
+                cropped_images = images * od_preds
+
+                # Create optic cup only masks
+                oc_masks = (masks == 2).long()
+
+                # Forward pass (no backprop)
+                if self.scaler is None:
+                    oc_outputs = self.oc_model(cropped_images)
+                    loss = self.criterion(oc_outputs, oc_masks)
+                else:
+                    with torch.cuda.amp.autocast():
+                        oc_outputs = self.oc_model(cropped_images)
+                        loss = self.criterion(oc_outputs, oc_masks)
+
+                # Convert logits to predictions
+                oc_probs = torch.sigmoid(oc_outputs)
+                oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+
+                # calculate metrics
+                update_metrics(masks, oc_preds + 1, history, self.labels)
+                history['loss'].append(loss.item())
+
+                # show summary of metrics in progress bar
+                mean_metrics = {k: np.mean(v) for k, v in history.items()}
+                loop.set_postfix(**mean_metrics)
+
+        return mean_metrics
 
 
 class CascadeTrainLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
-                 plot_type: str = 'all', num_examples: int = 4, part: str = 'validation'):
+                 plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
+                 base_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5):
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
         self.show = show_plots
         self.plot_type = plot_type
+        self.class_labels = class_labels
         self.num_examples = num_examples
         self.part = part
+        self.base_model = base_model
+        self.od_threshold = od_threshold
+        self.oc_threshold = oc_threshold
 
-    def __call__(self, od_model, oc_model, loader, optimizer, history, epoch, device,
-                 od_threshold: float = 0.5, oc_threshold: float = 0.5, force: bool = False):
+    def __call__(self, model, loader, optimizer, history, epoch, device, force: bool = False):
         if self.wandb:
             wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
             wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
@@ -240,26 +157,26 @@ class CascadeTrainLogger:
         if not force and (not self.interval or epoch % self.interval != 0):
             return
 
-        od_model.eval()
-        oc_model.eval()
+        self.base_model.eval()
+        model.eval()
         with torch.no_grad():
             images, masks = next(iter(loader))
             images = images.float().to(device)
             masks = masks.long().to(device)
 
             # Create optic disc masks
-            od_outputs = od_model(images)
+            od_outputs = self.base_model(images)
             od_probs = torch.sigmoid(od_outputs)
-            od_preds = (od_probs > od_threshold).long()
+            od_preds = (od_probs > self.od_threshold).long()
 
             # Apply masks to images
             cropped_images = images * od_preds
 
             oc_masks = (masks == 2).long()
 
-            oc_outputs = oc_model(cropped_images)
+            oc_outputs = model(cropped_images)
             oc_probs = torch.sigmoid(oc_outputs)
-            oc_preds = (oc_probs > oc_threshold).squeeze(1).long()
+            oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
             oc_masks[oc_masks == 1] = 2
             oc_preds[oc_preds == 1] = 2
@@ -277,11 +194,11 @@ class CascadeTrainLogger:
                 seg_img = wandb.Image(image, masks={
                     'prediction': {
                         'mask_data': pred,
-                        'class_labels': CLASS_LABELS,
+                        'class_labels': self.class_labels,
                     },
                     'ground_truth': {
                         'mask_data': mask,
-                        'class_labels': CLASS_LABELS,
+                        'class_labels': self.class_labels,
                     },
                 })
                 wandb.log({f'Segmentation results for OC ({self.part})': seg_img}, step=epoch)
@@ -302,7 +219,7 @@ class CascadeTrainLogger:
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
             best, worst = get_best_and_worst_OD_examples(
-                od_model, loader, self.num_examples, device=device, thresh=od_threshold)
+                self.base_model, loader, self.num_examples, device=device, thresh=self.od_threshold)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
@@ -318,7 +235,7 @@ class CascadeTrainLogger:
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
             best, worst = get_best_and_worst_OC_examples(
-                oc_model, loader, self.num_examples, device=device, thresh=oc_threshold, first_model=od_model)
+                model, loader, self.num_examples, device=device, thresh=self.oc_threshold, first_model=self.base_model)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
