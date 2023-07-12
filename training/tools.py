@@ -11,8 +11,8 @@ from .cascade import CascadeTrainer, CascadeTrainLogger
 from .dual import DualTrainer, DualTrainLogger
 
 __all__ = [
-    'train', 'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
-    'train_multiclass', 'train_binary', 'train_cascade', 'train_dual',
+    'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
+    'train', 'train_multiclass', 'train_binary', 'train_cascade', 'train_dual',
 ]
 
 CLASS_LABELS = {
@@ -24,41 +24,49 @@ CLASS_LABELS = {
 
 # kwargs:
 # early_stopping_patience, save_best_model, save_interval, log_interval
-# log_to_wandb, show_plots, clear, checkpoint_dir, log_dir, plot_examples
+# log_to_wandb, show_plots, clear_interval, checkpoint_dir, log_dir, plot_examples
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                      scheduler=None, scaler=None, **kwargs):
-    train(model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
-          train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='multiclass',
-          **kwargs)
+    return train(
+        model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
+        train_mode='multiclass', **kwargs
+    )
 
 
 def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                  scheduler=None, scaler=None, target_ids: list[int] = None, threshold: float = 0.5, **kwargs):
-    train(model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
-          train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-          train_mode='binary', target_ids=target_ids, threshold=threshold, **kwargs)
+    return train(
+        model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
+        train_mode='binary', target_ids=target_ids, threshold=threshold, **kwargs
+    )
 
 
 def train_cascade(od_model, oc_model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                   scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, **kwargs):
-    train(model=oc_model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
-          train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
-          od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=od_model, **kwargs)
+    return train(
+        model=oc_model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
+        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=od_model, **kwargs
+    )
 
 
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
                od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0, **kwargs):
-    train(model=model, criterion=od_criterion, optimizer=optimizer, epochs=epochs, device=device,
-          train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-          train_mode='dual', od_threshold=od_threshold, oc_threshold=oc_threshold, dual_branch_criterion=oc_criterion,
-          od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs)
+    return train(
+        model=model, criterion=od_criterion, optimizer=optimizer, epochs=epochs, device=device,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='dual',
+        od_threshold=od_threshold, oc_threshold=oc_threshold, dual_branch_criterion=oc_criterion,
+        od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs
+    )
 
 
 def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
           train_mode: str = 'multiclass', early_stopping_patience: int = 0, save_best_model: bool = True,
           save_interval: int = 0, log_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-          clear: bool = True, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
+          clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
           target_ids: list[int] = None, threshold: float = 0.5,
           base_cascade_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
           dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
@@ -78,7 +86,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # log_interval: log tracked metrics and created plots every few epochs (0 or None to disable)
     # log_to_wandb: log progress to Weights & Biases (True or False)
     # show_plots: show examples from validation set (True or False)
-    # clear: clear text from cell output after every couple epoch (True or False)
+    # clear_interval: clear text from cell output after every couple epoch (0 or None to disable)
     # checkpoint_dir: directory to save checkpoints (default: current directory)
     # log_dir: directory to save logs (default: current directory)
     # plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
@@ -149,7 +157,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # Run training & validation for N epochs
     for epoch in range(1, epochs + 1):
         # Empty notebook cell output after every few epochs
-        if clear and epoch % 3 == 0:
+        if clear_interval and epoch % clear_interval == 0:
             clear_output(wait=True)
 
         # Start a new epoch

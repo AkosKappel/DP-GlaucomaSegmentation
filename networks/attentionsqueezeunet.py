@@ -102,7 +102,7 @@ class AttentionSqueezeUnet(nn.Module):
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self.conv_in = nn.Sequential(
-            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.ReLU(inplace=True),
         )
 
@@ -129,7 +129,7 @@ class AttentionSqueezeUnet(nn.Module):
             expand_channels=expand_channels[0], stride=1, kernel_size=3, att_channels=attention_channels[0])
 
         self.conv_out = nn.Sequential(
-            nn.Conv2d(features[1], features[0], kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
+            nn.Conv2d(features[1], features[0], kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
         )
@@ -161,9 +161,13 @@ if __name__ == '__main__':
         AttentionSqueezeUnet(in_channels=_in_channels, out_channels=_out_channels),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for model in _models:
-        predictions = model(random_data)
-        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(model)
-        summary(model.cuda(), (_in_channels, _height, _width))
+    for _model in _models:
+        predictions = _model(random_data)
+        if isinstance(predictions, tuple):
+            for prediction in predictions:
+                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
+        else:
+            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(_model)
+        summary(_model.cuda(), (_in_channels, _height, _width))
         print()

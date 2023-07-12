@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 
-__all__ = ['SqueezeUnet']
+__all__ = ['SqueezeUnet', 'DualSqueezeUnet']
 
 
 class DoubleConv(nn.Module):
@@ -204,6 +204,40 @@ class SqueezeUnet(nn.Module):
         return x
 
 
+class DualSqueezeUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 init_weights: bool = True):
+        super(DualSqueezeUnet, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Dual Squeeze U-Net requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder1 = Decoder(features, out_channels)
+        self.decoder2 = Decoder(features, out_channels)
+
+        if init_weights:
+            self.initialize_weights()
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        x1, x2, x3, x4, x5 = self.encoder(x)
+        out1 = self.decoder1(x1, x2, x3, x4, x5)
+        out2 = self.decoder2(x1, x2, x3, x4, x5)
+        return out1, out2
+
+
 if __name__ == '__main__':
     _batch_size = 8
     _in_channels, _out_channels = 3, 1
@@ -211,11 +245,16 @@ if __name__ == '__main__':
     _layers = [16, 32, 64, 128, 256]
     _models = [
         SqueezeUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        DualSqueezeUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for model in _models:
-        predictions = model(random_data)
-        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(model)
-        summary(model.cuda(), (_in_channels, _height, _width))
+    for _model in _models:
+        predictions = _model(random_data)
+        if isinstance(predictions, tuple):
+            for prediction in predictions:
+                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
+        else:
+            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(_model)
+        summary(_model.cuda(), (_in_channels, _height, _width))
         print()

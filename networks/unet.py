@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torchsummary import summary
 
-__all__ = ['Unet', 'GenericUnet']
+__all__ = ['Unet', 'DualUnet', 'GenericUnet']
 
 
 class DoubleConv(nn.Module):
@@ -134,6 +134,26 @@ class Unet(nn.Module):
         return x
 
 
+class DualUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+        super(DualUnet, self).__init__()
+
+        if features is None:
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Dual U-Net requires a list of 5 features'
+
+        self.encoder = Encoder(in_channels, features)
+        self.decoder1 = Decoder(features, out_channels)
+        self.decoder2 = Decoder(features, out_channels)
+
+    def forward(self, x):
+        x, *skips = self.encoder(x)
+        x1 = self.decoder1(x, skips)
+        x2 = self.decoder2(x, skips)
+        return x1, x2
+
+
 class GenericUnet(nn.Module):
     # generic models can have any number levels and features (e.g. 3 levels with 32, 64, 96 features)
 
@@ -199,12 +219,17 @@ if __name__ == '__main__':
     _layers = [16, 32, 64, 128, 256]
     _models = [
         Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        DualUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
         GenericUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for model in _models:
-        predictions = model(random_data)
-        assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(model)
-        summary(model.cuda(), (_in_channels, _height, _width))
+    for _model in _models:
+        predictions = _model(random_data)
+        if isinstance(predictions, tuple):
+            for prediction in predictions:
+                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
+        else:
+            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(_model)
+        summary(_model.cuda(), (_in_channels, _height, _width))
         print()
