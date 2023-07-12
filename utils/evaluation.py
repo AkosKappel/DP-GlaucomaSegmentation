@@ -9,30 +9,79 @@ from tqdm import tqdm
 from utils.metrics import update_metrics
 
 
-# TODO: handle update_metrics([[1, 2], [2]]) for multiple types of trained models
-
-def evaluate(model, criterion, device, loader):
-    model.eval()
-    model = model.to(device=device)
+def evaluate(model, criterion, device, loader, thresh: float = 0.5, first_model=None, multi_output: bool = False,
+             class_ids: list = None):
+    model = model.to(device)
     history = defaultdict(list)
-    total = len(loader)
-    loop = tqdm(loader, total=total, leave=True, desc='Evaluating')
+    loop = tqdm(loader, total=len(loader), leave=True, desc='Evaluating')
     mean_metrics = None
 
+    model.eval()
     with torch.no_grad():
         for batch_idx, (images, masks) in enumerate(loop):
-            images = images.float().to(device=device)
-            masks = masks.long().to(device=device)
+            images = images.float().to(device)
+            masks = masks.long().to(device)
 
-            # forward pass
-            outputs = model(images)
-            loss = criterion(outputs, masks)
-            probs = F.softmax(outputs, dim=1)
-            preds = torch.argmax(probs, dim=1)
+            od_masks = (masks == 1).long() + (masks == 2).long()
+            oc_masks = (masks == 2).long()
 
-            # performance metrics
-            update_metrics(masks, preds, history, [[1, 2], [2]])
-            history['loss'].append(loss.item())
+            # Binary or multi-class segmentation
+            if first_model is None and not multi_output:
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+
+                if outputs.shape[1] == 1:  # binary
+                    probs = torch.sigmoid(outputs)
+                    preds = (probs > thresh).squeeze(1).long()
+                    update_metrics(masks, preds, history, [[1, 2]] if class_ids is None else class_ids)
+                else:  # multi-class
+                    probs = F.softmax(outputs, dim=1)
+                    preds = torch.argmax(probs, dim=1)
+                    update_metrics(masks, preds, history, [[1, 2], [2]])
+
+                # Metrics
+                history['loss'].append(loss.item())
+
+            # Cascade architecture
+            elif first_model is not None:
+                first_model = first_model.to(device)
+                first_model.eval()
+
+                od_outputs = first_model(images)
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > thresh).long()
+                od_loss = criterion(od_outputs, od_masks)
+                update_metrics(masks, od_preds, history, [[1, 2]])
+                history['loss_OD'].append(od_loss.item())
+
+                images = images * od_preds
+
+                oc_outputs = model(images)
+                oc_probs = torch.sigmoid(oc_outputs)
+                oc_preds = (oc_probs > thresh).long()
+                oc_loss = criterion(oc_outputs, oc_masks)
+                update_metrics(masks, oc_preds, history, [[2]])
+                history['loss_OC'].append(oc_loss.item())
+
+                history['loss'].append(od_loss.item() + oc_loss.item())
+
+            # Dual architecture
+            elif multi_output:
+                od_outputs, oc_outputs = model(images)
+
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > thresh).long()
+                od_loss = criterion(od_outputs, od_masks)
+                update_metrics(masks, od_preds, history, [[1, 2]])
+                history['loss_OD'].append(od_loss.item())
+
+                oc_probs = torch.sigmoid(oc_outputs)
+                oc_preds = (oc_probs > thresh).long()
+                oc_loss = criterion(oc_outputs, oc_masks)
+                update_metrics(masks, oc_preds, history, [[2]])
+                history['loss_OC'].append(oc_loss.item())
+
+                history['loss'].append(od_loss.item() + oc_loss.item())
 
             # show mean metrics after every batch
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
@@ -41,7 +90,7 @@ def evaluate(model, criterion, device, loader):
     return mean_metrics
 
 
-def evaluate_tta(model, criterion, device, loader, show_example=False):
+def evaluate_tta(model, device, loader, show_example=False):
     model.eval()
     model = model.to(device=device)
     history = defaultdict(list)
@@ -131,7 +180,7 @@ def evaluate_tta(model, criterion, device, loader, show_example=False):
     return mean_metrics
 
 
-def evaluate_morph(model, criterion, device, loader, show_example=False, iterations=1, kernel_size=3):
+def evaluate_morph(model, device, loader, show_example=False, iterations=1, kernel_size=3):
     model.eval()
     model = model.to(device=device)
     history = defaultdict(list)

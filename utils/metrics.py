@@ -23,6 +23,9 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     fp = (~true & pred).sum()
     fn = (true & ~pred).sum()
 
+    # GT = Ground Truth, SR = Segmentation Region
+    # |GT| = tp + fn, |SR| = tp + fp, |GT ∩ SR| = tp, |GT ∪ SR| = tp + fp + fn
+
     def safe_division(a, b):
         return a / b if b != 0 else 0
 
@@ -33,27 +36,40 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     specificity = safe_division(tn, tn + fp)
     dice = safe_division(2 * tp, 2 * tp + fp + fn)
     iou = safe_division(tp, tp + fp + fn)
+    # balance_accuracy = safe_division(sensitivity + specificity, 2)
+    # informedness = specificity + sensitivity - 1
+    # prevalence = safe_division(tp + fn, tp + tn + fp + fn)
+    # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
+    # npv = safe_division(tn, tn + fn)  # Negative Predictive Value
+    # fdr = safe_division(fp, tp + fp)  # False Discovery Rate
+    # fpr = safe_division(fp, fp + tn)  # False Positive Rate
+    # fnr = safe_division(fn, tp + fn)  # False Negative Rate
+    # lr_pos = safe_division(sensitivity, fpr)  # Positive Likelihood Ratio
+    # lr_neg = safe_division(fnr, specificity)  # Negative Likelihood Ratio
+    # dor = safe_division(lr_pos, lr_neg)  # Diagnostic Odds Ratio
+    # voe = 1 - iou  # Volume Overlap Error
+    # rvd = safe_division(fp - fn, tp + fn)  # Relative Volume Difference
 
     return {
         'accuracy': accuracy,
         'precision': precision,  # PPV (Positive Predictive Value)
         'sensitivity': sensitivity,  # Recall, Hit-rate, TPR (True Positive Rate)
-        'specificity': specificity,  # TNR (True Negative Rate)
+        'specificity': specificity,  # Selectivity, TNR (True Negative Rate)
         'dice': dice,  # F1 score
         'iou': iou,  # Jaccard index
     }
 
 
-def get_metrics(true: torch.Tensor, pred: torch.Tensor, types: list) -> dict[str, float]:
+def get_metrics(true: torch.Tensor, pred: torch.Tensor, labels: list) -> dict[str, float]:
     # Flatten the tensors to 1D
     true_flat = true.flatten().detach().cpu().numpy()
     pred_flat = pred.flatten().detach().cpu().numpy()
 
     # Get metrics separately for OD and OC, treating it as binary segmentation
-    metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in types else {}
-    metrics_od_ring = calculate_metrics(true_flat, pred_flat, [1]) if [1] in types else {}
-    metrics_od = calculate_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in types else {}
-    metrics_oc = calculate_metrics(true_flat, pred_flat, [2]) if [2] in types else {}
+    metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in labels else {}
+    metrics_od_ring = calculate_metrics(true_flat, pred_flat, [1]) if [1] in labels else {}
+    metrics_od = calculate_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in labels else {}
+    metrics_oc = calculate_metrics(true_flat, pred_flat, [2]) if [2] in labels else {}
 
     # Combine the metrics and add suffix to the keys
     return {
@@ -69,8 +85,8 @@ def get_metrics(true: torch.Tensor, pred: torch.Tensor, types: list) -> dict[str
 
 
 def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[float]],
-                   types: list, prefix: str = '', postfix: str = '') -> dict[str, float]:
-    new = get_metrics(true, pred, types)
+                   labels: list, prefix: str = '', postfix: str = '') -> dict[str, float]:
+    new = get_metrics(true, pred, labels)
 
     # Insert the new metrics at the end of the list in the old dictionary
     for key, value in new.items():
@@ -170,7 +186,8 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
             if out_idx is not None:
                 outputs = outputs[out_idx]
 
-            if thresh is not None:
+            # Binary or multi-class segmentation
+            if outputs.shape[1] == 1:
                 probs = torch.sigmoid(outputs)
                 preds = (probs > thresh).squeeze(1).long()
 
