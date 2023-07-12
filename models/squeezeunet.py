@@ -180,7 +180,7 @@ class SqueezeUnet(nn.Module):
 
         if features is None:
             features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Residual U-Net requires a list of 5 features'
+        assert len(features) == 5, 'Squeeze U-Net requires a list of 5 features'
 
         self.encoder = Encoder(in_channels, features)
         self.decoder = Decoder(features, out_channels)

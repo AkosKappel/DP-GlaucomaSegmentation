@@ -159,7 +159,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, out_channels: int, features: list[int], factor: int, bilinear: bool):
+    def __init__(self, features: list[int], out_channels: int, factor: int, bilinear: bool):
         super(Decoder, self).__init__()
 
         if features is None:
@@ -199,7 +199,7 @@ class InceptionUnet(nn.Module):
         factor = 2 if bilinear else 1
 
         self.encoder = Encoder(in_channels, features, factor)
-        self.decoder = Decoder(out_channels, features, factor, bilinear)
+        self.decoder = Decoder(features, out_channels, factor, bilinear)
 
         if init_weights:
             self.initialize_weights()

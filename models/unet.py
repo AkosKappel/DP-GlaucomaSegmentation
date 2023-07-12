@@ -81,7 +81,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, out_channels: int, features: list[int]):
+    def __init__(self, features: list[int], out_channels: int):
         super(Decoder, self).__init__()
 
         self.up1 = UpConv(features[4], features[3], 'transpose', scale_factor=2)
@@ -126,7 +126,7 @@ class Unet(nn.Module):
         assert len(features) == 5, 'U-Net requires a list of 5 features'
 
         self.encoder = Encoder(in_channels, features)
-        self.decoder = Decoder(out_channels, features)
+        self.decoder = Decoder(features, out_channels)
 
     def forward(self, x):
         x, *skips = self.encoder(x)
