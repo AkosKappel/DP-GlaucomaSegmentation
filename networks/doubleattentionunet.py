@@ -130,79 +130,40 @@ class DoubleConv(nn.Module):
         return self.conv(x)
 
 
-class TripleConv(nn.Module):
-
-    def __init__(self, in_channels: int, out_channels: int):
-        super(TripleConv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x):
-        return self.conv(x)
-
-
 class EncoderUnit(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, num_conv: int = 2, side_input_channels: int = 0):
+    def __init__(self, in_channels: int, out_channels: int, side_input_channels: int = 0):
         super(EncoderUnit, self).__init__()
-
-        if num_conv == 1:
-            self.conv = SingleConv(in_channels + side_input_channels, out_channels)
-        elif num_conv == 2:
-            self.conv = DoubleConv(in_channels + side_input_channels, out_channels)
-        elif num_conv == 3:
-            self.conv = TripleConv(in_channels + side_input_channels, out_channels)
+        if side_input_channels > 0:
+            self.side_conv = SingleConv(side_input_channels, in_channels)
+            in_channels *= 2
         else:
-            raise ValueError(f'Number of convolutions must be 1, 2 or 3, got {num_conv} instead')
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+            self.side_conv = None
+        self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x, side_input=None):
-        if side_input is not None:
+        if self.side_conv is not None and side_input is not None:
+            side_input = self.side_conv(side_input)
             x = torch.cat([x, side_input], dim=1)
         x = self.conv(x)
-        skip = x
-        x = self.pool(x)
-        return x, skip
+        return x
 
 
 class DecoderUnit(nn.Module):
 
-    def __init__(self, up_channels: int, skip_channels: int, out_channels: int, num_conv: int = 2):
+    def __init__(self, up_channels: int, skip_channels: int, out_channels: int):
         super(DecoderUnit, self).__init__()
-
-        if num_conv == 1:
-            self.conv = SingleConv(skip_channels + up_channels, out_channels)
-        elif num_conv == 2:
-            self.conv = DoubleConv(skip_channels + up_channels, out_channels)
-        elif num_conv == 3:
-            self.conv = TripleConv(skip_channels + up_channels, out_channels)
-        else:
-            raise ValueError(f'Number of convolutions must be 1, 2 or 3, got {num_conv} instead')
 
         self.cbam = CBAM(skip_channels)
         self.ag = AttentionGate(up_channels, skip_channels, skip_channels // 2)
-
-        self.up = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            # nn.Conv2d(up_channels, skip_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
-            # nn.BatchNorm2d(skip_channels),
-            # nn.ReLU(inplace=True),
-        )
+        self.conv = DoubleConv(skip_channels + up_channels, out_channels)
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
     def forward(self, x, skip):
-        x = self.up(x)
         skip = self.cbam(skip)
+        x = self.up(x)
         skip = self.ag(x, skip)
+
         x = torch.cat([x, skip], dim=1)
         x = self.conv(x)
         return x
@@ -213,47 +174,56 @@ class DoubleAttentionUnet(nn.Module):
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  side_input: bool = False):
         super(DoubleAttentionUnet, self).__init__()
-        # side_input = multi-scale side input to the encoder
 
         if features is None:
-            features = [64, 128, 256, 512]
-        assert len(features) == 4, 'Attention U-Net requires a list of 4 features'
+            features = [32, 64, 128, 256, 512]
+        assert len(features) == 5, 'Double Attention U-Net requires a list of 5 features'
 
         self.side_input = side_input
-        sic = in_channels if side_input else 0
+        side_input_channels = in_channels if side_input else 0
 
-        self.en1 = EncoderUnit(in_channels, features[0], num_conv=2)
-        self.en2 = EncoderUnit(features[0], features[1], num_conv=2, side_input_channels=sic)
-        self.en3 = EncoderUnit(features[1], features[2], num_conv=3, side_input_channels=sic)
-        self.en4 = EncoderUnit(features[2], features[3], num_conv=3, side_input_channels=sic)
+        self.en1 = EncoderUnit(in_channels, features[0])
+        self.en2 = EncoderUnit(features[0], features[1], side_input_channels)
+        self.en3 = EncoderUnit(features[1], features[2], side_input_channels)
+        self.en4 = EncoderUnit(features[2], features[3], side_input_channels)
+        self.en5 = EncoderUnit(features[3], features[4])
 
-        self.de1 = DecoderUnit(features[3], features[2], features[2], num_conv=2)
-        self.de2 = DecoderUnit(features[2], features[1], features[1], num_conv=2)
-        self.de3 = DecoderUnit(features[1], features[0], features[0], num_conv=2)
+        self.de1 = DecoderUnit(features[4], features[3], features[3])
+        self.de2 = DecoderUnit(features[3], features[2], features[2])
+        self.de3 = DecoderUnit(features[2], features[1], features[1])
+        self.de4 = DecoderUnit(features[1], features[0], features[0])
 
         self.final = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        pool1, skip1 = self.en1(x)
-        x_2 = F.interpolate(x, scale_factor=1 / 2, mode='bilinear', align_corners=True) if self.side_input else None
-        pool2, skip2 = self.en2(pool1, x_2)
-        x_4 = F.interpolate(x, scale_factor=1 / 4, mode='bilinear', align_corners=True) if self.side_input else None
-        pool3, skip3 = self.en3(pool2, x_4)
-        x_8 = F.interpolate(x, scale_factor=1 / 8, mode='bilinear', align_corners=True) if self.side_input else None
-        _, skip4 = self.en4(pool3, x_8)
+        if self.side_input:
+            x_2 = F.interpolate(x, scale_factor=1 / 2, mode='bilinear', align_corners=True)
+            x_4 = F.interpolate(x, scale_factor=1 / 4, mode='bilinear', align_corners=True)
+            x_8 = F.interpolate(x, scale_factor=1 / 8, mode='bilinear', align_corners=True)
+        else:
+            x_2 = x_4 = x_8 = None
 
-        up1 = self.de1(skip4, skip3)
-        up2 = self.de2(up1, skip2)
-        up3 = self.de3(up2, skip1)
+        x1 = self.en1(x)
+        x2 = self.en2(self.pool(x1), x_2)
+        x3 = self.en3(self.pool(x2), x_4)
+        x4 = self.en4(self.pool(x3), x_8)
+        x5 = self.en5(self.pool(x4))
 
-        return self.final(up3)
+        x = self.de1(x5, x4)
+        x = self.de2(x, x3)
+        x = self.de3(x, x2)
+        x = self.de4(x, x1)
+
+        x = self.final(x)
+        return x
 
 
 if __name__ == '__main__':
     _batch_size = 8
     _in_channels, _out_channels = 3, 1
     _height, _width = 128, 128
-    _layers = [32, 64, 128, 256]
+    _layers = [16, 32, 64, 128, 256]
     _models = [
         DoubleAttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, side_input=False),
         DoubleAttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, side_input=True),

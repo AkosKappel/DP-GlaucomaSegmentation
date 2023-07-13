@@ -1,8 +1,23 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchsummary import summary
 
 __all__ = ['Unet', 'DualUnet', 'GenericUnet']
+
+
+class SingleConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, bn: bool = True):
+        super(SingleConv, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
 
 
 class DoubleConv(nn.Module):
@@ -50,33 +65,59 @@ class UpConv(nn.Module):
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int, features: list[int]):
+    def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
+
+        self.multi_scale_input = multi_scale_input
+
+        if multi_scale_input:
+            self.side_conv1 = SingleConv(in_channels, features[1])
+            self.side_conv2 = SingleConv(in_channels, features[2])
+            self.side_conv3 = SingleConv(in_channels, features[3])
+
+            self.conv1 = DoubleConv(in_channels, features[0])
+            self.conv2 = DoubleConv(features[0] + features[1], features[1])
+            self.conv3 = DoubleConv(features[1] + features[2], features[2])
+            self.conv4 = DoubleConv(features[2] + features[3], features[3])
+            self.conv5 = DoubleConv(features[3], features[4])  # Bridge
+        else:
+            self.conv1 = DoubleConv(in_channels, features[0])
+            self.conv2 = DoubleConv(features[0], features[1])
+            self.conv3 = DoubleConv(features[1], features[2])
+            self.conv4 = DoubleConv(features[2], features[3])
+            self.conv5 = DoubleConv(features[3], features[4])  # Bridge
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
-        self.conv1 = DoubleConv(in_channels, features[0])
-        self.conv2 = DoubleConv(features[0], features[1])
-        self.conv3 = DoubleConv(features[1], features[2])
-        self.conv4 = DoubleConv(features[2], features[3])
-        self.conv5 = DoubleConv(features[3], features[4])  # Bridge
-
     def forward(self, x):
         skip1 = self.conv1(x)
-        x = self.pool(skip1)
+        x1 = self.pool(skip1)
 
-        skip2 = self.conv2(x)
-        x = self.pool(skip2)
+        if self.multi_scale_input:
+            x = F.interpolate(x, size=x1.shape[2:], mode='bilinear', align_corners=True)
+            side1 = self.side_conv1(x)
+            x1 = torch.cat((x1, side1), dim=1)
 
-        skip3 = self.conv3(x)
-        x = self.pool(skip3)
+        skip2 = self.conv2(x1)
+        x2 = self.pool(skip2)
 
-        skip4 = self.conv4(x)
-        x = self.pool(skip4)
+        if self.multi_scale_input:
+            x = F.interpolate(x, size=x2.shape[2:], mode='bilinear', align_corners=True)
+            side2 = self.side_conv2(x)
+            x2 = torch.cat((x2, side2), dim=1)
+        skip3 = self.conv3(x2)
+        x3 = self.pool(skip3)
 
-        x = self.conv5(x)
+        if self.multi_scale_input:
+            x = F.interpolate(x, size=x3.shape[2:], mode='bilinear', align_corners=True)
+            side3 = self.side_conv3(x)
+            x3 = torch.cat((x3, side3), dim=1)
+        skip4 = self.conv4(x3)
+        x4 = self.pool(skip4)
 
-        return x, skip1, skip2, skip3, skip4
+        x5 = self.conv5(x4)
+
+        return x5, skip1, skip2, skip3, skip4
 
 
 class Decoder(nn.Module):
@@ -118,14 +159,15 @@ class Decoder(nn.Module):
 
 class Unet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 multi_scale_input: bool = False):
         super(Unet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'U-Net requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features)
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder = Decoder(features, out_channels)
 
     def forward(self, x):
@@ -136,14 +178,15 @@ class Unet(nn.Module):
 
 class DualUnet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 multi_scale_input: bool = False):
         super(DualUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Dual U-Net requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features)
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels)
         self.decoder2 = Decoder(features, out_channels)
 
@@ -218,8 +261,10 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
-        DualUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        Unet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
+        DualUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        DualUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
         GenericUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
