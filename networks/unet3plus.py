@@ -62,13 +62,16 @@ class DoubleConv(nn.Module):
 class Unet3Plus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
+                 deep_supervision: bool = False, cgm: bool = False):
         super(Unet3Plus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'U-Net 3+ requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
         self.deep_supervision = deep_supervision
 
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)
@@ -146,20 +149,6 @@ class Unet3Plus(nn.Module):
         else:
             self.cgm = None
 
-        # initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         # Encoder
         e1 = self.en1(x)  # 320 x 320 x 64
@@ -230,11 +219,15 @@ class Unet3Plus(nn.Module):
 class GenericUnet3Plus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, cgm: bool = False, init_weights: bool = True):
+                 deep_supervision: bool = False, cgm: bool = False):
         super(GenericUnet3Plus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.n_features = len(features)
         self.deep_supervision = deep_supervision
@@ -290,23 +283,6 @@ class GenericUnet3Plus(nn.Module):
             )
         else:
             self.cgm = None
-
-        # initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # Encoder

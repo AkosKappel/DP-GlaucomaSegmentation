@@ -219,8 +219,11 @@ class RAUnetPlusPlus(nn.Module):
 
         if features is None:
             features = [32, 64, 128, 256, 512]
-
         assert len(features) == 5, 'Residual Attention U-Net++ requires a list of 5 features'
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.encoder = Encoder(in_channels, features)
         self.decoder = Decoder(features, out_channels, deep_supervision)
@@ -257,8 +260,11 @@ class DualRAUnetPlusPlus(nn.Module):
 
         if features is None:
             features = [32, 64, 128, 256, 512]
-
         assert len(features) == 5, 'Dual Residual Attention U-Net++ requires a list of 5 features'
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.encoder = Encoder(in_channels, features)
         self.decoder1 = Decoder(features, out_channels, deep_supervision)

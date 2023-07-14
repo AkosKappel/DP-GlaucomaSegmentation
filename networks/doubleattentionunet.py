@@ -179,6 +179,10 @@ class DoubleAttentionUnet(nn.Module):
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Double Attention U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         self.side_input = side_input
         side_input_channels = in_channels if side_input else 0
 

@@ -2,7 +2,7 @@ from collections import defaultdict
 from IPython.display import clear_output
 import os
 import torch
-import torch.nn.init as init
+import torch.nn as nn
 import wandb
 
 from .multiclass import MulticlassTrainer, MulticlassTrainLogger
@@ -27,39 +27,44 @@ CLASS_LABELS = {
 # log_to_wandb, show_plots, clear_interval, checkpoint_dir, log_dir, plot_examples
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                      scheduler=None, scaler=None, **kwargs):
+    assert model.out_channels > 1, 'The model should have more than 1 output channel for multi-class training'
     return train(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-        train_mode='multiclass', **kwargs
+        train_mode='multiclass', **kwargs,
     )
 
 
 def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                  scheduler=None, scaler=None, target_ids: list[int] = None, threshold: float = 0.5, **kwargs):
+    assert model.out_channels == 1, 'The model should have 1 output channel for binary training'
     return train(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-        train_mode='binary', target_ids=target_ids, threshold=threshold, **kwargs
+        train_mode='binary', target_ids=target_ids, threshold=threshold, **kwargs,
     )
 
 
 def train_cascade(od_model, oc_model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                   scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, **kwargs):
+    assert od_model.out_channels == 1 and oc_model.out_channels == 1, \
+        'The cascade models should have each 1 output channel for cascade training'
     return train(
         model=oc_model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
-        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=od_model, **kwargs
+        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=od_model, **kwargs,
     )
 
 
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
                od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0, **kwargs):
+    assert model.out_channels == 1, 'The dual model should have 1 output channel per branch for dual training'
     return train(
         model=model, criterion=od_criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='dual',
         od_threshold=od_threshold, oc_threshold=oc_threshold, dual_branch_criterion=oc_criterion,
-        od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs
+        od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs,
     )
 
 
@@ -218,30 +223,45 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     return history
 
 
+def initialize_weights(model, mode='fan_in', nonlinearity='relu'):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            # Use Kaiming initialization for ReLU activation function
+            nn.init.kaiming_normal_(m.weight, mode=mode, nonlinearity=nonlinearity)
+            # Use zero bias
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            # Initialize weight to 1 and bias to 0
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+    print('Initialized weights of model:', model.__class__.__name__)
+
+
 def init_weights(net, init_type='kaiming', gain=0.02):
     def init_func(m):
         classname = m.__class__.__name__
         if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
             if init_type == 'normal':
-                init.normal_(m.weight.data, 0.0, gain)
+                nn.init.normal_(m.weight.data, 0.0, gain)
             elif init_type == 'xavier':
-                init.xavier_normal_(m.weight.data, gain=gain)
+                nn.init.xavier_normal_(m.weight.data, gain=gain)
             elif init_type == 'kaiming':
-                init.kaiming_normal_(m.weight.data, a=0, mode='fan_in', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in', nonlinearity='relu')
             elif init_type == 'orthogonal':
-                init.orthogonal_(m.weight.data, gain=gain)
+                nn.init.orthogonal_(m.weight.data, gain=gain)
             else:
                 raise NotImplementedError(f'initialization method {init_type} is not implemented')
             if hasattr(m, 'bias') and m.bias is not None:
                 # Use zero bias
-                init.constant_(m.bias.data, 0.0)
+                nn.init.constant_(m.bias.data, 0.0)
         elif classname.find('BatchNorm2d') != -1:
             # Initialize weight to 1 and bias to 0
-            init.normal_(m.weight.data, 1.0, gain)
-            init.constant_(m.bias.data, 0.0)
+            nn.init.normal_(m.weight.data, 1.0, gain)
+            nn.init.constant_(m.bias.data, 0.0)
 
-    print(f'Initialize network parameters with {init_type} method.')
     net.apply(init_func)
+    print(f'Initialized {net.__class__.__name__} network parameters with {init_type} method.')
 
 
 def update_history(history, metrics, prefix=''):

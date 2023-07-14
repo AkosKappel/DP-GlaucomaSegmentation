@@ -61,6 +61,20 @@ class InceptionBlock(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
+class SingleConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int, bn: bool = True):
+        super(SingleConv, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=not bn),
+            *([nn.BatchNorm2d(out_channels), ] if bn else []),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
 class DoubleConv(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, bn: bool = True):
@@ -113,19 +127,20 @@ class DownConv(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.conv = DoubleConv(in_channels, out_channels)
 
-    def forward(self, x):
+    def forward(self, x, side_input=None):
         x = self.pool(x)
+        if side_input is not None:
+            x = torch.cat([x, side_input], dim=1)
         return self.conv(x)
 
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int, features: list[int], factor: int):
+    def __init__(self, in_channels: int, features: list[int], factor: int, multi_scale_input: bool = False):
         super(Encoder, self).__init__()
 
-        if features is None:
-            features = [64, 128, 256, 512, 1024]
-        assert len(features) == 5, 'Encoder requires a list of 5 features'
+        self.multi_scale_input = multi_scale_input
+        multiplier = 2 if multi_scale_input else 1
 
         self.inception1 = InceptionBlock(features[0], features[0] // 2)
         self.inception2 = InceptionBlock(features[1], features[0])
@@ -133,17 +148,26 @@ class Encoder(nn.Module):
         self.inception4 = InceptionBlock(features[3], features[1])
 
         self.en1 = DoubleConv(in_channels, features[0])
-        self.en2 = DownConv(features[0], features[1])
-        self.en3 = DownConv(features[1], features[2])
-        self.en4 = DownConv(features[2], features[3])
+        self.en2 = DownConv(features[0] * multiplier, features[1])
+        self.en3 = DownConv(features[1] * multiplier, features[2])
+        self.en4 = DownConv(features[2] * multiplier, features[3])
         self.bridge = DownConv(features[3], features[4] // factor)
+
+        if multi_scale_input:
+            self.side1 = SingleConv(in_channels, features[0])
+            self.side2 = SingleConv(in_channels, features[1])
+            self.side3 = SingleConv(in_channels, features[2])
+
+            self.avgpool2 = nn.AvgPool2d(kernel_size=2, stride=2)
+            self.avgpool4 = nn.AvgPool2d(kernel_size=4, stride=4)
+            self.avgpool8 = nn.AvgPool2d(kernel_size=8, stride=8)
 
     def forward(self, x):
         # Contracting path
         e1 = self.en1(x)
-        e2 = self.en2(e1)
-        e3 = self.en3(e2)
-        e4 = self.en4(e3)
+        e2 = self.en2(e1, self.side1(self.avgpool2(x)) if self.multi_scale_input else None)
+        e3 = self.en3(e2, self.side2(self.avgpool4(x)) if self.multi_scale_input else None)
+        e4 = self.en4(e3, self.side3(self.avgpool8(x)) if self.multi_scale_input else None)
 
         # Bottleneck
         e5 = self.bridge(e4)
@@ -161,10 +185,6 @@ class Decoder(nn.Module):
 
     def __init__(self, features: list[int], out_channels: int, factor: int, bilinear: bool):
         super(Decoder, self).__init__()
-
-        if features is None:
-            features = [64, 128, 256, 512, 1024]
-        assert len(features) == 5, 'Decoder requires a list of 5 features'
 
         self.de1 = UpConv(features[4] + features[3], features[2] // factor, bilinear)
         self.de2 = UpConv(features[3] + features[2] + features[1], features[1] // factor, bilinear)
@@ -188,31 +208,22 @@ class Decoder(nn.Module):
 class InceptionUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
+                 multi_scale_input: bool = False):
         super(InceptionUnet, self).__init__()
 
         if features is None:
             features = [64, 128, 256, 512, 1024]
         assert len(features) == 5, 'Inception U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         bilinear = True
         factor = 2 if bilinear else 1
 
-        self.encoder = Encoder(in_channels, features, factor)
+        self.encoder = Encoder(in_channels, features, factor, multi_scale_input)
         self.decoder = Decoder(features, out_channels, factor, bilinear)
-
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         return self.decoder(*self.encoder(x))
@@ -221,36 +232,27 @@ class InceptionUnet(nn.Module):
 class DualInceptionUnet(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
+                 multi_scale_input: bool = False):
         super(DualInceptionUnet, self).__init__()
 
         if features is None:
             features = [64, 128, 256, 512, 1024]
         assert len(features) == 5, 'Dual Inception U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         bilinear = True
         factor = 2 if bilinear else 1
 
-        self.encoder = Encoder(in_channels, features, factor)
+        self.encoder = Encoder(in_channels, features, factor, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels, factor, bilinear)
         self.decoder2 = Decoder(features, out_channels, factor, bilinear)
-
-        if init_weights:
-            self.initialize_weights()
 
     def forward(self, x):
         x = self.encoder(x)
         return self.decoder1(*x), self.decoder2(*x)
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
 
 if __name__ == '__main__':
@@ -259,8 +261,12 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        InceptionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
-        DualInceptionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        InceptionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        InceptionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
+        DualInceptionUnet(
+            in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        DualInceptionUnet(
+            in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for _model in _models:

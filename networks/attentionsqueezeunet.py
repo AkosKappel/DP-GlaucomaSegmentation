@@ -98,6 +98,10 @@ class AttentionSqueezeUnet(nn.Module):
         expand_channels = [32, 64, 128, 192, 256]
         attention_channels = [4, 16, 64, 96]
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         self.pool = nn.MaxPool2d(kernel_size=3, stride=2)
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 

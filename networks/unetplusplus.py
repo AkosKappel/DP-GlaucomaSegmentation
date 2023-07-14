@@ -33,16 +33,20 @@ class DoubleConv(nn.Module):
 class UnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, init_weights: bool = True):
+                 deep_supervision: bool = False):
         super(UnetPlusPlus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'U-Net++ requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+        self.deep_supervision = deep_supervision
+
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.deep_supervision = deep_supervision
 
         self.rows = nn.ModuleList()
 
@@ -99,23 +103,6 @@ class UnetPlusPlus(nn.Module):
             # Fast mode (only the final from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
-        # Initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
     def forward(self, x):
         x0_0 = self.rows[0][0](x)
         x1_0 = self.rows[1][0](self.pool(x0_0))
@@ -150,12 +137,15 @@ class UnetPlusPlus(nn.Module):
 class GenericUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, init_weights: bool = True):
+                 deep_supervision: bool = False):
         super(GenericUnetPlusPlus, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
         self.n_rows = len(features)
         self.deep_supervision = deep_supervision
 
@@ -184,23 +174,6 @@ class GenericUnetPlusPlus(nn.Module):
         else:
             # Fast mode (only the final from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
-
-        # Initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x_values = [[None] * self.n_rows for _ in range(self.n_rows)]

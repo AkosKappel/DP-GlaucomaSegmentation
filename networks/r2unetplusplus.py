@@ -84,8 +84,7 @@ class RecurrentResidualConv(nn.Module):
 class R2UnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, init_weights: bool = True,
-                 up_mode: str = 'bilinear', up_conv: bool = True):
+                 deep_supervision: bool = False, up_mode: str = 'bilinear', up_conv: bool = True):
         super(R2UnetPlusPlus, self).__init__()
 
         # deep_supervision: switch between fast (no DS) and accurate mode (with DS)
@@ -95,11 +94,13 @@ class R2UnetPlusPlus(nn.Module):
 
         if features is None:
             features = [32, 64, 128, 256, 512]
-
         if up_mode == 'transpose':
             up_conv = True
-
         assert len(features) == 5, 'Recurrent Residual U-Net++ requires a list of 5 features'
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.deep_supervision = deep_supervision
@@ -173,23 +174,6 @@ class R2UnetPlusPlus(nn.Module):
         else:
             # Fast mode (only the final from the last branch in top row is used)
             self.output = nn.Conv2d(features[0], out_channels, kernel_size=1)
-
-        # Initialize weights
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         x0_0 = self.rows[0][0](x)

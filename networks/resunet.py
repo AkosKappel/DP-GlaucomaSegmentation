@@ -118,29 +118,19 @@ class Decoder(nn.Module):
 
 class ResUnet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
         super(ResUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Residual U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         self.encoder = Encoder(in_channels, features)
         self.decoder = Decoder(features, out_channels)
-
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         e1, e2, e3, e4, e5 = self.encoder(x)
@@ -149,30 +139,20 @@ class ResUnet(nn.Module):
 
 class DualResUnet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 init_weights: bool = True):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
         super(DualResUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Dual Residual U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         self.encoder = Encoder(in_channels, features)
         self.decoder1 = Decoder(features, out_channels)
         self.decoder2 = Decoder(features, out_channels)
-
-        if init_weights:
-            self.initialize_weights()
-
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         e1, e2, e3, e4, e5 = self.encoder(x)

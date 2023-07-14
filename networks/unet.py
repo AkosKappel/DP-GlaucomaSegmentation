@@ -167,6 +167,10 @@ class Unet(nn.Module):
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'U-Net requires a list of 5 features'
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
         self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder = Decoder(features, out_channels)
 
@@ -185,6 +189,10 @@ class DualUnet(nn.Module):
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Dual U-Net requires a list of 5 features'
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels)
@@ -205,6 +213,10 @@ class GenericUnet(nn.Module):
 
         if features is None:
             features = [32, 64, 128, 256, 512]
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
 
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()

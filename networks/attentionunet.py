@@ -1,14 +1,29 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchsummary import summary
 
 __all__ = ['AttentionUnet', 'DualAttentionUnet']
 
 
-class ConvBlock(nn.Module):
+class SingleConv(nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int):
-        super(ConvBlock, self).__init__()
+        super(SingleConv, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class DoubleConv(nn.Module):
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super(DoubleConv, self).__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.BatchNorm2d(out_channels),
@@ -71,23 +86,53 @@ class AttentionGate(nn.Module):
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int, features: list[int]):
+    def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
 
-        self.en1 = ConvBlock(in_channels, features[0])
-        self.en2 = ConvBlock(features[0], features[1])
-        self.en3 = ConvBlock(features[1], features[2])
-        self.en4 = ConvBlock(features[2], features[3])
-        self.en5 = ConvBlock(features[3], features[4])
+        self.multi_scale_input = multi_scale_input
+        multiplier = 2 if multi_scale_input else 1
 
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.en1 = DoubleConv(in_channels, features[0])
+        self.en2 = DoubleConv(features[0] * multiplier, features[1])
+        self.en3 = DoubleConv(features[1] * multiplier, features[2])
+        self.en4 = DoubleConv(features[2] * multiplier, features[3])
+        self.en5 = DoubleConv(features[3], features[4])
+
+        if multi_scale_input:
+            self.side1 = SingleConv(in_channels, features[0])
+            self.side2 = SingleConv(in_channels, features[1])
+            self.side3 = SingleConv(in_channels, features[2])
+
+            self.avgpool2 = nn.AvgPool2d(kernel_size=2, stride=2)
+            self.avgpool4 = nn.AvgPool2d(kernel_size=4, stride=4)
+            self.avgpool8 = nn.AvgPool2d(kernel_size=8, stride=8)
+
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
         e1 = self.en1(x)
-        e2 = self.en2(self.pool(e1))
-        e3 = self.en3(self.pool(e2))
-        e4 = self.en4(self.pool(e3))
-        e5 = self.en5(self.pool(e4))
+
+        e2 = self.maxpool(e1)
+        if self.multi_scale_input:
+            x_half = self.avgpool2(x)
+            e2 = torch.cat([e2, self.side1(x_half)], dim=1)
+        e2 = self.en2(e2)
+
+        e3 = self.maxpool(e2)
+        if self.multi_scale_input:
+            x_quarter = self.avgpool4(x)
+            e3 = torch.cat([e3, self.side2(x_quarter)], dim=1)
+        e3 = self.en3(e3)
+
+        e4 = self.maxpool(e3)
+        if self.multi_scale_input:
+            x_eighth = self.avgpool8(x)
+            e4 = torch.cat([e4, self.side3(x_eighth)], dim=1)
+        e4 = self.en4(e4)
+
+        e5 = self.maxpool(e4)
+        e5 = self.en5(e5)
+
         return e1, e2, e3, e4, e5
 
 
@@ -98,19 +143,19 @@ class Decoder(nn.Module):
 
         self.up1 = UpConv(features[4], features[3])
         self.ag1 = AttentionGate(features[3], features[3], features[3] // 2)
-        self.de1 = ConvBlock(features[4], features[3])
+        self.de1 = DoubleConv(features[4], features[3])
 
         self.up2 = UpConv(features[3], features[2])
         self.ag2 = AttentionGate(features[2], features[2], features[2] // 2)
-        self.de2 = ConvBlock(features[3], features[2])
+        self.de2 = DoubleConv(features[3], features[2])
 
         self.up3 = UpConv(features[2], features[1])
         self.ag3 = AttentionGate(features[1], features[1], features[1] // 2)
-        self.de3 = ConvBlock(features[2], features[1])
+        self.de3 = DoubleConv(features[2], features[1])
 
         self.up4 = UpConv(features[1], features[0])
         self.ag4 = AttentionGate(features[0], features[0], features[0] // 2)
-        self.de4 = ConvBlock(features[1], features[0])
+        self.de4 = DoubleConv(features[1], features[0])
 
         self.last_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
 
@@ -138,14 +183,19 @@ class Decoder(nn.Module):
 
 class AttentionUnet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 multi_scale_input: bool = False):
         super(AttentionUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Attention U-Net requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder = Decoder(features, out_channels)
 
     def forward(self, x):
@@ -156,14 +206,19 @@ class AttentionUnet(nn.Module):
 
 class DualAttentionUnet(nn.Module):
 
-    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
+                 multi_scale_input: bool = False):
         super(DualAttentionUnet, self).__init__()
 
         if features is None:
             features = [32, 64, 128, 256, 512]
         assert len(features) == 5, 'Dual Attention U-Net requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.features = features
+
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels)
         self.decoder2 = Decoder(features, out_channels)
 
@@ -180,8 +235,12 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        AttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
-        DualAttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers),
+        AttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        AttentionUnet(in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
+        DualAttentionUnet(
+            in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=False),
+        DualAttentionUnet(
+            in_channels=_in_channels, out_channels=_out_channels, features=_layers, multi_scale_input=True),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for _model in _models:
