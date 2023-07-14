@@ -16,7 +16,7 @@ def probs_to_labels(probs: torch.Tensor, thresh: int = None, dim: int = 1) -> to
     """Convert class probabilities to labels by choosing the class with the highest probability."""
     # probs.shape = (batch_size, num_classes, height, width)
     # returns.shape = (batch_size, height, width)
-    return torch.argmax(probs, dim=dim) if thresh is None else (probs > thresh).squeeze().long()
+    return torch.argmax(probs, dim=dim) if thresh is None else (probs > thresh).squeeze(dim).long()
 
 
 def labels_to_onehot(labels: torch.Tensor, num_classes: int) -> torch.Tensor:

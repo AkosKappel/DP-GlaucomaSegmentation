@@ -9,76 +9,99 @@ from tqdm import tqdm
 from utils.metrics import update_metrics
 
 
-def evaluate(model, criterion, device, loader, thresh: float = 0.5, first_model=None, multi_output: bool = False,
-             class_ids: list = None):
-    model = model.to(device)
+def evaluate(mode: str, model, criterion, device, loader, thresh: float = 0.5, class_ids: list = None, model0=None):
+    assert mode in ('binary', 'multiclass', 'cascade', 'dual')
+
     history = defaultdict(list)
     loop = tqdm(loader, total=len(loader), leave=True, desc='Evaluating')
     mean_metrics = None
 
     model.eval()
+    model = model.to(device)
+    if model0 is not None:
+        model0.eval()
+        model0 = model0.to(device)
+
+    if class_ids is None:
+        class_ids = [[1, 2]]
+    tensor_class_ids = torch.tensor(class_ids).to(device)
+
     with torch.no_grad():
         for batch_idx, (images, masks) in enumerate(loop):
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            od_masks = (masks == 1).long() + (masks == 2).long()
-            oc_masks = (masks == 2).long()
-
-            # Binary or multi-class segmentation
-            if first_model is None and not multi_output:
+            # Multi-class segmentation
+            if mode == 'multiclass':
                 outputs = model(images)
                 loss = criterion(outputs, masks)
 
-                if outputs.shape[1] == 1:  # binary
-                    probs = torch.sigmoid(outputs)
-                    preds = (probs > thresh).squeeze(1).long()
-                    update_metrics(masks, preds, history, [[1, 2]] if class_ids is None else class_ids)
-                else:  # multi-class
-                    probs = F.softmax(outputs, dim=1)
-                    preds = torch.argmax(probs, dim=1)
-                    update_metrics(masks, preds, history, [[1, 2], [2]])
+                probs = F.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
 
-                # Metrics
+                update_metrics(masks, preds, history, [[1, 2], [2]])
+                history['loss'].append(loss.item())
+
+            # Binary segmentation
+            elif mode == 'binary':
+                masks = torch.where(torch.isin(masks, tensor_class_ids),
+                                    torch.ones_like(masks), torch.zeros_like(masks))
+
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+
+                probs = torch.sigmoid(outputs)
+                preds = (probs > thresh).squeeze(1).long()
+
+                update_metrics(masks, preds, history, class_ids)
                 history['loss'].append(loss.item())
 
             # Cascade architecture
-            elif first_model is not None:
-                first_model = first_model.to(device)
-                first_model.eval()
+            elif mode == 'cascade':
+                od_masks = (masks == 1).long() + (masks == 2).long()
+                oc_masks = (masks == 2).long()
 
-                od_outputs = first_model(images)
+                od_outputs = model0(images)
+                od_loss = criterion(od_outputs, od_masks)
+
                 od_probs = torch.sigmoid(od_outputs)
                 od_preds = (od_probs > thresh).long()
-                od_loss = criterion(od_outputs, od_masks)
+
                 update_metrics(masks, od_preds, history, [[1, 2]])
                 history['loss_OD'].append(od_loss.item())
 
                 images = images * od_preds
 
                 oc_outputs = model(images)
+                oc_loss = criterion(oc_outputs, oc_masks)
+
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > thresh).long()
-                oc_loss = criterion(oc_outputs, oc_masks)
-                update_metrics(masks, oc_preds, history, [[2]])
+
+                update_metrics(masks, oc_preds + 1, history, [[2]])
                 history['loss_OC'].append(oc_loss.item())
 
                 history['loss'].append(od_loss.item() + oc_loss.item())
 
             # Dual architecture
-            elif multi_output:
+            elif mode == 'dual':
+                od_masks = (masks == 1).long() + (masks == 2).long()
+                oc_masks = (masks == 2).long()
+
                 od_outputs, oc_outputs = model(images)
+                od_loss = criterion(od_outputs, od_masks)
+                oc_loss = criterion(oc_outputs, oc_masks)
 
                 od_probs = torch.sigmoid(od_outputs)
                 od_preds = (od_probs > thresh).long()
-                od_loss = criterion(od_outputs, od_masks)
+
                 update_metrics(masks, od_preds, history, [[1, 2]])
                 history['loss_OD'].append(od_loss.item())
 
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > thresh).long()
-                oc_loss = criterion(oc_outputs, oc_masks)
-                update_metrics(masks, oc_preds, history, [[2]])
+
+                update_metrics(masks, oc_preds + 1, history, [[2]])
                 history['loss_OC'].append(oc_loss.item())
 
                 history['loss'].append(od_loss.item() + oc_loss.item())

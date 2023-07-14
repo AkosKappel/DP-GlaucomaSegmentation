@@ -6,8 +6,6 @@ import torchviz
 from torchview import draw_graph
 from matplotlib.patches import Patch
 
-from utils.metrics import get_best_OD_examples, get_worst_OD_examples, get_best_OC_examples, get_worst_OC_examples
-
 
 def show_model_graph(model, input_size, expand_nested=True):
     model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)
@@ -35,18 +33,18 @@ od_color = np.array((0.13, 0.56, 0.55), dtype=np.float32)
 oc_color = np.array((0.99, 0.91, 0.14), dtype=np.float32)
 
 # Cover colors
-tp_color = np.array((0, 1, 0), dtype=np.uint8) * 255
-tn_color = np.array((0, 0, 0), dtype=np.uint8) * 255
-fp_color = np.array((1, 0, 0), dtype=np.uint8) * 255
-fn_color = np.array((1, 1, 0), dtype=np.uint8) * 255
+tp_color = np.array((0, 1, 0), dtype=np.uint8) * 255  # green
+tn_color = np.array((0, 0, 0), dtype=np.uint8) * 255  # black
+fp_color = np.array((1, 0, 0), dtype=np.uint8) * 255  # red
+fn_color = np.array((1, 1, 0), dtype=np.uint8) * 255  # yellow
 
 # Overlay colors
-od_overlay_color = np.array((0, 0, 1))
-oc_overlay_color = np.array((0, 1, 1))
+od_overlay_color = np.array((0, 0, 1))  # blue
+oc_overlay_color = np.array((0, 1, 1))  # cyan
 
 # Contour colors
-true_color = (0, 0, 255)
-predicted_color = (0, 0, 0)
+true_color = (0, 0, 255)  # blue
+predicted_color = (0, 0, 0)  # black
 
 
 def get_input_images(imgs):
@@ -226,10 +224,6 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
         plt.close()
 
 
-def plot_side_by_side(*args, **kwargs):
-    plot_results(*args, **kwargs)
-
-
 def plot_results(images=None, masks=None, preds=None, types: str | list[str] = None, **kwargs):
     # kwargs: img_size, transpose, figsize, save_path, show
 
@@ -300,23 +294,94 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
                     cover_legend=cover_legend_index, contour_legend=contour_legend_index, **kwargs)
 
 
-def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int = 4, **kwargs):
-    # kwargs: save_path, show, types, img_size
+plot_side_by_side = plot_results  # alias
+
+
+def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_samples: int = 4, thresh: float = 0.5,
+                             class_ids: list = None, model0=None, **kwargs):
+    assert mode in ('binary', 'multiclass', 'cascade', 'dual')
+
+    if class_ids is None:
+        class_ids = [[1, 2]]
+    tensor_class_ids = torch.tensor(class_ids).to(device)
+
+    # parse keyword arguments
+    if 'types' in kwargs:
+        types = kwargs['types']
+    elif mode == 'binary':
+        sign = 'OD' if 1 in class_ids[0] else 'OC'
+        types = ['image', 'mask', 'prediction', sign + ' cover', sign + ' contour']
+    elif mode == 'multiclass':
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
+    elif mode == 'cascade':
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
+    elif mode == 'dual':
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
+    else:
+        raise ValueError('Invalid model mode: ' + mode)
+
+    img_size = kwargs['img_size'] if 'img_size' in kwargs else 3
+    save_path = kwargs['save_path'] if 'save_path' in kwargs else None
+    show = kwargs['show'] if 'show' in kwargs else True
 
     model.eval()
-    model = model.to(device=device)
+    model = model.to(device)
+    if model0 is not None:
+        model0.eval()
+        model0 = model0.to(device)
 
     with torch.no_grad():
         samples_so_far = 0
         images_all, masks_all, preds_all = [], [], []
 
         for images, masks in loader:
-            images = images.float().to(device=device)
-            masks = masks.long().to(device=device)
+            images = images.float().to(device)
+            masks = masks.long().to(device)
 
-            outputs = model(images)
-            probs = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(probs, dim=1)
+            if mode == 'multiclass':
+                outputs = model(images)
+                probs = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+
+            elif mode == 'binary':
+                masks = torch.where(torch.isin(masks, tensor_class_ids),
+                                    torch.ones_like(masks), torch.zeros_like(masks))
+
+                outputs = model(images)
+                probs = torch.sigmoid(outputs)
+                preds = (probs > thresh).squeeze(1).long()
+
+            elif mode == 'cascade':
+                od_outputs = model0(images)
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > thresh).long()
+
+                cropped_images = images * od_preds
+
+                oc_outputs = model(cropped_images)
+                oc_probs = torch.sigmoid(oc_outputs)
+                oc_preds = (oc_probs > thresh).long()
+
+                # Combine OD and OC predictions
+                preds = torch.zeros_like(od_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
+                preds = preds.squeeze(1)
+
+            elif mode == 'dual':
+                od_outputs, oc_outputs = model(images)
+
+                od_probs = torch.sigmoid(od_outputs)
+                od_preds = (od_probs > thresh).long()
+
+                oc_probs = torch.sigmoid(oc_outputs)
+                oc_preds = (oc_probs > thresh).long()
+
+                # Combine OD and OC predictions
+                preds = torch.zeros_like(od_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
+                preds = preds.squeeze(1)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
             masks = masks.detach().cpu().numpy()
@@ -338,51 +403,6 @@ def plot_results_from_loader(loader, model, device: str = 'cuda', n_samples: int
         masks = masks_all[:n_samples]
         preds = preds_all[:n_samples]
 
-    types = kwargs['types'] if 'types' in kwargs else ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
-    img_size = kwargs['img_size'] if 'img_size' in kwargs else 3
-    save_path = kwargs['save_path'] if 'save_path' in kwargs else None
-    show = kwargs['show'] if 'show' in kwargs else True
-
     plot_results(
         images, masks, preds, img_size=img_size, save_path=save_path, show=show, types=types
     )
-
-
-def plot_best_OD_examples(model, loader, n: int = 4, **kwargs):
-    examples = get_best_OD_examples(model, loader, n)
-
-    images = [e[0] for e in examples]
-    masks = [e[1] for e in examples]
-    preds = [e[2] for e in examples]
-
-    plot_results(images, masks, preds, **kwargs)
-
-
-def plot_worst_OD_examples(model, loader, n: int = 4, **kwargs):
-    examples = get_worst_OD_examples(model, loader, n)
-
-    images = [e[0] for e in examples]
-    masks = [e[1] for e in examples]
-    preds = [e[2] for e in examples]
-
-    plot_results(images, masks, preds, **kwargs)
-
-
-def plot_best_OC_examples(model, loader, n: int = 4, **kwargs):
-    examples = get_best_OC_examples(model, loader, n)
-
-    images = [e[0] for e in examples]
-    masks = [e[1] for e in examples]
-    preds = [e[2] for e in examples]
-
-    plot_results(images, masks, preds, **kwargs)
-
-
-def plot_worst_OC_examples(model, loader, n: int = 4, **kwargs):
-    examples = get_worst_OC_examples(model, loader, n)
-
-    images = [e[0] for e in examples]
-    masks = [e[1] for e in examples]
-    preds = [e[2] for e in examples]
-
-    plot_results(images, masks, preds, **kwargs)
