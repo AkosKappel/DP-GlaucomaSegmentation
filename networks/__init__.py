@@ -20,6 +20,7 @@ from .usenet import *
 
 # Inception
 from .inceptionunet import *
+from .googleunet import *
 
 # Combined
 from .r2attentionunet import *
