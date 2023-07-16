@@ -592,7 +592,7 @@ def onehot_to_inverse_dist_map(onehot_batch: torch.Tensor, normalize: bool = Tru
                 bg_dist_map = np.max(bg_dist_map) - bg_dist_map
 
                 # Combine foreground and background maps
-                inverse_distance_maps[b, c] = fg_dist_map + bg_dist_map
+                inverse_distance_maps[b, c] = 1.0 + fg_dist_map + bg_dist_map
 
     return torch.tensor(inverse_distance_maps, device=onehot_batch.device, dtype=torch.float32)
 
