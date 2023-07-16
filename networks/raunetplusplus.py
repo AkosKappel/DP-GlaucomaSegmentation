@@ -123,21 +123,52 @@ class OutConv(nn.Module):
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_channels: int, features: list[int]):
+    def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        self.multi_scale_input = multi_scale_input
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        multiplier = 2 if multi_scale_input else 1
+
         self.conv1 = ResidualConv(in_channels, features[0])
-        self.conv2 = ResidualConv(features[0], features[1])
-        self.conv3 = ResidualConv(features[1], features[2])
-        self.conv4 = ResidualConv(features[2], features[3])
+        self.conv2 = ResidualConv(features[0] * multiplier, features[1])
+        self.conv3 = ResidualConv(features[1] * multiplier, features[2])
+        self.conv4 = ResidualConv(features[2] * multiplier, features[3])
         self.conv5 = ResidualConv(features[3], features[4])
+
+        if multi_scale_input:
+            self.side1 = ResidualConv(in_channels, features[0])
+            self.side2 = ResidualConv(in_channels, features[1])
+            self.side3 = ResidualConv(in_channels, features[2])
+
+            self.avgpool2 = nn.AvgPool2d(kernel_size=2, stride=2)
+            self.avgpool4 = nn.AvgPool2d(kernel_size=4, stride=4)
+            self.avgpool8 = nn.AvgPool2d(kernel_size=8, stride=8)
 
     def forward(self, x):
         x1 = self.conv1(x)
-        x2 = self.conv2(self.pool(x1))
-        x3 = self.conv3(self.pool(x2))
-        x4 = self.conv4(self.pool(x3))
-        x5 = self.conv5(self.pool(x4))
+
+        x2 = self.maxpool(x1)
+        if self.multi_scale_input:
+            x_half = self.avgpool2(x)
+            x2 = torch.cat([x2, self.side1(x_half)], dim=1)
+        x2 = self.conv2(x2)
+
+        x3 = self.maxpool(x2)
+        if self.multi_scale_input:
+            x_quarter = self.avgpool4(x)
+            x3 = torch.cat([x3, self.side2(x_quarter)], dim=1)
+        x3 = self.conv3(x3)
+
+        x4 = self.maxpool(x3)
+        if self.multi_scale_input:
+            x_eighth = self.avgpool8(x)
+            x4 = torch.cat([x4, self.side3(x_eighth)], dim=1)
+        x4 = self.conv4(x4)
+
+        x5 = self.maxpool(x4)
+        x5 = self.conv5(x5)
+
         return x1, x2, x3, x4, x5
 
 
@@ -214,7 +245,7 @@ class Decoder(nn.Module):
 class RAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, deep_supervision: bool = False, init_weights: bool = True):
         super(RAUnetPlusPlus, self).__init__()
 
         if features is None:
@@ -225,7 +256,7 @@ class RAUnetPlusPlus(nn.Module):
         self.out_channels = out_channels
         self.features = features
 
-        self.encoder = Encoder(in_channels, features)
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder = Decoder(features, out_channels, deep_supervision)
 
         # Initialize weights
@@ -255,7 +286,7 @@ class RAUnetPlusPlus(nn.Module):
 class DualRAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 deep_supervision: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, deep_supervision: bool = False, init_weights: bool = True):
         super(DualRAUnetPlusPlus, self).__init__()
 
         if features is None:
@@ -266,7 +297,7 @@ class DualRAUnetPlusPlus(nn.Module):
         self.out_channels = out_channels
         self.features = features
 
-        self.encoder = Encoder(in_channels, features)
+        self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels, deep_supervision)
         self.decoder2 = Decoder(features, out_channels, deep_supervision)
 
@@ -300,14 +331,22 @@ if __name__ == '__main__':
     _height, _width = 128, 128
     _layers = [16, 32, 64, 128, 256]
     _models = [
-        RAUnetPlusPlus(
-            in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=False),
-        RAUnetPlusPlus(
-            in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=True),
-        DualRAUnetPlusPlus(
-            in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=False),
-        DualRAUnetPlusPlus(
-            in_channels=_in_channels, out_channels=_out_channels, features=_layers, deep_supervision=True),
+        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                       deep_supervision=False, multi_scale_input=False),
+        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                       deep_supervision=True, multi_scale_input=False),
+        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                       deep_supervision=False, multi_scale_input=True),
+        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                       deep_supervision=True, multi_scale_input=True),
+        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                           deep_supervision=False, multi_scale_input=False),
+        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                           deep_supervision=True, multi_scale_input=False),
+        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                           deep_supervision=False, multi_scale_input=True),
+        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
+                           deep_supervision=True, multi_scale_input=True),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for _model in _models:
