@@ -3,16 +3,20 @@ from IPython.display import clear_output
 import os
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import wandb
 
 from .multiclass import MulticlassTrainer, MulticlassTrainLogger
 from .binary import BinaryTrainer, BinaryTrainLogger
 from .cascade import CascadeTrainer, CascadeTrainLogger
 from .dual import DualTrainer, DualTrainLogger
+from utils.losses import *
+from networks import *
 
 __all__ = [
     'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
     'train', 'train_multiclass', 'train_binary', 'train_cascade', 'train_dual',
+    'get_network', 'get_optimizer', 'get_criterion', 'get_scheduler',
 ]
 
 CLASS_LABELS = {
@@ -253,10 +257,8 @@ def init_weights(net, init_type='kaiming', gain=0.02):
             else:
                 raise NotImplementedError(f'initialization method {init_type} is not implemented')
             if hasattr(m, 'bias') and m.bias is not None:
-                # Use zero bias
                 nn.init.constant_(m.bias.data, 0.0)
         elif classname.find('BatchNorm2d') != -1:
-            # Initialize weight to 1 and bias to 0
             nn.init.normal_(m.weight.data, 1.0, gain)
             nn.init.constant_(m.bias.data, 0.0)
 
@@ -289,3 +291,141 @@ def load_checkpoint(filename, model, checkpoint_dir='.'):
     print(f'=> Loading checkpoint: {filename}')
     checkpoint = torch.load(filename)
     model.load_state_dict(checkpoint['model'])
+
+
+def get_network(name, in_channels, out_channels, layers, **kwargs):
+    name = name.lower()
+
+    if name == 'unet':
+        return Unet(in_channels, out_channels, layers, **kwargs)
+    if name == 'unet++':
+        return UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    if name == 'unet3+':
+        return Unet3Plus(in_channels, out_channels, layers, **kwargs)
+    if name == 'resunet':
+        return ResUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'runet':
+        return RUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'r2unet':
+        return R2Unet(in_channels, out_channels, layers, **kwargs)
+    if name == 'attentionunet':
+        return AttentionUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'doubleattentionunet':
+        return DoubleAttentionUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'attentionsqueezeunet':
+        return AttentionSqueezeUnet(in_channels, out_channels, **kwargs)
+    if name == 'squeezeunet':
+        return SqueezeUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'useunet':
+        return USEnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'sarunet':
+        return SARUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'inceptionunet':
+        return InceptionUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'googleunet':
+        return GoogleUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'r2attentionunet':
+        return R2AttentionUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'r2unet++':
+        return R2UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    if name == 'raunet++':
+        return RAUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    if name == 'refunet3+cbam':
+        return RefUnet3PlusCBAM(in_channels, out_channels, layers, **kwargs)
+
+    if name == 'dualunet':
+        return DualUnet(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualunet++':
+    #     return DualUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualunet3+':
+    #     return DualUnet3Plus(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualresunet':
+        return DualResUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualrunet':
+        return DualRUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualr2unet':
+        return DualR2Unet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualattentionunet':
+        return DualAttentionUnet(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualdoubleattentionunet':
+    #     return DualDoubleAttentionUnet(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualattentionsqueezeunet':
+    #     return DualAttentionSqueezeUnet(in_channels, out_channels, **kwargs)
+    if name == 'dualsqueezeunet':
+        return DualSqueezeUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualuseunet':
+        return DualUSEnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualsarunet':
+        return DualSARUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualinceptionunet':
+        return DualInceptionUnet(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualgoogleunet':
+        return DualGoogleUnet(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualr2attentionunet':
+    #     return DualR2AttentionUnet(in_channels, out_channels, layers, **kwargs)
+    # if name == 'dualr2unet++':
+    #     return DualR2UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualraunet++':
+        return DualRAUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
+    if name == 'dualrefunet3+cbam':
+        return DualRefUnet3PlusCBAM(in_channels, out_channels, layers, **kwargs)
+
+
+def get_optimizer(name, parameters, **kwargs):
+    name = name.lower()
+
+    if name == 'adam':
+        return optim.Adam(parameters, **kwargs)
+    if name == 'sgd':
+        return optim.SGD(parameters, **kwargs)
+    if name == 'rmsprop':
+        return optim.RMSprop(parameters, **kwargs)
+    raise ValueError(f'Invalid optimizer name: {name}')
+
+
+def get_criterion(name, **kwargs):
+    name = name.lower()
+
+    if name == 'cross entropy':
+        return nn.CrossEntropyLoss(**kwargs)
+    if name == 'dice':
+        return DiceLoss(**kwargs)
+    if name == 'generalized dice':
+        return GeneralizedDice(**kwargs)
+    if name == 'iou':
+        return IoULoss(**kwargs)
+    if name == 'focal':
+        return FocalLoss(**kwargs)
+    if name == 'tversky':
+        return TverskyLoss(**kwargs)
+    if name == 'focal tversky':
+        return FocalTverskyLoss(**kwargs)
+    if name == 'hausdorff':
+        return HausdorffLoss(**kwargs)
+    if name == 'boundary':
+        return BoundaryLoss(**kwargs)
+    if name == 'ce':
+        return CrossEntropyLoss(**kwargs)
+    if name == 'ss':
+        return SensitivitySpecificityLoss(**kwargs)
+    if name == 'edge':
+        return EdgeLoss(**kwargs)
+    if name == 'combo':
+        return ComboLoss(**kwargs)
+    raise ValueError(f'Invalid loss function name: {name}')
+
+
+def get_scheduler(name, optimizer, **kwargs):
+    name = name.lower()
+
+    if name == 'none':
+        return None
+    if name == 'step':
+        return optim.lr_scheduler.StepLR(optimizer, **kwargs)
+    if name == 'multistep':
+        return optim.lr_scheduler.MultiStepLR(optimizer, **kwargs)
+    if name == 'exponential':
+        return optim.lr_scheduler.ExponentialLR(optimizer, **kwargs)
+    if name == 'plateau':
+        return optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
+    raise ValueError(f'Invalid scheduler name: {name}')

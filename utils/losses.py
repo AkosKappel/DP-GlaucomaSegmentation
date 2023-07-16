@@ -4,6 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+__all__ = ['DiceLoss', 'GeneralizedDice', 'IoULoss', 'FocalLoss', 'TverskyLoss', 'FocalTverskyLoss',
+           'BoundaryLoss', 'HausdorffLoss', 'CrossEntropyLoss', 'SensitivitySpecificityLoss', 'EdgeLoss', 'ComboLoss']
+
 
 def logits_to_probs(logits: torch.Tensor, num_classes: int, dim: int = 1) -> torch.Tensor:
     """Convert logits from a model to probabilities by applying softmax or sigmoid activation function."""
