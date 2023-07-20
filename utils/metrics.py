@@ -60,10 +60,16 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     }
 
 
-def get_metrics(true: torch.Tensor, pred: torch.Tensor, labels: list) -> dict[str, float]:
+def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray, labels: list) -> dict[str, float]:
     # Flatten the tensors to 1D
-    true_flat = true.flatten().detach().cpu().numpy()
-    pred_flat = pred.flatten().detach().cpu().numpy()
+    true_flat = true.flatten()
+    pred_flat = pred.flatten()
+
+    # Convert to numpy arrays if they are tensors
+    if isinstance(true, torch.Tensor):
+        true_flat = true_flat.detach().cpu().numpy()
+    if isinstance(pred, torch.Tensor):
+        pred_flat = pred_flat.detach().cpu().numpy()
 
     # Get metrics separately for OD and OC, treating it as binary segmentation
     metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in labels else {}
