@@ -1,22 +1,25 @@
 import cv2 as cv
 import numpy as np
+from scipy.interpolate import splprep, splev
+from skimage.segmentation import active_contour
 
 __all__ = [
     'separate_disc_and_cup_mask',
     'keep_largest_component', 'apply_largest_component_selection',
     'fill_holes', 'apply_hole_filling',
     'fit_ellipse', 'apply_ellipse_fitting',
+    'douglas_peucker', 'smooth_contours', 'snakes',
 ]
 
 
-def separate_disc_and_cup_mask(mask):
+def separate_disc_and_cup_mask(mask: np.ndarray):
     # OD: 1, OC: 2, BG: 0
     od_mask = np.where(mask >= 1, 1, 0).astype(np.uint8)
     oc_mask = np.where(mask >= 2, 1, 0).astype(np.uint8)
     return od_mask, oc_mask
 
 
-def keep_largest_component(binary_mask):
+def keep_largest_component(binary_mask: np.ndarray):
     # Find connected components in the binary mask
     num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
 
@@ -29,7 +32,7 @@ def keep_largest_component(binary_mask):
     return largest_component_mask
 
 
-def apply_largest_component_selection(mask):
+def apply_largest_component_selection(mask: np.ndarray):
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -41,7 +44,7 @@ def apply_largest_component_selection(mask):
     return result_mask
 
 
-def fill_holes(binary_mask):
+def fill_holes(binary_mask: np.ndarray):
     # Find all enclosed contours in the binary mask
     contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
@@ -55,7 +58,7 @@ def fill_holes(binary_mask):
     return filled_mask
 
 
-def apply_hole_filling(mask):
+def apply_hole_filling(mask: np.ndarray):
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -69,7 +72,7 @@ def apply_hole_filling(mask):
     return result_mask
 
 
-def fit_ellipse(binary_mask):
+def fit_ellipse(binary_mask: np.ndarray):
     # Find the contours of the binary mask (there should be only one)
     contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -88,7 +91,7 @@ def fit_ellipse(binary_mask):
     return fitted_mask
 
 
-def apply_ellipse_fitting(mask):
+def apply_ellipse_fitting(mask: np.ndarray):
     masks = separate_disc_and_cup_mask(mask)
     fitted_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -105,3 +108,61 @@ def apply_ellipse_fitting(mask):
         fitted_mask += ellipse_mask.astype(np.uint8)
 
     return fitted_mask
+
+
+def douglas_peucker(binary_mask: np.ndarray, epsilon: float = 3.0):
+    # Find the contours
+    binary_mask = binary_mask.astype(np.uint8)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+
+    # Create a new binary mask
+    dp_mask = np.zeros(binary_mask.shape, dtype=np.uint8)
+
+    for contour in contours:
+        # Approximate contour with Douglas-Peucker algorithm
+        approx = cv.approxPolyDP(contour, epsilon, closed=True)
+
+        # Draw the approximated contour on the mask
+        cv.drawContours(dp_mask, [approx], -1, color=1, thickness=-1)
+
+    return dp_mask
+
+
+def smooth_contours(binary_mask: np.ndarray, s: float = 2.0):
+    # Find contours in the binary mask
+    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
+
+    if len(contours) == 0:
+        return binary_mask
+
+    # Create an empty mask for the displaying the smoothed contours
+    smoothed_mask = np.zeros_like(binary_mask)
+
+    for contour in contours:
+        # Convert the contour points to float32 for spline interpolation
+        contour_points = contour.squeeze().astype(np.float32)
+
+        # Use spline interpolation to smooth the contour
+        tck, u = splprep([contour_points[:, 0], contour_points[:, 1]], s=s)
+        smoothed_points = np.column_stack(splev(u, tck))
+
+        # Draw the smoothed contour on the mask
+        cv.drawContours(smoothed_mask, [smoothed_points.astype(np.int32)], -1, 1, thickness=-1)
+
+    return smoothed_mask
+
+
+def snakes(binary_mask: np.ndarray, alpha: float = 0.1, beta: float = 10.5, gamma: float = 10.5):
+    # Find contours in the mask
+    binary_mask = binary_mask.astype(np.uint8)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    snake_mask = np.zeros_like(binary_mask)
+
+    for contour in contours:
+        # Run the Active Contour Model
+        snake = active_contour(binary_mask, np.squeeze(contour), alpha=alpha, beta=beta, gamma=gamma)
+
+        # Draw the snake on the mask with thickness -1 (filled)
+        cv.drawContours(snake_mask, [snake.astype(np.int32)], -1, color=1, thickness=-1)
+
+    return snake_mask
