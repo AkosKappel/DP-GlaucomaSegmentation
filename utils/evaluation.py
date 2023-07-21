@@ -2,6 +2,7 @@ from collections import defaultdict
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import torch
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -9,7 +10,7 @@ from tqdm import tqdm
 from utils.metrics import update_metrics
 
 
-def evaluate(mode: str, model, criterion, device, loader, thresh: float = 0.5, class_ids: list = None, model0=None):
+def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, class_ids: list = None, model0=None):
     assert mode in ('binary', 'multiclass', 'cascade', 'dual')
 
     history = defaultdict(list)
@@ -273,3 +274,57 @@ def evaluate_morph(model, device, loader, show_example=False, iterations=1, kern
             loop.set_postfix(**mean_metrics)
 
     return mean_metrics
+
+
+def save_predictions_as_images(mode: str, model, loader, device, path: str = 'predictions'):
+    assert mode in ('binary', 'multiclass', 'cascade', 'dual')
+
+    os.makedirs(path, exist_ok=True)
+
+    model.eval()
+    model = model.to(device)
+    img_num = 1
+
+    with torch.no_grad():
+        for images, masks in tqdm(loader, total=len(loader), leave=True, desc='Saving predictions'):
+            images = images.float().to(device)
+            masks = masks.long().to(device)
+
+            if mode == 'multiclass':
+                outputs = model(images)
+                probs = F.softmax(outputs, dim=1)
+                preds = torch.argmax(probs, dim=1)
+                preds = preds.detach().cpu().numpy().astype(np.uint8)
+
+            # TODO: Implement other modes
+            elif mode == 'binary':
+                pass
+
+            elif mode == 'cascade':
+                pass
+
+            elif mode == 'dual':
+                pass
+
+            images = images.detach().cpu().numpy()
+            masks = masks.detach().cpu().numpy()
+
+            for image, mask, pred in zip(images, masks, preds):
+                image = image.transpose(1, 2, 0)
+
+                mask[mask == 1] = 128
+                mask[mask == 2] = 255
+
+                pred[pred == 1] = 128
+                pred[pred == 2] = 255
+
+                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+                pred = np.repeat(pred[:, :, np.newaxis], 3, axis=2)
+
+                image = image.astype(np.uint8)
+                mask = mask.astype(np.uint8)
+                pred = pred.astype(np.uint8)
+
+                side_by_side = np.concatenate((image, mask, pred), axis=1)
+                plt.imsave(f'{path}/{img_num}.png', side_by_side)
+                img_num += 1

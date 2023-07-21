@@ -428,4 +428,8 @@ def get_scheduler(name, optimizer, **kwargs):
         return optim.lr_scheduler.ExponentialLR(optimizer, **kwargs)
     if name == 'plateau':
         return optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
+    if name == 'cosine':
+        return optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
+    if name == 'cosine warm restarts':
+        return optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **kwargs)
     raise ValueError(f'Invalid scheduler name: {name}')

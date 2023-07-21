@@ -8,7 +8,7 @@ __pycache__
 # Datasets
 data
 
-# Preprocessing mini-framework
+# Preprocessing mini-framework - https://github.com/RetinaSegmentDP22-23/RetinaSegmentDP
 RetinaSegmentDP
 
 # Model checkpoints
