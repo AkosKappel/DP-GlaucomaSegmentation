@@ -73,10 +73,11 @@ class DualTrainer:
 
             oc_probs = torch.sigmoid(oc_outputs)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+            oc_preds[oc_preds == 1] = 2  # Shift labels of optic cup from 1 to 2 to match ground truth
 
             # Add new batch metrics to history
             update_metrics(masks, od_preds, history, self.od_label)
-            update_metrics(masks, oc_preds + 1, history, self.oc_label)
+            update_metrics(masks, oc_preds, history, self.oc_label)
             history['loss'].append(total_loss.item())
             history['loss_OD'].append(od_loss.item())
             history['loss_OC'].append(oc_loss.item())
@@ -122,15 +123,16 @@ class DualTrainer:
 
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+                oc_preds[oc_preds == 1] = 2
 
-                # calculate metrics
+                # Calculate metrics
                 update_metrics(masks, od_preds, history, self.od_label)
-                update_metrics(masks, oc_preds + 1, history, self.oc_label)
+                update_metrics(masks, oc_preds, history, self.oc_label)
                 history['loss'].append(total_loss.item())
                 history['loss_OD'].append(od_loss.item())
                 history['loss_OC'].append(oc_loss.item())
 
-                # show summary of metrics in progress bar
+                # Show summary of metrics in progress bar
                 mean_metrics = {k: np.mean(v) for k, v in history.items()}
                 loop.set_postfix(**mean_metrics)
 

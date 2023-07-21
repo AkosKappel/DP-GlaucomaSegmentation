@@ -35,7 +35,7 @@ class BinaryTrainer:
             masks = masks.long().to(self.device)
 
             # Binarize mask by setting target ID labels to 1 and all other labels to 0 in mask
-            masks = torch.where(torch.isin(masks, self.target_ids), torch.ones_like(masks), torch.zeros_like(masks))
+            masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
 
             if self.scaler is None:
                 # Forward pass
@@ -62,6 +62,11 @@ class BinaryTrainer:
             probs = torch.sigmoid(outputs)
             preds = (probs > self.threshold).squeeze(1).long()
 
+            # Shift predicted class labels for OC
+            if self.labels == [[2]]:
+                preds[preds == 1] = 2
+                masks[masks == 1] = 2
+
             # Calculate metrics
             update_metrics(masks, preds, history, self.labels)
             history['loss'].append(loss.item())
@@ -84,7 +89,7 @@ class BinaryTrainer:
                 # Load and prepare data
                 images = images.float().to(self.device)
                 masks = masks.long().to(self.device)
-                masks = torch.where(torch.isin(masks, self.target_ids), torch.ones_like(masks), torch.zeros_like(masks))
+                masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
 
                 # Forward pass
                 if self.scaler is None:
@@ -98,6 +103,11 @@ class BinaryTrainer:
                 # Convert logits to probabilities
                 probs = torch.sigmoid(outputs)
                 preds = (probs > self.threshold).squeeze(1).long()
+
+                # Correct predicted class labels for OC
+                if self.labels == [[2]]:
+                    preds[preds == 1] = 2
+                    masks[masks == 1] = 2
 
                 # Calculate and update tracked metrics
                 update_metrics(masks, preds, history, self.labels)
@@ -135,8 +145,7 @@ class BinaryTrainLogger:
             return
 
         assert self.target_ids is not None, 'target_ids must be specified for binary segmentation'
-        target_ids_list = self.target_ids.detach().cpu().numpy().tolist()
-        optic = 'OC' if target_ids_list == [2] else 'OD'
+        optic = 'OC' if self.target_ids.detach().cpu().numpy().tolist() == [2] else 'OD'
 
         model.eval()
         with torch.no_grad():
@@ -146,7 +155,7 @@ class BinaryTrainLogger:
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            masks = torch.where(torch.isin(masks, self.target_ids), torch.ones_like(masks), torch.zeros_like(masks))
+            masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
 
             outputs = model(images)
             probs = torch.sigmoid(outputs)

@@ -72,9 +72,10 @@ class CascadeTrainer:
             # Convert logits to probabilities
             oc_probs = torch.sigmoid(oc_outputs)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+            oc_preds[oc_preds == 1] = 2  # convert OC predictions to class 2, so it matches the masks
 
             # calculate metrics
-            update_metrics(masks, oc_preds + 1, history, self.labels)
+            update_metrics(masks, oc_preds, history, self.labels)
             history['loss'].append(loss.item())
 
             # display average metrics in progress bar
@@ -120,9 +121,10 @@ class CascadeTrainer:
                 # Convert logits to predictions
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+                oc_preds[oc_preds == 1] = 2
 
                 # calculate metrics
-                update_metrics(masks, oc_preds + 1, history, self.labels)
+                update_metrics(masks, oc_preds, history, self.labels)
                 history['loss'].append(loss.item())
 
                 # show summary of metrics in progress bar

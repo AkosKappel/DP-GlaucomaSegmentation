@@ -25,6 +25,10 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
 
     if class_ids is None:
         class_ids = [[1, 2]]
+    elif isinstance(class_ids, int):
+        class_ids = [[class_ids]]
+    elif isinstance(class_ids[0], int):
+        class_ids = [class_ids]
     tensor_class_ids = torch.tensor(class_ids).to(device)
 
     with torch.no_grad():
@@ -45,8 +49,7 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
 
             # Binary segmentation
             elif mode == 'binary':
-                masks = torch.where(torch.isin(masks, tensor_class_ids),
-                                    torch.ones_like(masks), torch.zeros_like(masks))
+                masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
 
                 outputs = model(images)
                 loss = criterion(outputs, masks)
@@ -68,9 +71,6 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
                 od_probs = torch.sigmoid(od_outputs)
                 od_preds = (od_probs > thresh).long()
 
-                update_metrics(masks, od_preds, history, [[1, 2]])
-                history['loss_OD'].append(od_loss.item())
-
                 images = images * od_preds
 
                 oc_outputs = model(images)
@@ -79,9 +79,13 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > thresh).long()
 
-                update_metrics(masks, oc_preds + 1, history, [[2]])
-                history['loss_OC'].append(oc_loss.item())
+                preds = torch.zeros_like(oc_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
 
+                update_metrics(masks, preds, history, [[1, 2], [2]])
+                history['loss_OD'].append(od_loss.item())
+                history['loss_OC'].append(oc_loss.item())
                 history['loss'].append(od_loss.item() + oc_loss.item())
 
             # Dual architecture
@@ -96,15 +100,16 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
                 od_probs = torch.sigmoid(od_outputs)
                 od_preds = (od_probs > thresh).long()
 
-                update_metrics(masks, od_preds, history, [[1, 2]])
-                history['loss_OD'].append(od_loss.item())
-
                 oc_probs = torch.sigmoid(oc_outputs)
                 oc_preds = (oc_probs > thresh).long()
 
-                update_metrics(masks, oc_preds + 1, history, [[2]])
-                history['loss_OC'].append(oc_loss.item())
+                preds = torch.zeros_like(oc_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
 
+                update_metrics(masks, preds, history, [[1, 2], [2]])
+                history['loss_OD'].append(od_loss.item())
+                history['loss_OC'].append(oc_loss.item())
                 history['loss'].append(od_loss.item() + oc_loss.item())
 
             # show mean metrics after every batch

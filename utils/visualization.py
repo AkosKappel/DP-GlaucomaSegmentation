@@ -303,6 +303,10 @@ def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_s
 
     if class_ids is None:
         class_ids = [[1, 2]]
+    elif isinstance(class_ids, int):
+        class_ids = [[class_ids]]
+    elif isinstance(class_ids[0], int):
+        class_ids = [class_ids]
     tensor_class_ids = torch.tensor(class_ids).to(device)
 
     # parse keyword arguments
@@ -344,12 +348,15 @@ def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_s
                 preds = torch.argmax(probs, dim=1)
 
             elif mode == 'binary':
-                masks = torch.where(torch.isin(masks, tensor_class_ids),
-                                    torch.ones_like(masks), torch.zeros_like(masks))
+                masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
 
                 outputs = model(images)
                 probs = torch.sigmoid(outputs)
                 preds = (probs > thresh).squeeze(1).long()
+
+                if class_ids == [[2]]:
+                    preds[preds == 1] = 2
+                    masks[masks == 1] = 2
 
             elif mode == 'cascade':
                 od_outputs = model0(images)
