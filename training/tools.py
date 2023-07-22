@@ -16,7 +16,7 @@ from networks import *
 __all__ = [
     'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
     'train', 'train_multiclass', 'train_binary', 'train_cascade', 'train_dual',
-    'get_network', 'get_optimizer', 'get_criterion', 'get_scheduler',
+    'get_network', 'get_optimizer', 'get_criterion', 'get_scheduler', 'get_scaler',
 ]
 
 CLASS_LABELS = {
@@ -27,8 +27,8 @@ CLASS_LABELS = {
 
 
 # kwargs:
-# early_stopping_patience, save_best_model, save_interval, log_interval
-# log_to_wandb, show_plots, clear_interval, checkpoint_dir, log_dir, plot_examples
+# early_stopping_patience, save_best_model, save_interval, log_interval, log_to_wandb, show_plots,
+# clear_interval, checkpoint_dir, log_dir, plot_examples, inverse_transform, activation
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                      scheduler=None, scaler=None, **kwargs):
     assert model.out_channels > 1, 'The model should have more than 1 output channel for multi-class training'
@@ -76,7 +76,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
           train_mode: str = 'multiclass', early_stopping_patience: int = 0, save_best_model: bool = True,
           save_interval: int = 0, log_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
           clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
-          target_ids: list[int] = None, threshold: float = 0.5,
+          target_ids: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
           base_cascade_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
           dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     # model: model to train
@@ -96,11 +96,13 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # log_to_wandb: log progress to Weights & Biases (True or False)
     # show_plots: show examples from validation set (True or False)
     # clear_interval: clear text from cell output after every couple epoch (0 or None to disable)
-    # checkpoint_dir: directory to save checkpoints (default: current directory)
-    # log_dir: directory to save logs (default: current directory)
+    # checkpoint_dir: directory to save checkpoints (default: current directory, None to disable)
+    # log_dir: directory to save logs (default: current directory, None to disable)
     # plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
     # target_ids: defines which labels are considered as positives for binary segmentation (default: [1, 2])
     # threshold: threshold for predicted probabilities in binary training (default: 0.5)
+    # inverse_transform: function to convert images, masks and predictions to original format (default: None)
+    # activation: activation function for the last layer of a binary branch (default: None)
     # base_cascade_model: pre-trained model for optic disc segmentation for cascade architecture
     # od_threshold: decides whether a predicted optic disc probability is considered as a positive sample (default: 0.5)
     # oc_threshold: decides whether a predicted optic cup probability is considered as a positive sample (default: 0.5)
@@ -118,6 +120,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     log_loader = val_loader if val_loader is not None else train_loader
 
     # Prepare model
+    model_name = model.__class__.__name__
     model = model.to(device)
     if log_to_wandb:
         wandb.watch(model, criterion)
@@ -125,14 +128,16 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # Initialize objects for selected training mode
     match train_mode:
         case 'multiclass':
-            trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler)
+            trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
             logger = MulticlassTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
         case 'binary':
             if target_ids is None:
                 target_ids = [1, 2]
             target_ids = torch.tensor(target_ids, device=device)
 
-            trainer = BinaryTrainer(model, criterion, optimizer, device, scaler, target_ids, threshold)
+            trainer = BinaryTrainer(
+                model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
+            )
             logger = BinaryTrainLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 target_ids=target_ids, threshold=threshold,
@@ -145,7 +150,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             base_cascade_model = base_cascade_model.to(device)
 
             trainer = CascadeTrainer(
-                base_cascade_model, model, criterion, optimizer, device, scaler, od_threshold, oc_threshold,
+                base_cascade_model, model, criterion, optimizer, device, scaler,
+                od_threshold, oc_threshold, inverse_transform, activation,
             )
             logger = CascadeTrainLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
@@ -154,7 +160,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         case 'dual':
             trainer = DualTrainer(
                 model, criterion, dual_branch_criterion, optimizer, device, scaler,
-                od_threshold, oc_threshold, od_loss_weight, oc_loss_weight,
+                od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
             )
             logger = DualTrainLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
@@ -198,7 +204,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'history': history,
-            }, filename=f'{train_mode}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
+            }, filename=f'{train_mode}-model-{model_name}-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
 
         # Early stopping - stop training if the validation loss does not improve for a few epochs
         if epoch_loss < best_loss:
@@ -213,7 +219,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'history': history,
-                }, filename=f'best-{train_mode}-model.pth', checkpoint_dir=checkpoint_dir)
+                }, filename=f'best-{train_mode}-model-{model_name}.pth', checkpoint_dir=checkpoint_dir)
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
@@ -221,7 +227,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 break
 
     # If last epoch was not logged, force log metrics before training ends
-    if num_done_epochs % log_interval != 0:
+    if log_interval and num_done_epochs % log_interval != 0:
         logger(model, log_loader, optimizer, history, num_done_epochs, device, force=True)
 
     return history
@@ -433,3 +439,13 @@ def get_scheduler(name, optimizer, **kwargs):
     if name == 'cosine warm restarts':
         return optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **kwargs)
     raise ValueError(f'Invalid scheduler name: {name}')
+
+
+def get_scaler(name, **kwargs):
+    name = name.lower()
+
+    if name == 'none':
+        return None
+    if name == 'amp':
+        return torch.cuda.amp.GradScaler(**kwargs)
+    raise ValueError(f'Invalid scaler name: {name}')

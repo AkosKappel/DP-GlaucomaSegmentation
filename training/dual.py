@@ -13,19 +13,23 @@ __all__ = ['DualTrainer', 'DualTrainLogger']
 class DualTrainer:
 
     def __init__(self, model, od_criterion, oc_criterion, optimizer, device, scaler=None, od_threshold: float = 0.5,
-                 oc_threshold: float = 0.5, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+                 oc_threshold: float = 0.5, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0,
+                 inverse_transform=None, activation=None):
         self.model = model
         self.od_criterion = od_criterion
         self.oc_criterion = oc_criterion
         self.optimizer = optimizer
         self.device = device
         self.scaler = scaler
+        self.inverse_transform = inverse_transform
+        self.activation = torch.sigmoid if activation is None else activation
         self.od_threshold = od_threshold
         self.oc_threshold = oc_threshold
         self.od_loss_weight = od_loss_weight
         self.oc_loss_weight = oc_loss_weight
-        self.od_label = [[1, 2]]
-        self.oc_label = [[2]]
+        self.od_label = [1, 2]
+        self.oc_label = [2]
+        self.labels = [self.od_label, self.oc_label]
 
     def train_one_epoch(self, loader):
         history = defaultdict(list)
@@ -68,16 +72,23 @@ class DualTrainer:
                 self.scaler.update()
 
             # Convert logits to probabilities for OD and OC
-            od_probs = torch.sigmoid(od_outputs)
+            od_probs = self.activation(od_outputs)
             od_preds = (od_probs > self.od_threshold).squeeze(1).long()
 
-            oc_probs = torch.sigmoid(oc_outputs)
+            oc_probs = self.activation(oc_outputs)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-            oc_preds[oc_preds == 1] = 2  # Shift labels of optic cup from 1 to 2 to match ground truth
+
+            # Join OD and OC predictions into a single tensor
+            preds = torch.zeros_like(oc_preds)
+            preds[od_preds == 1] = 1
+            preds[oc_preds == 1] = 2
+
+            # Inverse initial transformations like normalization, polar transform, etc.
+            if self.inverse_transform is not None:
+                images, masks, preds = self.inverse_transform(images, masks, preds)
 
             # Add new batch metrics to history
-            update_metrics(masks, od_preds, history, self.od_label)
-            update_metrics(masks, oc_preds, history, self.oc_label)
+            update_metrics(masks, preds, history, self.labels)
             history['loss'].append(total_loss.item())
             history['loss_OD'].append(od_loss.item())
             history['loss_OC'].append(oc_loss.item())
@@ -118,12 +129,20 @@ class DualTrainer:
                         total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
 
                 # Convert logits to predictions
-                od_probs = torch.sigmoid(od_outputs)
+                od_probs = self.activation(od_outputs)
                 od_preds = (od_probs > self.od_threshold).squeeze(1).long()
 
-                oc_probs = torch.sigmoid(oc_outputs)
+                oc_probs = self.activation(oc_outputs)
                 oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-                oc_preds[oc_preds == 1] = 2
+
+                # Combine OD and OC predictions
+                preds = torch.zeros_like(oc_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
+
+                # Invert initial data transformations on images, masks and predictions
+                if self.inverse_transform is not None:
+                    images, masks, preds = self.inverse_transform(images, masks, preds)
 
                 # Calculate metrics
                 update_metrics(masks, od_preds, history, self.od_label)
@@ -225,6 +244,9 @@ class DualTrainLogger:
                 wandb.log({f'Segmentation results for OC ({self.part})': seg_img}, step=epoch)
                 break
 
+        if not self.dir:
+            return
+
         od_file = f'{self.dir}/epoch{epoch}-OD.png'
         oc_file = f'{self.dir}/epoch{epoch}-OC.png'
         file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'
@@ -233,7 +255,6 @@ class DualTrainLogger:
         file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
         plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
         plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
-        num_examples = 4
 
         if self.plot_type in ['all', 'random']:
             plot_results(images, od_masks, od_preds, save_path=od_file, show=self.show, types=plot_types_od)

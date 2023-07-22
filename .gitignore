@@ -15,6 +15,9 @@ RetinaSegmentDP
 checkpoints
 *.pth.tar
 
+# Testing & Bug fixing
+#tests
+
 # Logging
 logs
 wandb

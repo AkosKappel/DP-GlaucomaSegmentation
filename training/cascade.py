@@ -13,16 +13,20 @@ __all__ = ['CascadeTrainer', 'CascadeTrainLogger']
 class CascadeTrainer:
 
     def __init__(self, od_model, oc_model, criterion, optimizer, device, scaler=None,
-                 od_threshold: float = 0.5, oc_threshold: float = 0.5):
+                 od_threshold: float = 0.5, oc_threshold: float = 0.5, inverse_transform=None, activation=None):
         self.od_model = od_model
         self.oc_model = oc_model
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
         self.scaler = scaler
+        self.inverse_transform = inverse_transform
+        self.activation = torch.sigmoid if activation is None else activation
         self.od_threshold = od_threshold
         self.oc_threshold = oc_threshold
-        self.labels = [[2]]
+        self.od_label = [1, 2]
+        self.oc_label = [2]
+        self.labels = [self.od_label, self.oc_label]
 
     def train_one_epoch(self, loader):
         history = defaultdict(list)
@@ -39,7 +43,7 @@ class CascadeTrainer:
             # Apply first model to get optic disc masks which get passed to the second model
             with torch.no_grad():
                 od_outputs = self.od_model(images)
-                od_probs = torch.sigmoid(od_outputs)
+                od_probs = self.activation(od_outputs)
                 od_preds = (od_probs > self.od_threshold).long()
 
             # Crop images to optic disc boundaries
@@ -70,15 +74,25 @@ class CascadeTrainer:
                 self.scaler.update()
 
             # Convert logits to probabilities
-            oc_probs = torch.sigmoid(oc_outputs)
+            oc_probs = self.activation(oc_outputs)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-            oc_preds[oc_preds == 1] = 2  # convert OC predictions to class 2, so it matches the masks
 
-            # calculate metrics
-            update_metrics(masks, oc_preds, history, self.labels)
+            od_preds = od_preds.squeeze(1)
+
+            # Join OD and OC predictions into a single tensor
+            preds = torch.zeros_like(oc_preds)
+            preds[od_preds == 1] = 1
+            preds[oc_preds == 1] = 2
+
+            # Invert initial transformations like normalization, polar transform, etc.
+            if self.inverse_transform is not None:
+                images, masks, preds = self.inverse_transform(images, masks, preds)
+
+            # Calculate metrics for the batch
+            update_metrics(masks, preds, history, self.labels)
             history['loss'].append(loss.item())
 
-            # display average metrics in progress bar
+            # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
 
@@ -100,7 +114,7 @@ class CascadeTrainer:
 
                 # Create optic disc masks
                 od_outputs = self.od_model(images)
-                od_probs = torch.sigmoid(od_outputs)
+                od_probs = self.activation(od_outputs)
                 od_preds = (od_probs > self.od_threshold).long()
 
                 # Apply masks to images
@@ -119,12 +133,22 @@ class CascadeTrainer:
                         loss = self.criterion(oc_outputs, oc_masks)
 
                 # Convert logits to predictions
-                oc_probs = torch.sigmoid(oc_outputs)
+                oc_probs = self.activation(oc_outputs)
                 oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-                oc_preds[oc_preds == 1] = 2
+
+                od_preds = od_preds.squeeze(1)
+
+                # Join OD and OC predictions
+                preds = torch.zeros_like(oc_preds)
+                preds[od_preds == 1] = 1
+                preds[oc_preds == 1] = 2
+
+                # Invert initial transformations like normalization, polar transform, etc.
+                if self.inverse_transform is not None:
+                    images, masks, preds = self.inverse_transform(images, masks, preds)
 
                 # calculate metrics
-                update_metrics(masks, oc_preds, history, self.labels)
+                update_metrics(masks, preds, history, self.labels)
                 history['loss'].append(loss.item())
 
                 # show summary of metrics in progress bar
@@ -205,6 +229,9 @@ class CascadeTrainLogger:
                 })
                 wandb.log({f'Segmentation results for OC ({self.part})': seg_img}, step=epoch)
                 break
+
+        if not self.dir:
+            return
 
         file = f'{self.dir}/epoch{epoch}.png'
         file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'

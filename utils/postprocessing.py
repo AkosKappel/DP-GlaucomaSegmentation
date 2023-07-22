@@ -19,6 +19,9 @@ def separate_disc_and_cup_mask(mask: np.ndarray):
     return od_mask, oc_mask
 
 
+# TODO: Morphological operations (erosion, dilation, opening, closing, etc.) for removing noisy pixels (like in ResNet)
+
+
 def keep_largest_component(binary_mask: np.ndarray):
     # Find connected components in the binary mask
     num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)

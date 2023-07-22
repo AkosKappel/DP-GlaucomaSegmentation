@@ -12,12 +12,13 @@ __all__ = ['MulticlassTrainer', 'MulticlassTrainLogger']
 
 class MulticlassTrainer:
 
-    def __init__(self, model, criterion, optimizer, device, scaler=None):
+    def __init__(self, model, criterion, optimizer, device, scaler=None, inverse_transform=None):
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
         self.scaler = scaler
+        self.inverse_transform = inverse_transform
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
@@ -60,6 +61,10 @@ class MulticlassTrainer:
             probs = torch.softmax(outputs, dim=1)
             preds = torch.argmax(probs, dim=1)
 
+            # Inverse initial transformations like normalization, polar transform, etc.
+            if self.inverse_transform is not None:
+                images, masks, preds = self.inverse_transform(images, masks, preds)
+
             # Calculate metrics
             update_metrics(masks, preds, history, self.labels)
             history['loss'].append(loss.item())
@@ -96,6 +101,10 @@ class MulticlassTrainer:
                 # Convert logits to probabilities and predictions
                 probs = torch.softmax(outputs, dim=1)
                 preds = torch.argmax(probs, dim=1)
+
+                # Inverse initial data transformations on images, masks and predictions
+                if self.inverse_transform is not None:
+                    images, masks, preds = self.inverse_transform(images, masks, preds)
 
                 # Calculate metrics
                 update_metrics(masks, preds, history, self.labels)
@@ -162,6 +171,9 @@ class MulticlassTrainLogger:
                 })
                 wandb.log({f'Segmentation results ({self.part})': seg_img}, step=epoch)
                 break
+
+        if not self.dir:
+            return
 
         file = f'{self.dir}/epoch{epoch}.png'
         file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'

@@ -112,11 +112,18 @@ def histogram_equalization(src_dir: Path, dst_dir: Path, mode='grey'):
     print(f'Histogram equalization ({mode}) applied to {num} images from {src_dir} and saved to {dst_dir}')
 
 
-def split_rgb_channels(src_dir: Path, dst_dir: Path, red: str = 'red', green: str = 'green', blue: str = 'blue'):
+def split_rgb_channels(src_dir: Path, dst_dir: Path,
+                       red_name: str = 'red', green_name: str = 'green', blue_name: str = 'blue'):
     assert src_dir.exists(), f'{src_dir} not found'
     assert src_dir.is_dir(), f'{src_dir} is not a directory'
 
-    dst_dir.mkdir(parents=True, exist_ok=True)
+    red_dir = dst_dir / red_name
+    green_dir = dst_dir / green_name
+    blue_dir = dst_dir / blue_name
+
+    red_dir.mkdir(parents=True, exist_ok=True)
+    green_dir.mkdir(parents=True, exist_ok=True)
+    blue_dir.mkdir(parents=True, exist_ok=True)
 
     num = 0
     for img_path in src_dir.iterdir():
@@ -127,13 +134,12 @@ def split_rgb_channels(src_dir: Path, dst_dir: Path, red: str = 'red', green: st
 
         if img.shape[-1] == 3:
             img_r, img_g, img_b = cv.split(img)
-            cv.imwrite(str(dst_dir / red / img_path.name), img_r)
-            cv.imwrite(str(dst_dir / green / img_path.name), img_g)
-            cv.imwrite(str(dst_dir / blue / img_path.name), img_b)
+            cv.imwrite(str(red_dir / img_path.name), img_r)
+            cv.imwrite(str(green_dir / img_path.name), img_g)
+            cv.imwrite(str(blue_dir / img_path.name), img_b)
             num += 1
 
-    print(f'RGB channels split for {num} images from {src_dir} and saved to '
-          f'{dst_dir / red}, {dst_dir / green}, {dst_dir / blue}')
+    print(f'RGB channels split for {num} images from {src_dir} and saved to {red_dir}, {green_dir}, {blue_dir}')
 
 
 def to_greyscale(src_dir: Path, dst_dir: Path):

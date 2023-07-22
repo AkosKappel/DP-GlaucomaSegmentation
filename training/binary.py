@@ -12,13 +12,16 @@ __all__ = ['BinaryTrainer', 'BinaryTrainLogger']
 
 class BinaryTrainer:
 
-    def __init__(self, model, criterion, optimizer, device, scaler=None, target_ids=None, threshold: float = 0.5):
+    def __init__(self, model, criterion, optimizer, device, scaler=None, target_ids=None, threshold: float = 0.5,
+                 inverse_transform=None, activation=None):
         assert target_ids is not None, 'target_ids must be specified for binary segmentation'
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
         self.scaler = scaler
+        self.inverse_transform = inverse_transform
+        self.activation = torch.sigmoid if activation is None else activation
         self.target_ids = target_ids
         self.threshold = threshold
         self.labels = [target_ids.detach().cpu().numpy().tolist()]
@@ -59,13 +62,17 @@ class BinaryTrainer:
                 self.scaler.update()
 
             # Convert logits to probabilities and apply threshold to get predictions
-            probs = torch.sigmoid(outputs)
+            probs = self.activation(outputs)
             preds = (probs > self.threshold).squeeze(1).long()
 
             # Shift predicted class labels for OC
             if self.labels == [[2]]:
                 preds[preds == 1] = 2
                 masks[masks == 1] = 2
+
+            # Inverse initial transformations like normalization, polar transform, etc.
+            if self.inverse_transform is not None:
+                images, masks, preds = self.inverse_transform(images, masks, preds)
 
             # Calculate metrics
             update_metrics(masks, preds, history, self.labels)
@@ -101,13 +108,17 @@ class BinaryTrainer:
                         loss = self.criterion(outputs, masks)
 
                 # Convert logits to probabilities
-                probs = torch.sigmoid(outputs)
+                probs = self.activation(outputs)
                 preds = (probs > self.threshold).squeeze(1).long()
 
                 # Correct predicted class labels for OC
                 if self.labels == [[2]]:
                     preds[preds == 1] = 2
                     masks[masks == 1] = 2
+
+                # Inverse initial data transformations on images, masks and predictions
+                if self.inverse_transform is not None:
+                    images, masks, preds = self.inverse_transform(images, masks, preds)
 
                 # Calculate and update tracked metrics
                 update_metrics(masks, preds, history, self.labels)
@@ -149,9 +160,7 @@ class BinaryTrainLogger:
 
         model.eval()
         with torch.no_grad():
-            batch = next(iter(loader))
-            images, masks = batch
-
+            images, masks = next(iter(loader))
             images = images.float().to(device)
             masks = masks.long().to(device)
 
@@ -187,6 +196,9 @@ class BinaryTrainLogger:
                 })
                 wandb.log({f'Segmentation results for {optic} ({self.part})': seg_img}, step=epoch)
                 break
+
+        if not self.dir:
+            return
 
         file = f'{self.dir}/epoch{epoch}.png'
         file_best_od = f'{self.dir}/epoch{epoch}_Best-OD.png'
