@@ -167,15 +167,18 @@ class Decoder(nn.Module):
 
         d2 = self.up2(d1)
         a2 = self.ag2(d2, e3)
-        d2 = self.de2(torch.cat((a2, d2), dim=1))
+        d2 = torch.cat((a2, d2), dim=1)
+        d2 = self.de2(d2)
 
         d3 = self.up3(d2)
         a3 = self.ag3(d3, e2)
-        d3 = self.de3(torch.cat((a3, d3), dim=1))
+        d3 = torch.cat((a3, d3), dim=1)
+        d3 = self.de3(d3)
 
         d4 = self.up4(d3)
         a4 = self.ag4(d4, e1)
-        d4 = self.de4(torch.cat((a4, d4), dim=1))
+        d4 = torch.cat((a4, d4), dim=1)
+        d4 = self.de4(d4)
 
         out = self.last_conv(d4)
         return out

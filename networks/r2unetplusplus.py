@@ -28,7 +28,7 @@ class DoubleConv(nn.Module):
 
 class UpConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mode: str = 'transpose', with_conv: bool = True,
+    def __init__(self, in_channels: int, out_channels: int, mode: str = 'bilinear', with_conv: bool = True,
                  scale_factor: int = 2):
         super(UpConv, self).__init__()
         if mode == 'transpose':

@@ -9,108 +9,116 @@ from tqdm import tqdm
 
 from utils.metrics import update_metrics
 
+__all__ = [
+    'inference', 'evaluate', 'evaluate_tta', 'evaluate_morph', 'save_predictions_as_images',
+]
 
-def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, class_ids: list = None, model0=None):
+
+def inference(mode: str, model, images, masks, thresh: float = 0.5, labels=None, model0=None, criterion=None):
+    preds = loss = od_loss = oc_loss = None
+
+    # Multi-class segmentation
+    if mode == 'multiclass':
+        outputs = model(images)
+        if criterion is not None:
+            loss = criterion(outputs, masks)
+        probs = F.softmax(outputs, dim=1)
+        preds = torch.argmax(probs, dim=1)
+
+    # Binary segmentation
+    elif mode == 'binary':
+        masks = torch.where(torch.isin(masks, labels), 1, 0)
+        outputs = model(images)
+        if criterion is not None:
+            loss = criterion(outputs, masks)
+        probs = torch.sigmoid(outputs)
+        preds = (probs > thresh).squeeze(1).long()
+
+    # Cascade architecture
+    elif mode == 'cascade':
+        od_masks = (masks == 1).long() + (masks == 2).long()
+        oc_masks = (masks == 2).long()
+
+        od_outputs = model0(images)
+        od_probs = torch.sigmoid(od_outputs)
+        od_preds = (od_probs > thresh).long()
+
+        images = images * od_preds
+
+        oc_outputs = model(images)
+        oc_probs = torch.sigmoid(oc_outputs)
+        oc_preds = (oc_probs > thresh).long()
+
+        if criterion is not None:
+            od_loss = criterion(od_outputs, od_masks)
+            oc_loss = criterion(oc_outputs, oc_masks)
+            loss = od_loss + oc_loss
+        preds = torch.zeros_like(oc_preds)
+        preds[od_preds == 1] = 1
+        preds[oc_preds == 1] = 2
+
+    # Dual architecture
+    elif mode == 'dual':
+        od_masks = (masks == 1).long() + (masks == 2).long()
+        oc_masks = (masks == 2).long()
+
+        od_outputs, oc_outputs = model(images)
+        od_probs = torch.sigmoid(od_outputs)
+        oc_probs = torch.sigmoid(oc_outputs)
+        od_preds = (od_probs > thresh).long()
+        oc_preds = (oc_probs > thresh).long()
+
+        if criterion is not None:
+            od_loss = criterion(od_outputs, od_masks)
+            oc_loss = criterion(oc_outputs, oc_masks)
+            loss = od_loss + oc_loss
+        preds = torch.zeros_like(oc_preds)
+        preds[od_preds == 1] = 1
+        preds[oc_preds == 1] = 2
+
+    return preds, loss, od_loss, oc_loss
+
+
+def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, class_ids: list = None, model0=None,
+             inverse_transform=None):
     assert mode in ('binary', 'multiclass', 'cascade', 'dual')
 
-    history = defaultdict(list)
-    loop = tqdm(loader, total=len(loader), leave=True, desc='Evaluating')
-    mean_metrics = None
-
-    model.eval()
-    model = model.to(device)
-    if model0 is not None:
-        model0.eval()
-        model0 = model0.to(device)
-
-    if class_ids is None:
+    if mode in ('multiclass', 'cascade', 'dual') and class_ids is None:
+        class_ids = [[1, 2], [2]]
+    elif class_ids is None:
         class_ids = [[1, 2]]
     elif isinstance(class_ids, int):
         class_ids = [[class_ids]]
     elif isinstance(class_ids[0], int):
         class_ids = [class_ids]
-    tensor_class_ids = torch.tensor(class_ids).to(device)
+    labels = torch.tensor(class_ids).to(device)
+
+    model.eval()
+    model = model.to(device)
+    criterion = criterion.to(device)
+    if model0 is not None:
+        model0.eval()
+        model0 = model0.to(device)
+
+    mean_metrics = None
+    history = defaultdict(list)
+    loop = tqdm(loader, total=len(loader), leave=True, desc='Evaluating')
 
     with torch.no_grad():
         for batch_idx, (images, masks) in enumerate(loop):
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            # Multi-class segmentation
-            if mode == 'multiclass':
-                outputs = model(images)
-                loss = criterion(outputs, masks)
+            preds, loss, od_loss, oc_loss = inference(mode, model, images, masks, thresh, labels, model0, criterion)
+            if inverse_transform is not None:
+                images, masks, preds = inverse_transform(images, masks, preds)
 
-                probs = F.softmax(outputs, dim=1)
-                preds = torch.argmax(probs, dim=1)
-
-                update_metrics(masks, preds, history, [[1, 2], [2]])
-                history['loss'].append(loss.item())
-
-            # Binary segmentation
-            elif mode == 'binary':
-                masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
-
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-
-                probs = torch.sigmoid(outputs)
-                preds = (probs > thresh).squeeze(1).long()
-
-                update_metrics(masks, preds, history, class_ids)
-                history['loss'].append(loss.item())
-
-            # Cascade architecture
-            elif mode == 'cascade':
-                od_masks = (masks == 1).long() + (masks == 2).long()
-                oc_masks = (masks == 2).long()
-
-                od_outputs = model0(images)
-                od_loss = criterion(od_outputs, od_masks)
-
-                od_probs = torch.sigmoid(od_outputs)
-                od_preds = (od_probs > thresh).long()
-
-                images = images * od_preds
-
-                oc_outputs = model(images)
-                oc_loss = criterion(oc_outputs, oc_masks)
-
-                oc_probs = torch.sigmoid(oc_outputs)
-                oc_preds = (oc_probs > thresh).long()
-
-                preds = torch.zeros_like(oc_preds)
-                preds[od_preds == 1] = 1
-                preds[oc_preds == 1] = 2
-
-                update_metrics(masks, preds, history, [[1, 2], [2]])
+            update_metrics(masks, preds, history, class_ids)
+            history['loss'].append(loss.item())
+            if od_loss is not None:
                 history['loss_OD'].append(od_loss.item())
+            if oc_loss is not None:
                 history['loss_OC'].append(oc_loss.item())
-                history['loss'].append(od_loss.item() + oc_loss.item())
-
-            # Dual architecture
-            elif mode == 'dual':
-                od_masks = (masks == 1).long() + (masks == 2).long()
-                oc_masks = (masks == 2).long()
-
-                od_outputs, oc_outputs = model(images)
-                od_loss = criterion(od_outputs, od_masks)
-                oc_loss = criterion(oc_outputs, oc_masks)
-
-                od_probs = torch.sigmoid(od_outputs)
-                od_preds = (od_probs > thresh).long()
-
-                oc_probs = torch.sigmoid(oc_outputs)
-                oc_preds = (oc_probs > thresh).long()
-
-                preds = torch.zeros_like(oc_preds)
-                preds[od_preds == 1] = 1
-                preds[oc_preds == 1] = 2
-
-                update_metrics(masks, preds, history, [[1, 2], [2]])
-                history['loss_OD'].append(od_loss.item())
-                history['loss_OC'].append(oc_loss.item())
-                history['loss'].append(od_loss.item() + oc_loss.item())
 
             # show mean metrics after every batch
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
@@ -281,13 +289,27 @@ def evaluate_morph(model, device, loader, show_example=False, iterations=1, kern
     return mean_metrics
 
 
-def save_predictions_as_images(mode: str, model, loader, device, path: str = 'predictions'):
+def save_predictions_as_images(mode: str, model, loader, device, thresh: float = 0.5, class_ids: list = None,
+                               model0=None, path: str = 'predictions'):
     assert mode in ('binary', 'multiclass', 'cascade', 'dual')
 
-    os.makedirs(path, exist_ok=True)
+    if mode in ('multiclass', 'cascade', 'dual') and class_ids is None:
+        class_ids = [[1, 2], [2]]
+    elif class_ids is None:
+        class_ids = [[1, 2]]
+    elif isinstance(class_ids, int):
+        class_ids = [[class_ids]]
+    elif isinstance(class_ids[0], int):
+        class_ids = [class_ids]
+    labels = torch.tensor(class_ids).to(device)
 
     model.eval()
     model = model.to(device)
+    if model0 is not None:
+        model0.eval()
+        model0 = model0.to(device)
+
+    os.makedirs(path, exist_ok=True)
     img_num = 1
 
     with torch.no_grad():
@@ -295,24 +317,11 @@ def save_predictions_as_images(mode: str, model, loader, device, path: str = 'pr
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            if mode == 'multiclass':
-                outputs = model(images)
-                probs = F.softmax(outputs, dim=1)
-                preds = torch.argmax(probs, dim=1)
-                preds = preds.detach().cpu().numpy().astype(np.uint8)
-
-            # TODO: Implement other modes
-            elif mode == 'binary':
-                pass
-
-            elif mode == 'cascade':
-                pass
-
-            elif mode == 'dual':
-                pass
+            preds, *_ = inference(mode, model, images, masks, thresh, labels, model0)
 
             images = images.detach().cpu().numpy()
             masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy().astype(np.uint8)
 
             for image, mask, pred in zip(images, masks, preds):
                 image = image.transpose(1, 2, 0)

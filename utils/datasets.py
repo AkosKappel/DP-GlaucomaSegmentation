@@ -1,7 +1,14 @@
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import cv2 as cv
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 import os
+
+__all__ = [
+    'ORIGA_MEANS', 'ORIGA_STDS', 'OrigaDataset', 'load_origa',
+    'load_fundus',
+]
 
 # calculated from the training set
 ORIGA_MEANS = (0.9400, 0.6225, 0.3316)
@@ -41,6 +48,17 @@ def load_origa(image_dir: str, mask_dir: str, train_size: float = 0.8, val_size:
                datasets_only: bool = False, loaders_only: bool = True, random_state: int = 4118):
     assert train_size + val_size + test_size == 1, 'The sum of train_size, val_size, and test_size must be 1'
 
+    base_transform = A.Compose([
+        ToTensorV2(),
+    ])
+
+    if train_transform is None:
+        train_transform = base_transform
+    if val_transform is None:
+        val_transform = base_transform
+    if test_transform is None:
+        test_transform = base_transform
+
     # Get the names of all images in the image directory
     image_names = sorted(os.listdir(image_dir))
     # Calculate the validation size as a percentage of the training size
@@ -68,12 +86,12 @@ def load_origa(image_dir: str, mask_dir: str, train_size: float = 0.8, val_size:
         return train_dataset, val_dataset, test_dataset
 
     # Create the data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin_memory)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=num_workers, pin_memory=pin_memory)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, pin_memory=pin_memory)
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
 
     print(f'''
     Train loader length: {len(train_loader)}

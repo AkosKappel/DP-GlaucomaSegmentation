@@ -105,10 +105,10 @@ class Decoder(nn.Module):
     def __init__(self, features: list[int], out_channels: int, n_repeats: int = 2):
         super(Decoder, self).__init__()
 
-        self.up1 = UpConv(features[4], features[3], scale_factor=2, mode='transpose')
-        self.up2 = UpConv(features[3], features[2], scale_factor=2, mode='transpose')
-        self.up3 = UpConv(features[2], features[1], scale_factor=2, mode='transpose')
-        self.up4 = UpConv(features[1], features[0], scale_factor=2, mode='transpose')
+        self.up1 = UpConv(features[4], features[3])
+        self.up2 = UpConv(features[3], features[2])
+        self.up3 = UpConv(features[2], features[1])
+        self.up4 = UpConv(features[1], features[0])
 
         self.de1 = RecurrentResidualBlock(features[4], features[3], n_repeats)
         self.de2 = RecurrentResidualBlock(features[3], features[2], n_repeats)

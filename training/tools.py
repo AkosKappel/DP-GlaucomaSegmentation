@@ -204,7 +204,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'history': history,
-            }, filename=f'{train_mode}-model-{model_name}-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
+            }, filename=f'{train_mode}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
 
         # Early stopping - stop training if the validation loss does not improve for a few epochs
         if epoch_loss < best_loss:
@@ -219,7 +219,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'history': history,
-                }, filename=f'best-{train_mode}-model-{model_name}.pth', checkpoint_dir=checkpoint_dir)
+                }, filename=f'best-{train_mode}-model.pth', checkpoint_dir=checkpoint_dir)
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:

@@ -6,6 +6,13 @@ import torchviz
 from torchview import draw_graph
 from matplotlib.patches import Patch
 
+__all__ = [
+    'show_model_graph', 'show_model_view', 'plot_history', 'unnormalize', 'get_input_images', 'get_input_image',
+    'get_ground_truth_masks', 'get_ground_truth_mask', 'get_prediction_masks', 'get_prediction_mask',
+    'get_cover_images', 'get_cover_image', 'get_overlay_images', 'get_overlay_image', 'get_contour_images',
+    'get_contour_image', 'plot_image_grid', 'plot_results', 'plot_side_by_side', 'plot_results_from_loader',
+]
+
 
 def show_model_graph(model, input_size, expand_nested=True):
     model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)

@@ -43,7 +43,7 @@ class DoubleConv(nn.Module):
 
 class UpConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mode: str = 'transpose', scale_factor: int = 2,
+    def __init__(self, in_channels: int, out_channels: int, mode: str = 'bilinear', scale_factor: int = 2,
                  align_corners: bool = True):
         super(UpConv, self).__init__()
         if mode == 'transpose':
@@ -67,8 +67,8 @@ class Encoder(nn.Module):
 
     def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
-
         self.multi_scale_input = multi_scale_input
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
         if multi_scale_input:
             self.side_conv1 = SingleConv(in_channels, features[1])
@@ -86,8 +86,6 @@ class Encoder(nn.Module):
             self.conv3 = DoubleConv(features[1], features[2])
             self.conv4 = DoubleConv(features[2], features[3])
             self.conv5 = DoubleConv(features[3], features[4])  # Bridge
-
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
         skip1 = self.conv1(x)
@@ -125,10 +123,10 @@ class Decoder(nn.Module):
     def __init__(self, features: list[int], out_channels: int):
         super(Decoder, self).__init__()
 
-        self.up1 = UpConv(features[4], features[3], 'transpose', scale_factor=2)
-        self.up2 = UpConv(features[3], features[2], 'transpose', scale_factor=2)
-        self.up3 = UpConv(features[2], features[1], 'transpose', scale_factor=2)
-        self.up4 = UpConv(features[1], features[0], 'transpose', scale_factor=2)
+        self.up1 = UpConv(features[4], features[3])
+        self.up2 = UpConv(features[3], features[2])
+        self.up3 = UpConv(features[2], features[1])
+        self.up4 = UpConv(features[1], features[0])
 
         self.conv1 = DoubleConv(features[4], features[3])
         self.conv2 = DoubleConv(features[3], features[2])
