@@ -26,6 +26,9 @@ class BinaryTrainer:
         self.threshold = threshold
         self.labels = [target_ids.detach().cpu().numpy().tolist()]
 
+    def get_learning_rate(self):
+        return self.optimizer.param_groups[0]['lr']
+
     def train_one_epoch(self, loader):
         history = defaultdict(list)
         loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
@@ -80,7 +83,7 @@ class BinaryTrainer:
 
             # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
 
         return mean_metrics
 
@@ -129,6 +132,56 @@ class BinaryTrainer:
                 loop.set_postfix(**mean_metrics)
 
         return mean_metrics
+
+    def run_one_iteration(self, images, masks, backward: bool, history=None):
+        images = images.float().to(self.device)
+        masks = masks.long().to(self.device)
+
+        # Binarize mask by setting target ID labels to 1 and all other labels to 0 in mask
+        masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
+
+        if self.scaler is None:
+            # Forward pass
+            outputs = self.model(images)
+            loss = self.criterion(outputs, masks)
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+        else:
+            # Forward pass
+            with torch.cuda.amp.autocast():
+                outputs = self.model(images)
+                loss = self.criterion(outputs, masks)
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+        # Convert logits to probabilities and apply threshold to get predictions
+        probs = self.activation(outputs)
+        preds = (probs > self.threshold).squeeze(1).long()
+
+        # Shift predicted class labels for OC
+        if self.labels == [[2]]:
+            preds[preds == 1] = 2
+            masks[masks == 1] = 2
+
+        # Inverse initial transformations like normalization, polar transform, etc.
+        if self.inverse_transform is not None:
+            images, masks, preds = self.inverse_transform(images, masks, preds)
+
+        # Calculate metrics
+        if history is not None:
+            update_metrics(masks, preds, history, self.labels)
+            history['loss'].append(loss.item())
+
+        return images, masks, preds
 
 
 class BinaryTrainLogger:

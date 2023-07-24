@@ -23,6 +23,9 @@ class MulticlassTrainer:
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
 
+    def get_learning_rate(self):
+        return self.optimizer.param_groups[0]['lr']
+
     def train_one_epoch(self, loader):
         history = defaultdict(list)
         loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
@@ -71,7 +74,7 @@ class MulticlassTrainer:
 
             # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
 
         return mean_metrics
 
@@ -115,6 +118,49 @@ class MulticlassTrainer:
                 loop.set_postfix(**mean_metrics)
 
         return mean_metrics
+
+    def run_one_iteration(self, images, masks, backward: bool, history=None):
+        # Move data to device
+        images = images.float().to(self.device)
+        masks = masks.long().to(self.device)
+
+        if self.scaler is None:
+            # Forward pass
+            outputs = self.model(images)  # Model returns logits
+            loss = self.criterion(outputs, masks)
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+        else:
+            # Forward pass
+            with torch.cuda.amp.autocast():
+                outputs = self.model(images)
+                loss = self.criterion(outputs, masks)
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+        # Convert logits to probabilities and then to label predictions
+        probs = torch.softmax(outputs, dim=1)
+        preds = torch.argmax(probs, dim=1)
+
+        # Inverse initial transformations like normalization, polar transform, etc.
+        if self.inverse_transform is not None:
+            images, masks, preds = self.inverse_transform(images, masks, preds)
+
+        # Update metrics in history
+        if history is not None:
+            update_metrics(masks, preds, history, self.labels)
+            history['loss'].append(loss.item())
+
+        return images, masks, preds
 
 
 class MulticlassTrainLogger:

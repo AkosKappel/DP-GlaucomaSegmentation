@@ -31,6 +31,9 @@ class DualTrainer:
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
 
+    def get_learning_rate(self):
+        return self.optimizer.param_groups[0]['lr']
+
     def train_one_epoch(self, loader):
         history = defaultdict(list)
         loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
@@ -95,7 +98,7 @@ class DualTrainer:
 
             # Display mean metrics inside progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.optimizer.param_groups[0]['lr'])
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
 
         return mean_metrics
 
@@ -156,6 +159,66 @@ class DualTrainer:
                 loop.set_postfix(**mean_metrics)
 
         return mean_metrics
+
+    def run_one_iteration(self, images, masks, backward: bool, history=None):
+        images = images.float().to(self.device)
+        masks = masks.long().to(self.device)
+
+        # Create optic disc and optic cup binary masks
+        od_masks = (masks == 1).long() + (masks == 2).long()
+        oc_masks = (masks == 2).long()
+
+        if self.scaler is None:
+            # Forward pass
+            od_outputs, oc_outputs = self.model(images)
+            od_loss = self.od_criterion(od_outputs, od_masks)
+            oc_loss = self.oc_criterion(oc_outputs, oc_masks)
+            total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
+        else:
+            # Forward pass
+            with torch.cuda.amp.autocast():
+                od_outputs, oc_outputs = self.model(images)
+                od_loss = self.od_criterion(od_outputs, od_masks)
+                oc_loss = self.oc_criterion(oc_outputs, oc_masks)
+                total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
+
+            # Backward pass
+            if backward:
+                self.optimizer.zero_grad()
+                self.scaler.scale(total_loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+        # Convert logits to probabilities for OD and OC
+        od_probs = self.activation(od_outputs)
+        od_preds = (od_probs > self.od_threshold).squeeze(1).long()
+
+        oc_probs = self.activation(oc_outputs)
+        oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+
+        # Join OD and OC predictions into a single tensor
+        preds = torch.zeros_like(oc_preds)
+        preds[od_preds == 1] = 1
+        preds[oc_preds == 1] = 2
+
+        # Inverse initial transformations like normalization, polar transform, etc.
+        if self.inverse_transform is not None:
+            images, masks, preds = self.inverse_transform(images, masks, preds)
+
+        # Add new batch metrics to history
+        if history is not None:
+            update_metrics(masks, preds, history, self.labels)
+            history['loss'].append(total_loss.item())
+            history['loss_OD'].append(od_loss.item())
+            history['loss_OC'].append(oc_loss.item())
+
+        return images, masks, preds
 
 
 class DualTrainLogger:
