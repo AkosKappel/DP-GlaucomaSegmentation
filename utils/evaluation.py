@@ -10,11 +10,11 @@ from tqdm import tqdm
 from utils.metrics import update_metrics
 
 __all__ = [
-    'inference', 'evaluate', 'evaluate_tta', 'evaluate_morph', 'save_predictions_as_images',
+    'predict', 'evaluate', 'tta_evaluate', 'morph_evaluate', 'save_predictions_as_images',
 ]
 
 
-def inference(mode: str, model, images, masks, thresh: float = 0.5, labels=None, model0=None, criterion=None):
+def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, model0=None, criterion=None):
     preds = loss = od_loss = oc_loss = None
 
     # Multi-class segmentation
@@ -109,7 +109,7 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            preds, loss, od_loss, oc_loss = inference(mode, model, images, masks, thresh, labels, model0, criterion)
+            preds, loss, od_loss, oc_loss = predict(mode, model, images, masks, thresh, labels, model0, criterion)
             if inverse_transform is not None:
                 images, masks, preds = inverse_transform(images, masks, preds)
 
@@ -127,7 +127,7 @@ def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, c
     return mean_metrics
 
 
-def evaluate_tta(model, device, loader, show_example=False):
+def tta_evaluate(model, device, loader, show_example=False):
     model.eval()
     model = model.to(device=device)
     history = defaultdict(list)
@@ -217,7 +217,7 @@ def evaluate_tta(model, device, loader, show_example=False):
     return mean_metrics
 
 
-def evaluate_morph(model, device, loader, show_example=False, iterations=1, kernel_size=3):
+def morph_evaluate(model, device, loader, show_example=False, iterations=1, kernel_size=3):
     model.eval()
     model = model.to(device=device)
     history = defaultdict(list)
@@ -317,7 +317,7 @@ def save_predictions_as_images(mode: str, model, loader, device, thresh: float =
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            preds, *_ = inference(mode, model, images, masks, thresh, labels, model0)
+            preds, *_ = predict(mode, model, images, masks, thresh, labels, model0)
 
             images = images.detach().cpu().numpy()
             masks = masks.detach().cpu().numpy()

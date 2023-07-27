@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 __all__ = [
-    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform', 'arctan',
+    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform', 'occlude', 'arctan',
     'keep_red_channel', 'keep_green_channel', 'keep_blue_channel', 'keep_gray_channel',
 ]
 
@@ -47,7 +47,23 @@ def undo_polar_transform(images, masks, preds):
     return images, masks, preds
 
 
-# Activation function instead of sigmoid
+def occlude(img, p=0.5, occlusion_size=32, occlusion_value=0, **kwargs):
+    if np.random.rand() > p:
+        return img
+
+    h, w = img.shape[:2]
+    assert h >= occlusion_size and w >= occlusion_size, \
+        f'Image size ({h}, {w}) must be greater than occlusion size ({occlusion_size}, {occlusion_size})'
+
+    x = np.random.randint(0, w - occlusion_size)
+    y = np.random.randint(0, h - occlusion_size)
+
+    img[y:y + occlusion_size, x:x + occlusion_size] = occlusion_value
+
+    return img
+
+
+# Different activation function instead of sigmoid
 # see: https://lars76.github.io/2021/09/05/activations-segmentation.html
 def arctan(x):
     return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
