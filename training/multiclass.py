@@ -7,7 +7,7 @@ import wandb
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['MulticlassTrainer', 'MulticlassTrainLogger']
+__all__ = ['MulticlassTrainer', 'MulticlassLogger']
 
 
 class MulticlassTrainer:
@@ -26,99 +26,6 @@ class MulticlassTrainer:
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
 
-    def train_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
-        mean_metrics = None
-
-        # Set model to train mode
-        self.model.train()
-        # Iterate once over all the batches in the training data loader
-        for batch_idx, (images, masks) in enumerate(loop):
-            # Move data to device
-            images = images.float().to(self.device)
-            masks = masks.long().to(self.device)
-
-            if self.scaler is None:
-                # Forward pass
-                outputs = self.model(images)  # Model returns logits
-                loss = self.criterion(outputs, masks)
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-            else:
-                # Forward pass
-                with torch.cuda.amp.autocast():
-                    outputs = self.model(images)
-                    loss = self.criterion(outputs, masks)
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-
-            # Convert logits to probabilities and then to label predictions
-            probs = torch.softmax(outputs, dim=1)
-            preds = torch.argmax(probs, dim=1)
-
-            # Inverse initial transformations like normalization, polar transform, etc.
-            if self.inverse_transform is not None:
-                images, masks, preds = self.inverse_transform(images, masks, preds)
-
-            # Calculate metrics
-            update_metrics(masks, preds, history, self.labels)
-            history['loss'].append(loss.item())
-
-            # Display average metrics in progress bar
-            mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
-
-        return mean_metrics
-
-    def validate_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
-        mean_metrics = None
-
-        # Set model to evaluation mode
-        self.model.eval()
-        # Disable gradient calculation
-        with torch.no_grad():
-            # Iterate once over all batches in the validation dataset
-            for batch_idx, (images, masks) in enumerate(loop):
-                images = images.float().to(self.device)
-                masks = masks.long().to(self.device)
-
-                # Forward pass only, no gradient calculation
-                if self.scaler is None:
-                    outputs = self.model(images)
-                    loss = self.criterion(outputs, masks)
-                else:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(images)
-                        loss = self.criterion(outputs, masks)
-
-                # Convert logits to probabilities and predictions
-                probs = torch.softmax(outputs, dim=1)
-                preds = torch.argmax(probs, dim=1)
-
-                # Inverse initial data transformations on images, masks and predictions
-                if self.inverse_transform is not None:
-                    images, masks, preds = self.inverse_transform(images, masks, preds)
-
-                # Calculate metrics
-                update_metrics(masks, preds, history, self.labels)
-                history['loss'].append(loss.item())
-
-                # Show summary of metrics in progress bar
-                mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
-
-        return mean_metrics
-
     def run_one_iteration(self, images, masks, backward: bool, history=None):
         # Move data to device
         images = images.float().to(self.device)
@@ -126,7 +33,7 @@ class MulticlassTrainer:
 
         if self.scaler is None:
             # Forward pass
-            outputs = self.model(images)  # Model returns logits
+            outputs = self.model(images)  # Model returns logits (before softmax)
             loss = self.criterion(outputs, masks)
 
             # Backward pass
@@ -147,7 +54,7 @@ class MulticlassTrainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
-        # Convert logits to probabilities and then to label predictions
+        # Convert logits to probabilities and then to class label predictions
         probs = torch.softmax(outputs, dim=1)
         preds = torch.argmax(probs, dim=1)
 
@@ -162,8 +69,44 @@ class MulticlassTrainer:
 
         return images, masks, preds
 
+    def train_one_epoch(self, loader):
+        self.model.train()  # Set model to train mode
+        mean_metrics = None
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
 
-class MulticlassTrainLogger:
+        # Iterate once over all the batches in the training data loader
+        for batch_idx, (images, masks) in enumerate(loop):
+            # Forward and backward pass
+            self.run_one_iteration(images, masks, backward=True, history=history)
+
+            # Display average metrics in progress bar
+            mean_metrics = {k: np.mean(v) for k, v in history.items()}
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+
+        return mean_metrics
+
+    def validate_one_epoch(self, loader):
+        self.model.eval()  # Set model to evaluation mode
+        mean_metrics = None
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
+
+        # Disable gradient calculation
+        with torch.no_grad():
+            # Iterate once over all batches in the validation dataset
+            for batch_idx, (images, masks) in enumerate(loop):
+                # Forward pass only
+                self.run_one_iteration(images, masks, backward=False, history=history)
+
+                # Show summary of metrics in progress bar
+                mean_metrics = {k: np.mean(v) for k, v in history.items()}
+                loop.set_postfix(**mean_metrics)
+
+        return mean_metrics
+
+
+class MulticlassLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation'):

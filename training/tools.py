@@ -6,10 +6,10 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 
-from .multiclass import MulticlassTrainer, MulticlassTrainLogger
-from .binary import BinaryTrainer, BinaryTrainLogger
-from .cascade import CascadeTrainer, CascadeTrainLogger
-from .dual import DualTrainer, DualTrainLogger
+from .multiclass import MulticlassTrainer, MulticlassLogger
+from .binary import BinaryTrainer, BinaryLogger
+from .cascade import CascadeTrainer, CascadeLogger
+from .dual import DualTrainer, DualLogger
 from utils.losses import *
 from networks import *
 
@@ -111,6 +111,9 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # oc_loss_weight: weight for optic cup loss (default: 1.0)
     # returns: history of training and validation metrics as a dictionary of lists
 
+    assert train_mode in ('multiclass', 'binary', 'cascade', 'dual'), \
+        'Invalid training mode. Choose from: multiclass, binary, cascade, dual'
+
     history = defaultdict(list)
     best_loss = float('inf')
     best_metrics = None
@@ -129,7 +132,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     match train_mode:
         case 'multiclass':
             trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
-            logger = MulticlassTrainLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+            logger = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
         case 'binary':
             if target_ids is None:
                 target_ids = [1, 2]
@@ -138,7 +141,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             trainer = BinaryTrainer(
                 model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
             )
-            logger = BinaryTrainLogger(
+            logger = BinaryLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 target_ids=target_ids, threshold=threshold,
             )
@@ -153,7 +156,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 base_cascade_model, model, criterion, optimizer, device, scaler,
                 od_threshold, oc_threshold, inverse_transform, activation,
             )
-            logger = CascadeTrainLogger(
+            logger = CascadeLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
             )
@@ -162,7 +165,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 model, criterion, dual_branch_criterion, optimizer, device, scaler,
                 od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
             )
-            logger = DualTrainLogger(
+            logger = DualLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 od_threshold=od_threshold, oc_threshold=oc_threshold,
             )
@@ -204,7 +207,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'history': history,
-            }, filename=f'{train_mode}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
+            }, filename=f'{train_mode}-{model_name}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
 
         # Early stopping - stop training if the validation loss does not improve for a few epochs
         if epoch_loss < best_loss:
@@ -219,7 +222,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'history': history,
-                }, filename=f'best-{train_mode}-model.pth', checkpoint_dir=checkpoint_dir)
+                }, filename=f'best-{train_mode}-{model_name}-model.pth', checkpoint_dir=checkpoint_dir)
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:

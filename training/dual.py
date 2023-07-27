@@ -7,7 +7,7 @@ import wandb
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['DualTrainer', 'DualTrainLogger']
+__all__ = ['DualTrainer', 'DualLogger']
 
 
 class DualTrainer:
@@ -33,132 +33,6 @@ class DualTrainer:
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
-
-    def train_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
-        mean_metrics = None
-
-        # Training loop
-        self.model.train()
-        for batch_idx, (images, masks) in enumerate(loop):
-            images = images.float().to(self.device)
-            masks = masks.long().to(self.device)
-
-            # Create optic disc and optic cup binary masks
-            od_masks = (masks == 1).long() + (masks == 2).long()
-            oc_masks = (masks == 2).long()
-
-            if self.scaler is None:
-                # Forward pass
-                od_outputs, oc_outputs = self.model(images)
-                od_loss = self.od_criterion(od_outputs, od_masks)
-                oc_loss = self.oc_criterion(oc_outputs, oc_masks)
-                total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                total_loss.backward()
-                self.optimizer.step()
-            else:
-                # Forward pass
-                with torch.cuda.amp.autocast():
-                    od_outputs, oc_outputs = self.model(images)
-                    od_loss = self.od_criterion(od_outputs, od_masks)
-                    oc_loss = self.oc_criterion(oc_outputs, oc_masks)
-                    total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                self.scaler.scale(total_loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-
-            # Convert logits to probabilities for OD and OC
-            od_probs = self.activation(od_outputs)
-            od_preds = (od_probs > self.od_threshold).squeeze(1).long()
-
-            oc_probs = self.activation(oc_outputs)
-            oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-
-            # Join OD and OC predictions into a single tensor
-            preds = torch.zeros_like(oc_preds)
-            preds[od_preds == 1] = 1
-            preds[oc_preds == 1] = 2
-
-            # Inverse initial transformations like normalization, polar transform, etc.
-            if self.inverse_transform is not None:
-                images, masks, preds = self.inverse_transform(images, masks, preds)
-
-            # Add new batch metrics to history
-            update_metrics(masks, preds, history, self.labels)
-            history['loss'].append(total_loss.item())
-            history['loss_OD'].append(od_loss.item())
-            history['loss_OC'].append(oc_loss.item())
-
-            # Display mean metrics inside progress bar
-            mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
-
-        return mean_metrics
-
-    def validate_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
-        mean_metrics = None
-
-        # Validation loop
-        self.model.eval()
-        with torch.no_grad():
-            for batch_idx, (images, masks) in enumerate(loop):
-                # Prepare data
-                images = images.float().to(self.device)
-                masks = masks.long().to(self.device)
-
-                od_masks = (masks == 1).long() + (masks == 2).long()
-                oc_masks = (masks == 2).long()
-
-                # Forward pass (no backprop)
-                if self.scaler is None:
-                    od_outputs, oc_outputs = self.model(images)
-                    od_loss = self.od_criterion(od_outputs, od_masks)
-                    oc_loss = self.oc_criterion(oc_outputs, oc_masks)
-                    total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
-                else:
-                    with torch.cuda.amp.autocast():
-                        od_outputs, oc_outputs = self.model(images)
-                        od_loss = self.od_criterion(od_outputs, od_masks)
-                        oc_loss = self.oc_criterion(oc_outputs, oc_masks)
-                        total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
-
-                # Convert logits to predictions
-                od_probs = self.activation(od_outputs)
-                od_preds = (od_probs > self.od_threshold).squeeze(1).long()
-
-                oc_probs = self.activation(oc_outputs)
-                oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
-
-                # Combine OD and OC predictions
-                preds = torch.zeros_like(oc_preds)
-                preds[od_preds == 1] = 1
-                preds[oc_preds == 1] = 2
-
-                # Invert initial data transformations on images, masks and predictions
-                if self.inverse_transform is not None:
-                    images, masks, preds = self.inverse_transform(images, masks, preds)
-
-                # Calculate metrics
-                update_metrics(masks, od_preds, history, self.od_label)
-                update_metrics(masks, oc_preds, history, self.oc_label)
-                history['loss'].append(total_loss.item())
-                history['loss_OD'].append(od_loss.item())
-                history['loss_OC'].append(oc_loss.item())
-
-                # Show summary of metrics in progress bar
-                mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
-
-        return mean_metrics
 
     def run_one_iteration(self, images, masks, backward: bool, history=None):
         images = images.float().to(self.device)
@@ -220,8 +94,35 @@ class DualTrainer:
 
         return images, masks, preds
 
+    def train_one_epoch(self, loader):
+        self.model.train()
+        mean_metrics = None
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
 
-class DualTrainLogger:
+        for batch_idx, (images, masks) in enumerate(loop):
+            self.run_one_iteration(images, masks, backward=True, history=history)
+            mean_metrics = {k: np.mean(v) for k, v in history.items()}
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+
+        return mean_metrics
+
+    def validate_one_epoch(self, loader):
+        self.model.eval()
+        mean_metrics = None
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
+
+        with torch.no_grad():
+            for batch_idx, (images, masks) in enumerate(loop):
+                self.run_one_iteration(images, masks, backward=False, history=history)
+                mean_metrics = {k: np.mean(v) for k, v in history.items()}
+                loop.set_postfix(**mean_metrics)
+
+        return mean_metrics
+
+
+class DualLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',

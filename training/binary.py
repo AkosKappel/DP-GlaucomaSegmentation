@@ -7,7 +7,7 @@ import wandb
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['BinaryTrainer', 'BinaryTrainLogger']
+__all__ = ['BinaryTrainer', 'BinaryLogger']
 
 
 class BinaryTrainer:
@@ -28,110 +28,6 @@ class BinaryTrainer:
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
-
-    def train_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
-        mean_metrics = None
-
-        # Training loop
-        self.model.train()
-        for batch_idx, (images, masks) in enumerate(loop):
-            images = images.float().to(self.device)
-            masks = masks.long().to(self.device)
-
-            # Binarize mask by setting target ID labels to 1 and all other labels to 0 in mask
-            masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
-
-            if self.scaler is None:
-                # Forward pass
-                outputs = self.model(images)
-                loss = self.criterion(outputs, masks)
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-            else:
-                # Forward pass
-                with torch.cuda.amp.autocast():
-                    outputs = self.model(images)
-                    loss = self.criterion(outputs, masks)
-
-                # Backward pass
-                self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-
-            # Convert logits to probabilities and apply threshold to get predictions
-            probs = self.activation(outputs)
-            preds = (probs > self.threshold).squeeze(1).long()
-
-            # Shift predicted class labels for OC
-            if self.labels == [[2]]:
-                preds[preds == 1] = 2
-                masks[masks == 1] = 2
-
-            # Inverse initial transformations like normalization, polar transform, etc.
-            if self.inverse_transform is not None:
-                images, masks, preds = self.inverse_transform(images, masks, preds)
-
-            # Calculate metrics
-            update_metrics(masks, preds, history, self.labels)
-            history['loss'].append(loss.item())
-
-            # Display average metrics in progress bar
-            mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
-
-        return mean_metrics
-
-    def validate_one_epoch(self, loader):
-        history = defaultdict(list)
-        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
-        mean_metrics = None
-
-        # Validation loop
-        self.model.eval()
-        with torch.no_grad():
-            for batch_idx, (images, masks) in enumerate(loop):
-                # Load and prepare data
-                images = images.float().to(self.device)
-                masks = masks.long().to(self.device)
-                masks = torch.where(torch.isin(masks, self.target_ids), 1, 0)
-
-                # Forward pass
-                if self.scaler is None:
-                    outputs = self.model(images)
-                    loss = self.criterion(outputs, masks)
-                else:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(images)
-                        loss = self.criterion(outputs, masks)
-
-                # Convert logits to probabilities
-                probs = self.activation(outputs)
-                preds = (probs > self.threshold).squeeze(1).long()
-
-                # Correct predicted class labels for OC
-                if self.labels == [[2]]:
-                    preds[preds == 1] = 2
-                    masks[masks == 1] = 2
-
-                # Inverse initial data transformations on images, masks and predictions
-                if self.inverse_transform is not None:
-                    images, masks, preds = self.inverse_transform(images, masks, preds)
-
-                # Calculate and update tracked metrics
-                update_metrics(masks, preds, history, self.labels)
-                history['loss'].append(loss.item())
-
-                # Display average metrics in progress bar
-                mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
-
-        return mean_metrics
 
     def run_one_iteration(self, images, masks, backward: bool, history=None):
         images = images.float().to(self.device)
@@ -183,8 +79,43 @@ class BinaryTrainer:
 
         return images, masks, preds
 
+    def train_one_epoch(self, loader):
+        self.model.train()
+        mean_metrics = None
+        history = defaultdict(list)
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
 
-class BinaryTrainLogger:
+        # Training loop
+        for batch_idx, (images, masks) in enumerate(loop):
+            # Run one iteration of forward and backward pass
+            self.run_one_iteration(images, masks, backward=True, history=history)
+
+            # Display average metrics in progress bar
+            mean_metrics = {k: np.mean(v) for k, v in history.items()}
+            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+
+        return mean_metrics
+
+    def validate_one_epoch(self, loader):
+        self.model.eval()
+        history = defaultdict(list)
+        mean_metrics = None
+        loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
+
+        # Validation loop
+        with torch.no_grad():
+            for batch_idx, (images, masks) in enumerate(loop):
+                # Perform only forward pass (no backpropagation)
+                self.run_one_iteration(images, masks, backward=False, history=history)
+
+                # Display average validation metrics in progress bar
+                mean_metrics = {k: np.mean(v) for k, v in history.items()}
+                loop.set_postfix(**mean_metrics)
+
+        return mean_metrics
+
+
+class BinaryLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
