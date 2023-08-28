@@ -168,21 +168,10 @@ class MultilabelLogger:
             masks = masks.long().to(device)
 
             outputs = model(images)
-            bg_outputs = outputs[:, 0].unsqueeze(1)
-            od_outputs = outputs[:, 1].unsqueeze(1)
-            oc_outputs = outputs[:, 2].unsqueeze(1)
-
-            bg_probs = torch.sigmoid(bg_outputs)
-            od_probs = torch.sigmoid(od_outputs)
-            oc_probs = torch.sigmoid(oc_outputs)
-
-            bg_preds = (bg_probs > self.threshold).squeeze(1).long()
-            od_preds = (od_probs > self.threshold).squeeze(1).long()
-            oc_preds = (oc_probs > self.threshold).squeeze(1).long()
-
-            preds = torch.zeros_like(bg_preds)
-            preds = torch.where(od_preds == 1, 1, preds)
-            preds = torch.where(oc_preds == 1, 2, preds)
+            probs = torch.sigmoid(outputs)
+            preds = torch.zeros_like(probs[:, 0])
+            for i in range(1, probs.shape[1]):
+                preds += (probs[:, i] > self.threshold).long()
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
             masks = masks.detach().cpu().numpy()
@@ -224,7 +213,8 @@ class MultilabelLogger:
                 wandb.log({f'Plotted results ({self.part})': wandb.Image(file)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
-            best, worst = get_best_and_worst_OD_examples(model, loader, self.num_examples, device=device)
+            best, worst = get_best_and_worst_OD_examples(
+                model, loader, self.num_examples, softmax=False, thresh=self.threshold, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
@@ -239,7 +229,8 @@ class MultilabelLogger:
                     wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
-            best, worst = get_best_and_worst_OC_examples(model, loader, self.num_examples, device=device)
+            best, worst = get_best_and_worst_OC_examples(
+                model, loader, self.num_examples, softmax=False, thresh=self.threshold, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]

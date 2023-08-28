@@ -156,8 +156,8 @@ def get_best_and_worst_OC_examples(*args, **kwargs):
 
 
 def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True, class_ids: list = None,
-                         device: str = 'cuda', metric: str = 'iou', thresh: int = None, out_idx: int = None,
-                         first_model=None):
+                         device: str = 'cuda', metric: str = 'iou', thresh: float = 0.5, softmax: bool = False,
+                         out_idx: int = None, first_model=None):
     """
     Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
     The examples are returned as a list of (image, mask, prediction, score) tuples. The metric for determining the
@@ -190,12 +190,12 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
             # Forward pass
             outputs = model(images)
 
-            # Select specific output from models with multiple outputs (e.g. Dual, Cascade)
+            # Select specific output from models with dual outputs
             if out_idx is not None:
                 outputs = outputs[out_idx]
 
-            # Binary or multi-class segmentation
             if outputs.shape[1] == 1:
+                # Binary segmentation
                 probs = torch.sigmoid(outputs)
                 preds = (probs > thresh).squeeze(1).long()
 
@@ -207,14 +207,21 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
                 elif class_ids == [2]:
                     preds[preds == 1] = 2  # change predicted positive labels to OC labels
                     masks[masks == 1] = 0  # hide OD from ground truth
-            else:
+            elif softmax:
+                # Multi-class segmentation
                 probs = torch.softmax(outputs, dim=1)
                 preds = torch.argmax(probs, dim=1)
+            else:
+                # Multi-label segmentation
+                probs = torch.sigmoid(outputs)
+                preds = torch.zeros_like(probs[:, 0])
+                for i in range(1, probs.shape[1]):
+                    preds += (probs[:, i] > thresh).long()
 
             # Convert to numpy arrays and transpose the images to (H, W, C) format
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
-            preds = preds.detach().cpu().numpy()
             masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy()
 
             for i, _ in enumerate(images):
                 score = calculate_metrics(masks[i], preds[i], class_ids)[metric]

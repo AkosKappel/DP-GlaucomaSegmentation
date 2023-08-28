@@ -177,7 +177,8 @@ class MulticlassLogger:
                 wandb.log({f'Plotted results ({self.part})': wandb.Image(file)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
-            best, worst = get_best_and_worst_OD_examples(model, loader, self.num_examples, device=device)
+            best, worst = get_best_and_worst_OD_examples(
+                model, loader, self.num_examples, softmax=True, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
@@ -192,7 +193,8 @@ class MulticlassLogger:
                     wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
-            best, worst = get_best_and_worst_OC_examples(model, loader, self.num_examples, device=device)
+            best, worst = get_best_and_worst_OC_examples(
+                model, loader, self.num_examples, softmax=True, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
