@@ -36,14 +36,15 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     specificity = safe_division(tn, tn + fp)
     dice = safe_division(2 * tp, 2 * tp + fp + fn)
     iou = safe_division(tp, tp + fp + fn)
-    # balance_accuracy = safe_division(sensitivity + specificity, 2)
+    balance_accuracy = safe_division(sensitivity + specificity, 2)
     # informedness = specificity + sensitivity - 1
     # prevalence = safe_division(tp + fn, tp + tn + fp + fn)
     # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
     # npv = safe_division(tn, tn + fn)  # Negative Predictive Value
-    # fdr = safe_division(fp, tp + fp)  # False Discovery Rate
     # fpr = safe_division(fp, fp + tn)  # False Positive Rate
     # fnr = safe_division(fn, tp + fn)  # False Negative Rate
+    # fdr = safe_division(fp, tp + fp)  # False Discovery Rate
+    # _for = 1 - safe_division(tn, tn + fn)  # False Omission Rate
     # lr_pos = safe_division(sensitivity, fpr)  # Positive Likelihood Ratio
     # lr_neg = safe_division(fnr, specificity)  # Negative Likelihood Ratio
     # dor = safe_division(lr_pos, lr_neg)  # Diagnostic Odds Ratio
@@ -57,6 +58,7 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
         'specificity': specificity,  # Selectivity, TNR (True Negative Rate)
         'dice': dice,  # F1 score
         'iou': iou,  # Jaccard index
+        'balance_accuracy': balance_accuracy,
     }
 
 

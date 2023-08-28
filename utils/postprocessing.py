@@ -1,5 +1,7 @@
 import cv2 as cv
 import numpy as np
+import pydensecrf.densecrf as dcrf
+from pydensecrf.utils import unary_from_softmax
 from scipy.interpolate import splprep, splev
 from skimage.segmentation import active_contour
 
@@ -8,11 +10,11 @@ __all__ = [
     'keep_largest_component', 'apply_largest_component_selection',
     'fill_holes', 'apply_hole_filling',
     'fit_ellipse', 'apply_ellipse_fitting',
-    'douglas_peucker', 'smooth_contours', 'snakes',
+    'dense_crf', 'douglas_peucker', 'smooth_contours', 'snakes',
 ]
 
 
-def separate_disc_and_cup_mask(mask: np.ndarray):
+def separate_disc_and_cup_mask(mask: np.ndarray) -> (np.ndarray, np.ndarray):
     # OD: 1, OC: 2, BG: 0
     od_mask = np.where(mask >= 1, 1, 0).astype(np.uint8)
     oc_mask = np.where(mask >= 2, 1, 0).astype(np.uint8)
@@ -22,7 +24,7 @@ def separate_disc_and_cup_mask(mask: np.ndarray):
 # TODO: Morphological operations (erosion, dilation, opening, closing, etc.) for removing noisy pixels (like in ResNet)
 
 
-def keep_largest_component(binary_mask: np.ndarray):
+def keep_largest_component(binary_mask: np.ndarray) -> np.ndarray:
     # Find connected components in the binary mask
     num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
 
@@ -35,7 +37,7 @@ def keep_largest_component(binary_mask: np.ndarray):
     return largest_component_mask
 
 
-def apply_largest_component_selection(mask: np.ndarray):
+def apply_largest_component_selection(mask: np.ndarray) -> np.ndarray:
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -47,7 +49,7 @@ def apply_largest_component_selection(mask: np.ndarray):
     return result_mask
 
 
-def fill_holes(binary_mask: np.ndarray):
+def fill_holes(binary_mask: np.ndarray) -> np.ndarray:
     # Find all enclosed contours in the binary mask
     contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
@@ -61,7 +63,7 @@ def fill_holes(binary_mask: np.ndarray):
     return filled_mask
 
 
-def apply_hole_filling(mask: np.ndarray):
+def apply_hole_filling(mask: np.ndarray) -> np.ndarray:
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -75,7 +77,7 @@ def apply_hole_filling(mask: np.ndarray):
     return result_mask
 
 
-def fit_ellipse(binary_mask: np.ndarray):
+def fit_ellipse(binary_mask: np.ndarray) -> np.ndarray:
     # Find the contours of the binary mask (there should be only one)
     contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -94,7 +96,7 @@ def fit_ellipse(binary_mask: np.ndarray):
     return fitted_mask
 
 
-def apply_ellipse_fitting(mask: np.ndarray):
+def apply_ellipse_fitting(mask: np.ndarray) -> np.ndarray:
     masks = separate_disc_and_cup_mask(mask)
     fitted_mask = np.zeros_like(mask, dtype=np.uint8)
 
@@ -113,7 +115,42 @@ def apply_ellipse_fitting(mask: np.ndarray):
     return fitted_mask
 
 
-def douglas_peucker(binary_mask: np.ndarray, epsilon: float = 3.0):
+def dense_crf(image, probab, n_iterations: int = 5, gaussian_kwargs: dict = None, bilateral_kwargs: dict = None):
+    if gaussian_kwargs is None:
+        gaussian_kwargs = {
+            'sxy': (3, 3),
+            'compat': 3,
+            'kernel': dcrf.DIAG_KERNEL,
+            'normalization': dcrf.NORMALIZE_SYMMETRIC,
+        }
+    if bilateral_kwargs is None:
+        bilateral_kwargs = {
+            'sxy': (80, 80),
+            'srgb': (13, 13, 13),
+            'rgbim': np.ascontiguousarray(image).astype(np.uint8),
+            'compat': 10,
+            'kernel': dcrf.DIAG_KERNEL,
+            'normalization': dcrf.NORMALIZE_SYMMETRIC,
+        }
+
+    width, height = image.shape[:2]
+    n_labels = probab.shape[0]
+
+    d = dcrf.DenseCRF2D(width, height, n_labels)
+
+    U = unary_from_softmax(probab)  # shape of probabilities must be (n_classes, ...)
+    d.setUnaryEnergy(U)
+
+    d.addPairwiseGaussian(**gaussian_kwargs)  # adds the color-independent term, features are the locations only
+    d.addPairwiseBilateral(**bilateral_kwargs)  # adds the color-dependent term, i.e. features are (x, y, r, g, b)
+
+    Q = d.inference(n_iterations)
+    crf_image = np.argmax(Q, axis=0).reshape((width, height))
+
+    return crf_image
+
+
+def douglas_peucker(binary_mask: np.ndarray, epsilon: float = 3.0) -> np.ndarray:
     # Find the contours
     binary_mask = binary_mask.astype(np.uint8)
     contours, _ = cv.findContours(binary_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
@@ -131,7 +168,7 @@ def douglas_peucker(binary_mask: np.ndarray, epsilon: float = 3.0):
     return dp_mask
 
 
-def smooth_contours(binary_mask: np.ndarray, s: float = 2.0):
+def smooth_contours(binary_mask: np.ndarray, s: float = 2.0) -> np.ndarray:
     # Find contours in the binary mask
     contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
 
@@ -155,7 +192,7 @@ def smooth_contours(binary_mask: np.ndarray, s: float = 2.0):
     return smoothed_mask
 
 
-def snakes(binary_mask: np.ndarray, alpha: float = 0.1, beta: float = 10.5, gamma: float = 10.5):
+def snakes(binary_mask: np.ndarray, alpha: float = 0.1, beta: float = 10.5, gamma: float = 10.5) -> np.ndarray:
     # Find contours in the mask
     binary_mask = binary_mask.astype(np.uint8)
     contours, _ = cv.findContours(binary_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
