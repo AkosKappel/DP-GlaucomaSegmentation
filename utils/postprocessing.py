@@ -7,6 +7,8 @@ from skimage.segmentation import active_contour
 
 __all__ = [
     'separate_disc_and_cup_mask',
+    'erode', 'dilate', 'opening', 'closing',
+    'remove_small_components', 'apply_small_component_removal',
     'keep_largest_component', 'apply_largest_component_selection',
     'fill_holes', 'apply_hole_filling',
     'fit_ellipse', 'apply_ellipse_fitting',
@@ -21,7 +23,58 @@ def separate_disc_and_cup_mask(mask: np.ndarray) -> (np.ndarray, np.ndarray):
     return od_mask, oc_mask
 
 
-# TODO: Morphological operations (erosion, dilation, opening, closing, etc.) for removing noisy pixels (like in ResNet)
+def erode(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+    kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
+    return cv.erode(mask.astype(np.uint8), kernel, iterations=iterations)
+
+
+def dilate(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+    kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
+    return cv.dilate(mask.astype(np.uint8), kernel, iterations=iterations)
+
+
+def opening(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+    kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
+    return cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_OPEN, kernel, iterations=iterations)
+
+
+def closing(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+    kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
+    return cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_CLOSE, kernel, iterations=iterations)
+
+
+def remove_small_components(binary_mask: np.ndarray, min_size: int | float = 100) -> np.ndarray:
+    # Min size can be given as number of pixels (int) or as a percentage of the total number of pixels (float in (0, 1))
+
+    # Find connected components in the binary mask
+    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
+
+    # Remove small components
+    sizes = stats[:, cv.CC_STAT_AREA]
+    sizes[0] = 0  # ignore background
+
+    # Calculate the minimum size in pixels if it was specified as a fraction of the total number of pixels
+    if isinstance(min_size, float) and 0 < min_size < 1:
+        min_size = min_size * binary_mask.size
+
+    small_components = np.where(sizes < int(min_size))[0]
+
+    small_components_removed_mask = np.ones_like(binary_mask, dtype=np.uint8)
+    for comp_idx in small_components:
+        small_components_removed_mask[labels == comp_idx] = 0
+
+    return small_components_removed_mask
+
+
+def apply_small_component_removal(mask: np.ndarray, min_sizes: list[int | float]) -> np.ndarray:
+    masks = separate_disc_and_cup_mask(mask)
+    result_mask = np.zeros_like(mask, dtype=np.uint8)
+
+    # Remove small components from each mask
+    for mask, min_size in zip(masks, min_sizes):
+        result_mask += remove_small_components(mask, min_size)
+
+    return result_mask
 
 
 def keep_largest_component(binary_mask: np.ndarray) -> np.ndarray:
