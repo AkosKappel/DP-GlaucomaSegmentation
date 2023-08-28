@@ -21,9 +21,9 @@ class BinaryTrainer:
         self.device = device
         self.scaler = scaler
         self.inverse_transform = inverse_transform
-        self.activation = torch.sigmoid if activation is None else activation
-        self.target_ids = target_ids
+        self.activation = activation or torch.sigmoid
         self.threshold = threshold
+        self.target_ids = target_ids
         self.labels = [target_ids.detach().cpu().numpy().tolist()]
 
     def get_learning_rate(self):

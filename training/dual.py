@@ -22,7 +22,7 @@ class DualTrainer:
         self.device = device
         self.scaler = scaler
         self.inverse_transform = inverse_transform
-        self.activation = torch.sigmoid if activation is None else activation
+        self.activation = activation or torch.sigmoid
         self.od_threshold = od_threshold
         self.oc_threshold = oc_threshold
         self.od_loss_weight = od_loss_weight

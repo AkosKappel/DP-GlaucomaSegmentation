@@ -27,7 +27,7 @@ class MulticlassTrainer:
         return self.optimizer.param_groups[0]['lr']
 
     def run_one_iteration(self, images, masks, backward: bool, history=None):
-        # Move data to device
+        # Move data to device in correct format
         images = images.float().to(self.device)
         masks = masks.long().to(self.device)
 

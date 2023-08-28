@@ -6,8 +6,9 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 
-from .multiclass import MulticlassTrainer, MulticlassLogger
 from .binary import BinaryTrainer, BinaryLogger
+from .multiclass import MulticlassTrainer, MulticlassLogger
+from .multilabel import MultilabelTrainer, MultilabelLogger
 from .cascade import CascadeTrainer, CascadeLogger
 from .dual import DualTrainer, DualLogger
 from utils.losses import *
@@ -15,7 +16,7 @@ from networks import *
 
 __all__ = [
     'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
-    'train', 'train_multiclass', 'train_binary', 'train_cascade', 'train_dual',
+    'train', 'train_multiclass', 'train_multilabel', 'train_binary', 'train_cascade', 'train_dual',
     'get_network', 'get_optimizer', 'get_criterion', 'get_scheduler', 'get_scaler',
 ]
 
@@ -36,6 +37,16 @@ def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, 
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
         train_mode='multiclass', **kwargs,
+    )
+
+
+def train_multilabel(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
+                     scheduler=None, scaler=None, threshold: float = 0.5, **kwargs):
+    assert model.out_channels > 1, 'The model should have more than 1 output channel for multi-label training'
+    return train(
+        model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
+        train_mode='multilabel', threshold=threshold, **kwargs,
     )
 
 
@@ -111,8 +122,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     # oc_loss_weight: weight for optic cup loss (default: 1.0)
     # returns: history of training and validation metrics as a dictionary of lists
 
-    assert train_mode in ('multiclass', 'binary', 'cascade', 'dual'), \
-        'Invalid training mode. Choose from: multiclass, binary, cascade, dual'
+    assert train_mode in ('multiclass', 'multilabel', 'binary', 'cascade', 'dual'), \
+        'Invalid training mode. Must be one of: multiclass, multilabel, binary, cascade, dual'
 
     history = defaultdict(list)
     best_loss = float('inf')
@@ -132,7 +143,14 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     match train_mode:
         case 'multiclass':
             trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
-            logger = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+            log = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+        case 'multilabel':
+            trainer = MultilabelTrainer(
+                model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
+            )
+            log = MultilabelLogger(
+                log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
+            )
         case 'binary':
             if target_ids is None:
                 target_ids = [1, 2]
@@ -141,7 +159,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             trainer = BinaryTrainer(
                 model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
             )
-            logger = BinaryLogger(
+            log = BinaryLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 target_ids=target_ids, threshold=threshold,
             )
@@ -156,7 +174,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 base_cascade_model, model, criterion, optimizer, device, scaler,
                 od_threshold, oc_threshold, inverse_transform, activation,
             )
-            logger = CascadeLogger(
+            log = CascadeLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
             )
@@ -165,7 +183,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 model, criterion, dual_branch_criterion, optimizer, device, scaler,
                 od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
             )
-            logger = DualLogger(
+            log = DualLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
                 od_threshold=od_threshold, oc_threshold=oc_threshold,
             )
@@ -198,7 +216,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             scheduler.step(epoch_loss)
 
         # Logging - log metrics and plots locally and to Weights & Biases
-        logger(model, log_loader, optimizer, history, epoch, device)
+        log(model, log_loader, optimizer, history, epoch, device)
 
         # Checkpoints - save model every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -231,7 +249,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
 
     # If last epoch was not logged, force log metrics before training ends
     if log_interval and num_done_epochs % log_interval != 0:
-        logger(model, log_loader, optimizer, history, num_done_epochs, device, force=True)
+        log(model, log_loader, optimizer, history, num_done_epochs, device, force=True)
 
     return history
 

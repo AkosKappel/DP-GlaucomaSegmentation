@@ -7,23 +7,21 @@ import wandb
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['CascadeTrainer', 'CascadeLogger']
+__all__ = ['MultilabelTrainer', 'MultilabelLogger']
 
 
-class CascadeTrainer:
+class MultilabelTrainer:
 
-    def __init__(self, od_model, oc_model, criterion, optimizer, device, scaler=None,
-                 od_threshold: float = 0.5, oc_threshold: float = 0.5, inverse_transform=None, activation=None):
-        self.od_model = od_model
-        self.oc_model = oc_model
+    def __init__(self, model, criterion, optimizer, device, scaler=None, threshold: float = 0.5, inverse_transform=None,
+                 activation=None):
+        self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
         self.scaler = scaler
         self.inverse_transform = inverse_transform
         self.activation = activation or torch.sigmoid
-        self.od_threshold = od_threshold
-        self.oc_threshold = oc_threshold
+        self.threshold = threshold
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
@@ -35,22 +33,22 @@ class CascadeTrainer:
         images = images.float().to(self.device)
         masks = masks.long().to(self.device)
 
-        # Apply first model to get optic disc masks which get passed to the second model
-        with torch.no_grad():
-            od_outputs = self.od_model(images)
-            od_probs = self.activation(od_outputs)
-            od_preds = (od_probs > self.od_threshold).long()
-
-        # Crop images to optic disc boundaries
-        cropped_images = images * od_preds
-
-        # Create optic cup only masks
-        oc_masks = (masks == 2).long()
+        # Create binary masks for each class label
+        bg_masks = torch.where(masks == 0, 1, 0)
+        od_masks = torch.where(torch.isin(masks, torch.tensor(self.od_label, device=masks.device)), 1, 0)
+        oc_masks = torch.where(torch.isin(masks, torch.tensor(self.oc_label, device=masks.device)), 1, 0)
 
         if self.scaler is None:
             # Forward pass
-            oc_outputs = self.oc_model(cropped_images)
-            loss = self.criterion(oc_outputs, oc_masks)
+            outputs = self.model(images)
+            bg_outputs = outputs[:, 0].unsqueeze(1)
+            od_outputs = outputs[:, 1].unsqueeze(1)
+            oc_outputs = outputs[:, 2].unsqueeze(1)
+
+            bg_loss = self.criterion(bg_outputs, bg_masks)
+            od_loss = self.criterion(od_outputs, od_masks)
+            oc_loss = self.criterion(oc_outputs, oc_masks)
+            loss = bg_loss + od_loss + oc_loss
 
             # Backward pass
             if backward:
@@ -60,8 +58,15 @@ class CascadeTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                oc_outputs = self.oc_model(cropped_images)
-                loss = self.criterion(oc_outputs, oc_masks)
+                outputs = self.model(images)
+                bg_outputs = outputs[:, 0].unsqueeze(1)
+                od_outputs = outputs[:, 1].unsqueeze(1)
+                oc_outputs = outputs[:, 2].unsqueeze(1)
+
+                bg_loss = self.criterion(bg_outputs, bg_masks)
+                od_loss = self.criterion(od_outputs, od_masks)
+                oc_loss = self.criterion(oc_outputs, oc_masks)
+                loss = bg_loss + od_loss + oc_loss
 
             # Backward pass
             if backward:
@@ -70,22 +75,26 @@ class CascadeTrainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
-        # Convert logits to probabilities
+        # Convert logits to probabilities and apply threshold
+        bg_probs = self.activation(bg_outputs)
+        bg_preds = (bg_probs > self.threshold).squeeze(1).long()
+
+        od_probs = self.activation(od_outputs)
+        od_preds = (od_probs > self.threshold).squeeze(1).long()
+
         oc_probs = self.activation(oc_outputs)
-        oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
+        oc_preds = (oc_probs > self.threshold).squeeze(1).long()
 
-        od_preds = od_preds.squeeze(1)
+        # Join predictions into a single mask
+        preds = torch.zeros_like(bg_preds)
+        preds = torch.where(od_preds == 1, 1, preds)
+        preds = torch.where(oc_preds == 1, 2, preds)
 
-        # Join OD and OC predictions into a single tensor
-        preds = torch.zeros_like(oc_preds)
-        preds[od_preds == 1] = 1
-        preds[oc_preds == 1] = 2
-
-        # Invert initial transformations like normalization, polar transform, etc.
+        # Inverse initial transformations like normalization, polar transform, etc.
         if self.inverse_transform is not None:
             images, masks, preds = self.inverse_transform(images, masks, preds)
 
-        # Calculate metrics for the batch
+        # Update metrics in history
         if history is not None:
             update_metrics(masks, preds, history, self.labels)
             history['loss'].append(loss.item())
@@ -93,42 +102,47 @@ class CascadeTrainer:
         return images, masks, preds
 
     def train_one_epoch(self, loader):
-        self.od_model.eval()
-        self.oc_model.train()
-
+        self.model.train()  # Set model to train mode
         mean_metrics = None
         history = defaultdict(list)
         loop = tqdm(loader, total=len(loader), leave=True, desc='Training')
 
+        # Iterate once over all the batches in the training data loader
         for batch_idx, (images, masks) in enumerate(loop):
+            # Forward and backward pass
             self.run_one_iteration(images, masks, backward=True, history=history)
+
+            # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
 
         return mean_metrics
 
     def validate_one_epoch(self, loader):
-        self.od_model.eval()
-        self.oc_model.eval()
-
+        self.model.eval()  # Set model to evaluation mode
         mean_metrics = None
         history = defaultdict(list)
         loop = tqdm(loader, total=len(loader), leave=True, desc='Validation')
 
+        # Disable gradient calculation
         with torch.no_grad():
+            # Iterate once over all batches in the validation dataset
             for batch_idx, (images, masks) in enumerate(loop):
+                # Forward pass only
                 self.run_one_iteration(images, masks, backward=False, history=history)
+
+                # Show summary of metrics in progress bar
                 mean_metrics = {k: np.mean(v) for k, v in history.items()}
                 loop.set_postfix(**mean_metrics)
 
         return mean_metrics
 
 
-class CascadeLogger:
+class MultilabelLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
-                 base_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5):
+                 threshold: float = 0.5):
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
@@ -137,52 +151,50 @@ class CascadeLogger:
         self.class_labels = class_labels
         self.num_examples = num_examples
         self.part = part
-        self.base_model = base_model
-        self.od_threshold = od_threshold
-        self.oc_threshold = oc_threshold
+        self.threshold = threshold
 
     def __call__(self, model, loader, optimizer, history, epoch, device, force: bool = False):
-        if self.wandb:
+        if self.wandb:  # Log performance metrics
             wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
             wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
 
         if not force and (not self.interval or epoch % self.interval != 0):
             return
 
-        self.base_model.eval()
         model.eval()
         with torch.no_grad():
             images, masks = next(iter(loader))
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            # Create optic disc masks
-            od_outputs = self.base_model(images)
+            outputs = model(images)
+            bg_outputs = outputs[:, 0].unsqueeze(1)
+            od_outputs = outputs[:, 1].unsqueeze(1)
+            oc_outputs = outputs[:, 2].unsqueeze(1)
+
+            bg_probs = torch.sigmoid(bg_outputs)
             od_probs = torch.sigmoid(od_outputs)
-            od_preds = (od_probs > self.od_threshold).long()
-
-            # Apply masks to images
-            cropped_images = images * od_preds
-
-            oc_masks = (masks == 2).long()
-
-            oc_outputs = model(cropped_images)
             oc_probs = torch.sigmoid(oc_outputs)
-            oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
-            oc_masks[oc_masks == 1] = 2
-            oc_preds[oc_preds == 1] = 2
+            bg_preds = (bg_probs > self.threshold).squeeze(1).long()
+            od_preds = (od_probs > self.threshold).squeeze(1).long()
+            oc_preds = (oc_probs > self.threshold).squeeze(1).long()
+
+            preds = torch.zeros_like(bg_preds)
+            preds = torch.where(od_preds == 1, 1, preds)
+            preds = torch.where(oc_preds == 1, 2, preds)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
-            oc_masks = oc_masks.detach().cpu().numpy()
-            oc_preds = oc_preds.detach().cpu().numpy()
+            masks = masks.detach().cpu().numpy()
+            preds = preds.detach().cpu().numpy()
 
             images = images[:self.num_examples]
-            oc_masks = oc_masks[:self.num_examples]
-            oc_preds = oc_preds[:self.num_examples]
+            masks = masks[:self.num_examples]
+            preds = preds[:self.num_examples]
 
-        if self.wandb:  # Log interactive segmentation results
-            for image, mask, pred in zip(images, oc_masks, oc_preds):
+        if self.wandb and self.class_labels is not None and self.plot_type not in ['none', '']:
+            # Log interactive segmentation results to wandb
+            for image, mask, pred in zip(images, masks, preds):
                 seg_img = wandb.Image(image, masks={
                     'prediction': {
                         'mask_data': pred,
@@ -193,7 +205,7 @@ class CascadeLogger:
                         'class_labels': self.class_labels,
                     },
                 })
-                wandb.log({f'Segmentation results for OC ({self.part})': seg_img}, step=epoch)
+                wandb.log({f'Segmentation results ({self.part})': seg_img}, step=epoch)
                 break
 
         if not self.dir:
@@ -204,42 +216,39 @@ class CascadeLogger:
         file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
         file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
         file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
-        plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
-        plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
+        plot_types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
 
         if self.plot_type in ['all', 'random']:
-            plot_results(images, oc_masks, oc_preds, save_path=file, show=self.show, types=plot_types_od)
+            plot_results(images, masks, preds, save_path=file, show=self.show, types=plot_types)
             if self.wandb:
                 wandb.log({f'Plotted results ({self.part})': wandb.Image(file)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OD']:
-            best, worst = get_best_and_worst_OD_examples(
-                self.base_model, loader, self.num_examples, device=device, thresh=self.od_threshold)
+            best, worst = get_best_and_worst_OD_examples(model, loader, self.num_examples, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
 
             if self.plot_type in ['all', 'extreme', 'best', 'OD']:
-                plot_results(b0, b1, b2, save_path=file_best_od, show=self.show, types=plot_types_od)
+                plot_results(b0, b1, b2, save_path=file_best_od, show=self.show, types=plot_types)
                 if self.wandb:
                     wandb.log({f'Best OD examples ({self.part})': wandb.Image(file_best_od)}, step=epoch)
             if self.plot_type in ['all', 'extreme', 'worst', 'OD']:
-                plot_results(w0, w1, w2, save_path=file_worst_od, show=self.show, types=plot_types_od)
+                plot_results(w0, w1, w2, save_path=file_worst_od, show=self.show, types=plot_types)
                 if self.wandb:
                     wandb.log({f'Worst OD examples ({self.part})': wandb.Image(file_worst_od)}, step=epoch)
 
         if self.plot_type in ['all', 'extreme', 'best', 'worst', 'OC']:
-            best, worst = get_best_and_worst_OC_examples(
-                model, loader, self.num_examples, device=device, thresh=self.oc_threshold, first_model=self.base_model)
+            best, worst = get_best_and_worst_OC_examples(model, loader, self.num_examples, device=device)
 
             b0, b1, b2 = [e[0] for e in best], [e[1] for e in best], [e[2] for e in best]
             w0, w1, w2 = [e[0] for e in worst], [e[1] for e in worst], [e[2] for e in worst]
 
             if self.plot_type in ['all', 'extreme', 'best', 'OC']:
-                plot_results(b0, b1, b2, save_path=file_best_oc, show=self.show, types=plot_types_oc)
+                plot_results(b0, b1, b2, save_path=file_best_oc, show=self.show, types=plot_types)
                 if self.wandb:
                     wandb.log({f'Best OC examples ({self.part})': wandb.Image(file_best_oc)}, step=epoch)
             if self.plot_type in ['all', 'extreme', 'worst', 'OC']:
-                plot_results(w0, w1, w2, save_path=file_worst_oc, show=self.show, types=plot_types_oc)
+                plot_results(w0, w1, w2, save_path=file_worst_oc, show=self.show, types=plot_types)
                 if self.wandb:
                     wandb.log({f'Worst OC examples ({self.part})': wandb.Image(file_worst_oc)}, step=epoch)

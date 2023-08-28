@@ -328,7 +328,7 @@ plot_side_by_side = plot_results  # alias
 
 def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_samples: int = 4, thresh: float = 0.5,
                              class_ids: list = None, model0=None, **kwargs):
-    assert mode in ('binary', 'multiclass', 'cascade', 'dual')
+    assert mode in ('binary', 'multiclass', 'multilabel', 'cascade', 'dual')
 
     if class_ids is None:
         class_ids = [[1, 2]]
@@ -345,6 +345,8 @@ def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_s
         sign = 'OD' if 1 in class_ids[0] else 'OC'
         types = ['image', 'mask', 'prediction', sign + ' cover', sign + ' contour']
     elif mode == 'multiclass':
+        types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
+    elif mode == 'multilabel':
         types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
     elif mode == 'cascade':
         types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover', 'OD contour', 'OC contour']
@@ -375,6 +377,13 @@ def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_s
                 outputs = model(images)
                 probs = torch.softmax(outputs, dim=1)
                 preds = torch.argmax(probs, dim=1)
+
+            elif mode == 'multilabel':
+                outputs = model(images)
+                probs = torch.sigmoid(outputs)
+                preds = torch.zeros_like(probs[:, 0])
+                for i in range(1, probs.shape[1]):
+                    preds += (probs[:, i] > thresh).long()
 
             elif mode == 'binary':
                 masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
