@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from torchsummary import summary
+
+__all__ = ['SwinUnet']
 
 
 class Mlp(nn.Module):
@@ -611,8 +614,8 @@ class SwinTransformerSys(nn.Module):
         if num_heads is None:
             num_heads = [3, 6, 12, 24]
 
-        print(f'SwinTransformerSys expand initial----depths:{depths};depths_decoder:{depths_decoder};'
-              f'drop_path_rate:{drop_path_rate};num_classes:{num_classes}')
+        # print(f'SwinTransformerSys expand initial----depths:{depths};depths_decoder:{depths_decoder};'
+        #       f'drop_path_rate:{drop_path_rate};num_classes:{num_classes}')
 
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -707,7 +710,7 @@ class SwinTransformerSys(nn.Module):
         self.norm_up = norm_layer(self.embed_dim)
 
         if self.final_upsample == 'expand_first':
-            print('---final upsample expand_first---')
+            # print('---final upsample expand_first---')
             self.up = FinalPatchExpand_X4(
                 input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
             self.output = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
@@ -769,7 +772,7 @@ class SwinTransformerSys(nn.Module):
         if self.final_upsample == 'expand_first':
             x = self.up(x)
             x = x.view(B, 4 * H, 4 * W, -1)
-            x = x.permute(0, 3, 1, 2)  # B,C,H,W
+            x = x.permute(0, 3, 1, 2)  # B, C, H, W
             x = self.output(x)
 
         return x
@@ -792,29 +795,37 @@ class SwinTransformerSys(nn.Module):
 
 
 class SwinUnet(nn.Module):
-    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False):
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, img_size: int = 224, patch_size: int = 4,
+                 embed_dim: int = 96, depths: list[int] = None, num_heads: list[int] = None, window_size: int = 7,
+                 mlp_ratio: float = 4., qkv_bias: bool = True, qk_scale: float = None, drop_rate: float = 0.1,
+                 drop_path_rate: float = 0.1, ape: bool = False, patch_norm: bool = True, use_checkpoint: bool = False):
         super(SwinUnet, self).__init__()
 
-        self.in_channels = 3
-        self.out_channels = num_classes
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
 
         self.swin_unet = SwinTransformerSys(
             img_size=img_size,
-            patch_size=config.PATCH_SIZE,
-            in_chans=config.IN_CHANS,
-            num_classes=num_classes,
-            embed_dim=config.EMBED_DIM,
-            depths=config.DEPTHS,
-            num_heads=config.NUM_HEADS,
-            window_size=config.WINDOW_SIZE,
-            mlp_ratio=config.MLP_RATIO,
-            qkv_bias=config.QKV_BIAS,
-            qk_scale=config.QK_SCALE,
-            drop_rate=config.DROP_RATE,
-            drop_path_rate=config.DROP_PATH_RATE,
-            ape=config.APE,
-            patch_norm=config.PATCH_NORM,
-            use_checkpoint=config.USE_CHECKPOINT,
+            patch_size=patch_size,
+            in_chans=in_channels,
+            num_classes=out_channels,
+            embed_dim=embed_dim,
+            depths=depths,
+            num_heads=num_heads,
+            window_size=window_size,
+            mlp_ratio=mlp_ratio,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            drop_rate=drop_rate,
+            drop_path_rate=drop_path_rate,
+            ape=ape,
+            patch_norm=patch_norm,
+            use_checkpoint=use_checkpoint,
         )
 
     def forward(self, x):
@@ -824,29 +835,22 @@ class SwinUnet(nn.Module):
         return logits
 
 
-class Config:
-    def __init__(self):
-        self.IMG_SIZE = 224
-        self.PATCH_SIZE = 4
-        self.IN_CHANS = 3
-        self.EMBED_DIM = 96
-        self.DEPTHS = [2, 2, 6, 2]
-        self.NUM_HEADS = [3, 6, 12, 24]
-        self.WINDOW_SIZE = 7
-        self.MLP_RATIO = 4
-        self.QKV_BIAS = True
-        self.QK_SCALE = None
-        self.DROP_RATE = 0.1
-        self.DROP_PATH_RATE = 0.1
-        self.APE = False
-        self.PATCH_NORM = True
-        self.USE_CHECKPOINT = False
-
-
 if __name__ == '__main__':
-    _config = Config()
-    _model = SwinUnet(_config, img_size=224, num_classes=2, zero_head=False, vis=False)
-    print(_model)
-    _x = torch.randn(4, 3, 224, 224)
-    _y = _model(_x)
-    print(_y.shape)
+    _batch_size = 4
+    _in_channels, _out_channels = 3, 1
+    _height, _width = 224, 224
+    _patch_size = 4
+    _models = [
+        SwinUnet(in_channels=_in_channels, out_channels=_out_channels, img_size=_height, patch_size=_patch_size),
+    ]
+    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
+    for _model in _models:
+        predictions = _model(random_data)
+        if isinstance(predictions, tuple):
+            for prediction in predictions:
+                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
+        else:
+            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
+        print(_model)
+        summary(_model.cuda(), (_in_channels, _height, _width))
+        print()

@@ -32,3 +32,4 @@ from .refunet3pluscbam import *
 
 # Vision Transformer
 from .swinunet import *
+from .transunet import *
