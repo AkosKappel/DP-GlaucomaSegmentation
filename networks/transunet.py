@@ -13,7 +13,7 @@ from scipy import ndimage
 from torch.nn.modules.utils import _pair
 from torchsummary import summary
 
-__all__ = ['TransUnet']
+__all__ = ['TransUnet', 'TRANSUNET_CONFIGS']
 
 
 def np2th(weights, conv=False):
@@ -327,85 +327,6 @@ class DecoderCup(nn.Module):
         return x
 
 
-class TransUnet(nn.Module):
-
-    def __init__(self, config, in_channels: int = 3, out_channels: int = 1, img_size: int = 224,
-                 zero_head: bool = False, vis: bool = False):
-        super(TransUnet, self).__init__()
-
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-        self.zero_head = zero_head
-        self.classifier = config.classifier
-        self.transformer = Transformer(config, img_size, vis)
-        self.decoder = DecoderCup(config)
-        self.segmentation_head = SegmentationHead(
-            in_channels=config['decoder_channels'][-1],
-            out_channels=config['n_classes'],
-            kernel_size=3,
-        )
-        self.config = config
-
-    def forward(self, x):
-        if x.size()[1] == 1:
-            x = x.repeat(1, 3, 1, 1)
-        x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
-        x = self.decoder(x, features)
-        logits = self.segmentation_head(x)
-        return logits
-
-    def load_from(self, weights):
-        with torch.no_grad():
-
-            res_weight = weights
-            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights['embedding/kernel'], conv=True))
-            self.transformer.embeddings.patch_embeddings.bias.copy_(np2th(weights['embedding/bias']))
-
-            self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights['Transformer/encoder_norm/scale']))
-            self.transformer.encoder.encoder_norm.bias.copy_(np2th(weights['Transformer/encoder_norm/bias']))
-
-            pos_emb = np2th(weights['Transformer/posembed_input/pos_embedding'])
-
-            posemb_new = self.transformer.embeddings.position_embeddings
-            if pos_emb.size() == posemb_new.size():
-                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
-            elif pos_emb.size()[1] - 1 == posemb_new.size()[1]:
-                pos_emb = pos_emb[:, 1:]
-                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
-            else:
-                # print(f'load_pretrained: resized variant: {pos_emb.size()} to {posemb_new.size()}')
-                ntok_new = posemb_new.size(1)
-                if self.classifier == "seg":
-                    _, pos_emb_grid = pos_emb[:, :1], pos_emb[0, 1:]
-                gs_old = int(np.sqrt(len(pos_emb_grid)))
-                gs_new = int(np.sqrt(ntok_new))
-                # print(f'load_pretrained: grid-size from {gs_old} to {gs_new}')
-                pos_emb_grid = pos_emb_grid.reshape(gs_old, gs_old, -1)
-                zoom = (gs_new / gs_old, gs_new / gs_old, 1)
-                pos_emb_grid = ndimage.zoom(pos_emb_grid, zoom, order=1)  # th2np
-                pos_emb_grid = pos_emb_grid.reshape(1, gs_new * gs_new, -1)
-                pos_emb = pos_emb_grid
-                self.transformer.embeddings.position_embeddings.copy_(np2th(pos_emb))
-
-            # Encoder whole
-            for bname, block in self.transformer.encoder.named_children():
-                for uname, unit in block.named_children():
-                    unit.load_from(weights, n_block=uname)
-
-            if self.transformer.embeddings.hybrid:
-                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(
-                    np2th(res_weight['conv_root/kernel'], conv=True))
-                gn_weight = np2th(res_weight['gn_root/scale']).view(-1)
-                gn_bias = np2th(res_weight['gn_root/bias']).view(-1)
-                self.transformer.embeddings.hybrid_model.root.gn.weight.copy_(gn_weight)
-                self.transformer.embeddings.hybrid_model.root.gn.bias.copy_(gn_bias)
-
-                for bname, block in self.transformer.embeddings.hybrid_model.body.named_children():
-                    for uname, unit in block.named_children():
-                        unit.load_from(res_weight, n_block=bname, n_unit=uname)
-
-
 class StdConv2d(nn.Conv2d):
 
     def forward(self, x):
@@ -568,43 +489,8 @@ def get_b16_config():
     config.patch_size = 16
 
     config.decoder_channels = (256, 128, 64, 16)
-    config.n_classes = 2
+    config.n_classes = 3
     config.activation = 'softmax'
-    return config
-
-
-def get_testing():
-    """Returns a minimal configuration for testing."""
-    config = ml_collections.ConfigDict()
-    config.patches = ml_collections.ConfigDict({'size': (16, 16)})
-    config.hidden_size = 1
-    config.transformer = ml_collections.ConfigDict()
-    config.transformer.mlp_dim = 1
-    config.transformer.num_heads = 1
-    config.transformer.num_layers = 1
-    config.transformer.attention_dropout_rate = 0.0
-    config.transformer.dropout_rate = 0.1
-    config.classifier = 'token'
-    config.representation_size = None
-    return config
-
-
-def get_r50_b16_config():
-    """Returns the Resnet50 + ViT-B/16 configuration."""
-    config = get_b16_config()
-    config.patches.grid = (16, 16)
-    config.resnet = ml_collections.ConfigDict()
-    config.resnet.num_layers = (3, 4, 9)
-    config.resnet.width_factor = 1
-
-    config.classifier = 'seg'
-    config.pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
-    config.decoder_channels = (256, 128, 64, 16)
-    config.skip_channels = [512, 256, 64, 16]
-    config.n_classes = 2
-    config.n_skip = 3
-    config.activation = 'softmax'
-
     return config
 
 
@@ -634,24 +520,7 @@ def get_l16_config():
     config.resnet_pretrained_path = None
     config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-L_16.npz'
     config.decoder_channels = (256, 128, 64, 16)
-    config.n_classes = 2
-    config.activation = 'softmax'
-    return config
-
-
-def get_r50_l16_config():
-    """Returns the Resnet50 + ViT-L/16 configuration. customized """
-    config = get_l16_config()
-    config.patches.grid = (16, 16)
-    config.resnet = ml_collections.ConfigDict()
-    config.resnet.num_layers = (3, 4, 9)
-    config.resnet.width_factor = 1
-
-    config.classifier = 'seg'
-    config.resnet_pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
-    config.decoder_channels = (256, 128, 64, 16)
-    config.skip_channels = [512, 256, 64, 16]
-    config.n_classes = 2
+    config.n_classes = 3
     config.activation = 'softmax'
     return config
 
@@ -677,10 +546,67 @@ def get_h14_config():
     config.classifier = 'token'
     config.representation_size = None
 
+    config.decoder_channels = (256, 128, 64, 16)
+
     return config
 
 
-CONFIGS = {
+def get_r50_b16_config():
+    """Returns the Resnet50 + ViT-B/16 configuration."""
+    config = get_b16_config()
+    config.patches.grid = (16, 16)
+    config.resnet = ml_collections.ConfigDict()
+    config.resnet.num_layers = (3, 4, 9)
+    config.resnet.width_factor = 1
+
+    config.classifier = 'seg'
+    config.pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
+    config.decoder_channels = (256, 128, 64, 16)
+    config.skip_channels = [512, 256, 64, 16]
+    config.n_classes = 3
+    config.n_skip = 3
+    config.activation = 'softmax'
+
+    return config
+
+
+def get_r50_l16_config():
+    """Returns the Resnet50 + ViT-L/16 configuration. customized """
+    config = get_l16_config()
+    config.patches.grid = (16, 16)
+    config.resnet = ml_collections.ConfigDict()
+    config.resnet.num_layers = (3, 4, 9)
+    config.resnet.width_factor = 1
+
+    config.classifier = 'seg'
+    config.resnet_pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
+    config.decoder_channels = (256, 128, 64, 16)
+    config.skip_channels = [512, 256, 64, 16]
+    config.n_classes = 3
+    config.activation = 'softmax'
+    return config
+
+
+def get_testing():
+    """Returns a minimal configuration for testing."""
+    config = ml_collections.ConfigDict()
+    config.patches = ml_collections.ConfigDict({'size': (16, 16)})
+    config.hidden_size = 1
+    config.transformer = ml_collections.ConfigDict()
+    config.transformer.mlp_dim = 1
+    config.transformer.num_heads = 1
+    config.transformer.num_layers = 1
+    config.transformer.attention_dropout_rate = 0.0
+    config.transformer.dropout_rate = 0.1
+    config.classifier = 'token'
+    config.representation_size = None
+
+    config.decoder_channels = (1, 1, 1, 1)
+
+    return config
+
+
+TRANSUNET_CONFIGS = {
     'ViT-B_16': get_b16_config(),
     'ViT-B_32': get_b32_config(),
     'ViT-L_16': get_l16_config(),
@@ -691,23 +617,116 @@ CONFIGS = {
     'testing': get_testing(),
 }
 
+
+class TransUnet(nn.Module):
+
+    def __init__(self, config, in_channels: int = 3, out_channels: int = 1, img_size: int = 224,
+                 zero_head: bool = False, vis: bool = False):
+        super(TransUnet, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.zero_head = zero_head
+        self.classifier = config.classifier
+        self.transformer = Transformer(config, img_size, vis)
+        self.decoder = DecoderCup(config)
+        self.segmentation_head = SegmentationHead(
+            in_channels=config['decoder_channels'][-1],
+            out_channels=config['n_classes'],
+            kernel_size=3,
+        )
+        self.config = config
+
+    def forward(self, x):
+        if x.size()[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
+        x = self.decoder(x, features)
+        logits = self.segmentation_head(x)
+        return logits
+
+    def load_from(self, weights):
+        with torch.no_grad():
+
+            res_weight = weights
+            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights['embedding/kernel'], conv=True))
+            self.transformer.embeddings.patch_embeddings.bias.copy_(np2th(weights['embedding/bias']))
+
+            self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights['Transformer/encoder_norm/scale']))
+            self.transformer.encoder.encoder_norm.bias.copy_(np2th(weights['Transformer/encoder_norm/bias']))
+
+            pos_emb = np2th(weights['Transformer/posembed_input/pos_embedding'])
+
+            posemb_new = self.transformer.embeddings.position_embeddings
+            if pos_emb.size() == posemb_new.size():
+                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
+            elif pos_emb.size()[1] - 1 == posemb_new.size()[1]:
+                pos_emb = pos_emb[:, 1:]
+                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
+            else:
+                # print(f'load_pretrained: resized variant: {pos_emb.size()} to {posemb_new.size()}')
+                ntok_new = posemb_new.size(1)
+                if self.classifier == "seg":
+                    _, pos_emb_grid = pos_emb[:, :1], pos_emb[0, 1:]
+                gs_old = int(np.sqrt(len(pos_emb_grid)))
+                gs_new = int(np.sqrt(ntok_new))
+                # print(f'load_pretrained: grid-size from {gs_old} to {gs_new}')
+                pos_emb_grid = pos_emb_grid.reshape(gs_old, gs_old, -1)
+                zoom = (gs_new / gs_old, gs_new / gs_old, 1)
+                pos_emb_grid = ndimage.zoom(pos_emb_grid, zoom, order=1)  # th2np
+                pos_emb_grid = pos_emb_grid.reshape(1, gs_new * gs_new, -1)
+                pos_emb = pos_emb_grid
+                self.transformer.embeddings.position_embeddings.copy_(np2th(pos_emb))
+
+            # Encoder whole
+            for bname, block in self.transformer.encoder.named_children():
+                for uname, unit in block.named_children():
+                    unit.load_from(weights, n_block=uname)
+
+            if self.transformer.embeddings.hybrid:
+                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(
+                    np2th(res_weight['conv_root/kernel'], conv=True))
+                gn_weight = np2th(res_weight['gn_root/scale']).view(-1)
+                gn_bias = np2th(res_weight['gn_root/bias']).view(-1)
+                self.transformer.embeddings.hybrid_model.root.gn.weight.copy_(gn_weight)
+                self.transformer.embeddings.hybrid_model.root.gn.bias.copy_(gn_bias)
+
+                for bname, block in self.transformer.embeddings.hybrid_model.body.named_children():
+                    for uname, unit in block.named_children():
+                        unit.load_from(res_weight, n_block=bname, n_unit=uname)
+
+
 if __name__ == '__main__':
     _batch_size = 4
-    _in_channels, _out_channels = 3, 1
+    _in_channels, _out_channels = 3, 2
     _height, _width = 224, 224
-    _config = CONFIGS['ViT-B_16']
-    _config.n_classes = _out_channels
-    _config.n_skip = 0
-    _models = [
-        TransUnet(_config, in_channels=_in_channels, out_channels=_out_channels, img_size=_height),
+    _configs = [
+        TRANSUNET_CONFIGS['ViT-B_16'],
+        TRANSUNET_CONFIGS['ViT-B_32'],
+        # TRANSUNET_CONFIGS['ViT-L_16'],
+        # TRANSUNET_CONFIGS['ViT-L_32'],
+        # TRANSUNET_CONFIGS['ViT-H_14'],
+        # TRANSUNET_CONFIGS['R50-ViT-B_16'],
+        # TRANSUNET_CONFIGS['R50-ViT-L_16'],
+        TRANSUNET_CONFIGS['testing'],
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for _model in _models:
+    for _config in _configs:
+        _config.n_classes = _out_channels
+        _config.n_skip = 0
+        _model = TransUnet(_config, in_channels=_in_channels, out_channels=_out_channels, img_size=_height)
+
         predictions = _model(random_data)
         if isinstance(predictions, tuple):
             for prediction in predictions:
+                if prediction.shape[-1] != _width or prediction.shape[-2] != _height:
+                    prediction = F.interpolate(prediction, (_height, _width), mode='bilinear', align_corners=True)
                 assert prediction.shape == (_batch_size, _out_channels, _height, _width)
         else:
+            # Rescale height and width to the original input image
+            if predictions.shape[-1] != _width or predictions.shape[-2] != _height:
+                predictions = F.interpolate(predictions, (_height, _width), mode='bilinear', align_corners=True)
             assert predictions.shape == (_batch_size, _out_channels, _height, _width)
         print(_model)
         # summary(_model.cuda(), (_in_channels, _height, _width))
