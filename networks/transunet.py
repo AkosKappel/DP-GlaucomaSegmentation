@@ -8,12 +8,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
-from os.path import join as pjoin
-from scipy import ndimage
 from torch.nn.modules.utils import _pair
 from torchsummary import summary
 
-__all__ = ['TransUnet', 'TRANSUNET_CONFIGS']
+__all__ = ['TransUnet', 'DualTransUnet', 'TRANSUNET_CONFIGS']
 
 
 def np2th(weights, conv=False):
@@ -167,57 +165,6 @@ class Block(nn.Module):
         x = self.ffn(x)
         x = x + h
         return x, weights
-
-    def load_from(self, weights, n_block):
-        ROOT = f'Transformer/encoderblock_{n_block}'
-
-        ATTENTION_Q = 'MultiHeadDotProductAttention_1/query'
-        ATTENTION_K = 'MultiHeadDotProductAttention_1/key'
-        ATTENTION_V = 'MultiHeadDotProductAttention_1/value'
-        ATTENTION_OUT = 'MultiHeadDotProductAttention_1/out'
-        FC_0 = 'MlpBlock_3/Dense_0'
-        FC_1 = 'MlpBlock_3/Dense_1'
-        ATTENTION_NORM = 'LayerNorm_0'
-        MLP_NORM = 'LayerNorm_2'
-
-        with torch.no_grad():
-            query_weight = np2th(
-                weights[pjoin(ROOT, ATTENTION_Q, 'kernel')]).view(self.hidden_size, self.hidden_size).t()
-            key_weight = np2th(
-                weights[pjoin(ROOT, ATTENTION_K, 'kernel')]).view(self.hidden_size, self.hidden_size).t()
-            value_weight = np2th(
-                weights[pjoin(ROOT, ATTENTION_V, 'kernel')]).view(self.hidden_size, self.hidden_size).t()
-            out_weight = np2th(
-                weights[pjoin(ROOT, ATTENTION_OUT, 'kernel')]).view(self.hidden_size, self.hidden_size).t()
-
-            query_bias = np2th(weights[pjoin(ROOT, ATTENTION_Q, 'bias')]).view(-1)
-            key_bias = np2th(weights[pjoin(ROOT, ATTENTION_K, 'bias')]).view(-1)
-            value_bias = np2th(weights[pjoin(ROOT, ATTENTION_V, 'bias')]).view(-1)
-            out_bias = np2th(weights[pjoin(ROOT, ATTENTION_OUT, 'bias')]).view(-1)
-
-            self.attn.query.weight.copy_(query_weight)
-            self.attn.key.weight.copy_(key_weight)
-            self.attn.value.weight.copy_(value_weight)
-            self.attn.out.weight.copy_(out_weight)
-            self.attn.query.bias.copy_(query_bias)
-            self.attn.key.bias.copy_(key_bias)
-            self.attn.value.bias.copy_(value_bias)
-            self.attn.out.bias.copy_(out_bias)
-
-            mlp_weight_0 = np2th(weights[pjoin(ROOT, FC_0, 'kernel')]).t()
-            mlp_weight_1 = np2th(weights[pjoin(ROOT, FC_1, 'kernel')]).t()
-            mlp_bias_0 = np2th(weights[pjoin(ROOT, FC_0, 'bias')]).t()
-            mlp_bias_1 = np2th(weights[pjoin(ROOT, FC_1, 'bias')]).t()
-
-            self.ffn.fc1.weight.copy_(mlp_weight_0)
-            self.ffn.fc2.weight.copy_(mlp_weight_1)
-            self.ffn.fc1.bias.copy_(mlp_bias_0)
-            self.ffn.fc2.bias.copy_(mlp_bias_1)
-
-            self.attention_norm.weight.copy_(np2th(weights[pjoin(ROOT, ATTENTION_NORM, 'scale')]))
-            self.attention_norm.bias.copy_(np2th(weights[pjoin(ROOT, ATTENTION_NORM, 'bias')]))
-            self.ffn_norm.weight.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, 'scale')]))
-            self.ffn_norm.bias.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, 'bias')]))
 
 
 class Encoder(nn.Module):
@@ -380,42 +327,6 @@ class PreActBottleneck(nn.Module):
         y = self.relu(residual + y)
         return y
 
-    def load_from(self, weights, n_block, n_unit):
-        conv1_weight = np2th(weights[pjoin(n_block, n_unit, 'conv1/kernel')], conv=True)
-        conv2_weight = np2th(weights[pjoin(n_block, n_unit, 'conv2/kernel')], conv=True)
-        conv3_weight = np2th(weights[pjoin(n_block, n_unit, 'conv3/kernel')], conv=True)
-
-        gn1_weight = np2th(weights[pjoin(n_block, n_unit, 'gn1/scale')])
-        gn1_bias = np2th(weights[pjoin(n_block, n_unit, 'gn1/bias')])
-
-        gn2_weight = np2th(weights[pjoin(n_block, n_unit, 'gn2/scale')])
-        gn2_bias = np2th(weights[pjoin(n_block, n_unit, 'gn2/bias')])
-
-        gn3_weight = np2th(weights[pjoin(n_block, n_unit, 'gn3/scale')])
-        gn3_bias = np2th(weights[pjoin(n_block, n_unit, 'gn3/bias')])
-
-        self.conv1.weight.copy_(conv1_weight)
-        self.conv2.weight.copy_(conv2_weight)
-        self.conv3.weight.copy_(conv3_weight)
-
-        self.gn1.weight.copy_(gn1_weight.view(-1))
-        self.gn1.bias.copy_(gn1_bias.view(-1))
-
-        self.gn2.weight.copy_(gn2_weight.view(-1))
-        self.gn2.bias.copy_(gn2_bias.view(-1))
-
-        self.gn3.weight.copy_(gn3_weight.view(-1))
-        self.gn3.bias.copy_(gn3_bias.view(-1))
-
-        if hasattr(self, 'downsample'):
-            proj_conv_weight = np2th(weights[pjoin(n_block, n_unit, 'conv_proj/kernel')], conv=True)
-            proj_gn_weight = np2th(weights[pjoin(n_block, n_unit, 'gn_proj/scale')])
-            proj_gn_bias = np2th(weights[pjoin(n_block, n_unit, 'gn_proj/bias')])
-
-            self.downsample.weight.copy_(proj_conv_weight)
-            self.gn_proj.weight.copy_(proj_gn_weight.view(-1))
-            self.gn_proj.bias.copy_(proj_gn_bias.view(-1))
-
 
 class ResNetV2(nn.Module):
 
@@ -470,7 +381,7 @@ class ResNetV2(nn.Module):
         return x, features[::-1]
 
 
-def get_b16_config():
+def get_b16_config(n_classes=3):
     """Returns the ViT-B/16 configuration."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (16, 16)})
@@ -489,20 +400,21 @@ def get_b16_config():
     config.patch_size = 16
 
     config.decoder_channels = (256, 128, 64, 16)
-    config.n_classes = 3
+    config.n_classes = n_classes
+    config.n_skip = 0
     config.activation = 'softmax'
     return config
 
 
-def get_b32_config():
+def get_b32_config(n_classes=3):
     """Returns the ViT-B/32 configuration."""
-    config = get_b16_config()
+    config = get_b16_config(n_classes)
     config.patches.size = (32, 32)
     config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-B_32.npz'
     return config
 
 
-def get_l16_config():
+def get_l16_config(n_classes=3):
     """Returns the ViT-L/16 configuration."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (16, 16)})
@@ -520,19 +432,20 @@ def get_l16_config():
     config.resnet_pretrained_path = None
     config.pretrained_path = '../model/vit_checkpoint/imagenet21k/ViT-L_16.npz'
     config.decoder_channels = (256, 128, 64, 16)
-    config.n_classes = 3
+    config.n_classes = n_classes
+    config.n_skip = 0
     config.activation = 'softmax'
     return config
 
 
-def get_l32_config():
+def get_l32_config(n_classes=3):
     """Returns the ViT-L/32 configuration."""
-    config = get_l16_config()
+    config = get_l16_config(n_classes)
     config.patches.size = (32, 32)
     return config
 
 
-def get_h14_config():
+def get_h14_config(n_classes=3):
     """Returns the ViT-L/16 configuration."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (14, 14)})
@@ -547,11 +460,13 @@ def get_h14_config():
     config.representation_size = None
 
     config.decoder_channels = (256, 128, 64, 16)
+    config.n_skip = 0
+    config.n_classes = n_classes
 
     return config
 
 
-def get_r50_b16_config():
+def get_r50_b16_config(n_classes=3):
     """Returns the Resnet50 + ViT-B/16 configuration."""
     config = get_b16_config()
     config.patches.grid = (16, 16)
@@ -563,14 +478,14 @@ def get_r50_b16_config():
     config.pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
     config.decoder_channels = (256, 128, 64, 16)
     config.skip_channels = [512, 256, 64, 16]
-    config.n_classes = 3
+    config.n_classes = n_classes
     config.n_skip = 3
     config.activation = 'softmax'
 
     return config
 
 
-def get_r50_l16_config():
+def get_r50_l16_config(n_classes=3):
     """Returns the Resnet50 + ViT-L/16 configuration. customized """
     config = get_l16_config()
     config.patches.grid = (16, 16)
@@ -582,12 +497,12 @@ def get_r50_l16_config():
     config.resnet_pretrained_path = '../model/vit_checkpoint/imagenet21k/R50+ViT-B_16.npz'
     config.decoder_channels = (256, 128, 64, 16)
     config.skip_channels = [512, 256, 64, 16]
-    config.n_classes = 3
+    config.n_classes = n_classes
     config.activation = 'softmax'
     return config
 
 
-def get_testing():
+def get_testing(n_classes=3):
     """Returns a minimal configuration for testing."""
     config = ml_collections.ConfigDict()
     config.patches = ml_collections.ConfigDict({'size': (16, 16)})
@@ -602,20 +517,10 @@ def get_testing():
     config.representation_size = None
 
     config.decoder_channels = (1, 1, 1, 1)
+    config.n_skip = 0
+    config.n_classes = n_classes
 
     return config
-
-
-TRANSUNET_CONFIGS = {
-    'ViT-B_16': get_b16_config(),
-    'ViT-B_32': get_b32_config(),
-    'ViT-L_16': get_l16_config(),
-    'ViT-L_32': get_l32_config(),
-    'ViT-H_14': get_h14_config(),
-    'R50-ViT-B_16': get_r50_b16_config(),
-    'R50-ViT-L_16': get_r50_l16_config(),
-    'testing': get_testing(),
-}
 
 
 class TransUnet(nn.Module):
@@ -646,77 +551,71 @@ class TransUnet(nn.Module):
         logits = self.segmentation_head(x)
         return logits
 
-    def load_from(self, weights):
-        with torch.no_grad():
 
-            res_weight = weights
-            self.transformer.embeddings.patch_embeddings.weight.copy_(np2th(weights['embedding/kernel'], conv=True))
-            self.transformer.embeddings.patch_embeddings.bias.copy_(np2th(weights['embedding/bias']))
+class DualTransUnet(nn.Module):
 
-            self.transformer.encoder.encoder_norm.weight.copy_(np2th(weights['Transformer/encoder_norm/scale']))
-            self.transformer.encoder.encoder_norm.bias.copy_(np2th(weights['Transformer/encoder_norm/bias']))
+    def __init__(self, config, in_channels: int = 3, out_channels: int = 1, img_size: int = 224,
+                 zero_head: bool = False, vis: bool = False):
+        super(DualTransUnet, self).__init__()
 
-            pos_emb = np2th(weights['Transformer/posembed_input/pos_embedding'])
+        self.in_channels = in_channels
+        self.out_channels = out_channels
 
-            posemb_new = self.transformer.embeddings.position_embeddings
-            if pos_emb.size() == posemb_new.size():
-                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
-            elif pos_emb.size()[1] - 1 == posemb_new.size()[1]:
-                pos_emb = pos_emb[:, 1:]
-                self.transformer.embeddings.position_embeddings.copy_(pos_emb)
-            else:
-                # print(f'load_pretrained: resized variant: {pos_emb.size()} to {posemb_new.size()}')
-                ntok_new = posemb_new.size(1)
-                if self.classifier == "seg":
-                    _, pos_emb_grid = pos_emb[:, :1], pos_emb[0, 1:]
-                gs_old = int(np.sqrt(len(pos_emb_grid)))
-                gs_new = int(np.sqrt(ntok_new))
-                # print(f'load_pretrained: grid-size from {gs_old} to {gs_new}')
-                pos_emb_grid = pos_emb_grid.reshape(gs_old, gs_old, -1)
-                zoom = (gs_new / gs_old, gs_new / gs_old, 1)
-                pos_emb_grid = ndimage.zoom(pos_emb_grid, zoom, order=1)  # th2np
-                pos_emb_grid = pos_emb_grid.reshape(1, gs_new * gs_new, -1)
-                pos_emb = pos_emb_grid
-                self.transformer.embeddings.position_embeddings.copy_(np2th(pos_emb))
+        self.config = config
+        self.zero_head = zero_head
+        self.classifier = config.classifier
+        self.transformer = Transformer(config, img_size, vis)
 
-            # Encoder whole
-            for bname, block in self.transformer.encoder.named_children():
-                for uname, unit in block.named_children():
-                    unit.load_from(weights, n_block=uname)
+        self.decoder1 = DecoderCup(config)
+        self.decoder2 = DecoderCup(config)
 
-            if self.transformer.embeddings.hybrid:
-                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(
-                    np2th(res_weight['conv_root/kernel'], conv=True))
-                gn_weight = np2th(res_weight['gn_root/scale']).view(-1)
-                gn_bias = np2th(res_weight['gn_root/bias']).view(-1)
-                self.transformer.embeddings.hybrid_model.root.gn.weight.copy_(gn_weight)
-                self.transformer.embeddings.hybrid_model.root.gn.bias.copy_(gn_bias)
+        self.segmentation_head1 = SegmentationHead(
+            in_channels=config['decoder_channels'][-1],
+            out_channels=config['n_classes'],
+            kernel_size=3,
+        )
+        self.segmentation_head2 = SegmentationHead(
+            in_channels=config['decoder_channels'][-1],
+            out_channels=config['n_classes'],
+            kernel_size=3,
+        )
 
-                for bname, block in self.transformer.embeddings.hybrid_model.body.named_children():
-                    for uname, unit in block.named_children():
-                        unit.load_from(res_weight, n_block=bname, n_unit=uname)
+    def forward(self, x):
+        if x.size()[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+        x, attn_weights, features = self.transformer(x)  # (B, n_patch, hidden)
 
+        x1 = self.decoder1(x, features)
+        x1 = self.segmentation_head1(x1)
+
+        x2 = self.decoder2(x, features)
+        x2 = self.segmentation_head2(x2)
+
+        return x1, x2
+
+
+TRANSUNET_CONFIGS = {
+    'ViT-B_16': get_b16_config,
+    'ViT-B_32': get_b32_config,
+    'ViT-L_16': get_l16_config,
+    'ViT-L_32': get_l32_config,
+    'ViT-H_14': get_h14_config,
+    'R50-ViT-B_16': get_r50_b16_config,
+    'R50-ViT-L_16': get_r50_l16_config,
+    'testing': get_testing,
+}
 
 if __name__ == '__main__':
     _batch_size = 4
     _in_channels, _out_channels = 3, 2
     _height, _width = 224, 224
-    _configs = [
-        TRANSUNET_CONFIGS['ViT-B_16'],
-        TRANSUNET_CONFIGS['ViT-B_32'],
-        # TRANSUNET_CONFIGS['ViT-L_16'],
-        # TRANSUNET_CONFIGS['ViT-L_32'],
-        # TRANSUNET_CONFIGS['ViT-H_14'],
-        # TRANSUNET_CONFIGS['R50-ViT-B_16'],
-        # TRANSUNET_CONFIGS['R50-ViT-L_16'],
-        TRANSUNET_CONFIGS['testing'],
+    _config = TRANSUNET_CONFIGS['ViT-B_16'](_out_channels)
+    _models = [
+        TransUnet(_config, in_channels=_in_channels, out_channels=_out_channels, img_size=_height),
+        DualTransUnet(_config, in_channels=_in_channels, out_channels=_out_channels, img_size=_height),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for _config in _configs:
-        _config.n_classes = _out_channels
-        _config.n_skip = 0
-        _model = TransUnet(_config, in_channels=_in_channels, out_channels=_out_channels, img_size=_height)
-
+    for _model in _models:
         predictions = _model(random_data)
         if isinstance(predictions, tuple):
             for prediction in predictions:
