@@ -6,7 +6,7 @@ from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torchsummary import summary
 
-__all__ = ['SwinUnet']
+__all__ = ['SwinUnet', 'DualSwinUnet']
 
 
 class Mlp(nn.Module):
@@ -835,6 +835,268 @@ class SwinUnet(nn.Module):
         return logits
 
 
+class DualSwinUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, img_size: int = 224, patch_size: int = 4,
+                 embed_dim: int = 96, depths: list[int] = None, num_heads: list[int] = None, window_size: int = 7,
+                 mlp_ratio: float = 4., qkv_bias: bool = True, qk_scale: float = None, drop_rate: float = 0.1,
+                 drop_path_rate: float = 0.1, ape: bool = False, patch_norm: bool = True, use_checkpoint: bool = False,
+                 depths_decoder: list[int] = None, attn_drop_rate: float = 0., norm_layer: nn.Module = nn.LayerNorm,
+                 final_upsample: str = 'expand_first', **kwargs):
+        super(DualSwinUnet, self).__init__()
+
+        if depths is None:
+            depths = [2, 2, 6, 2]
+        if depths_decoder is None:
+            depths_decoder = [1, 2, 2, 2]
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.num_classes = out_channels
+        self.num_layers = len(depths)
+        self.embed_dim = embed_dim
+        self.ape = ape
+        self.patch_norm = patch_norm
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.num_features_up = int(embed_dim * 2)
+        self.mlp_ratio = mlp_ratio
+        self.final_upsample = final_upsample
+
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_chans=in_channels,
+            embed_dim=embed_dim,
+            norm_layer=norm_layer if self.patch_norm else None,
+        )
+        num_patches = self.patch_embed.num_patches
+        patches_resolution = self.patch_embed.patches_resolution
+        self.patches_resolution = patches_resolution
+
+        # absolute position embedding
+        if self.ape:
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            trunc_normal_(self.absolute_pos_embed, std=.02)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+
+        # build encoder and bottleneck layers
+        self.layers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = BasicLayer(
+                dim=int(embed_dim * 2 ** i_layer),
+                input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                  patches_resolution[1] // (2 ** i_layer)),
+                depth=depths[i_layer],
+                num_heads=num_heads[i_layer],
+                window_size=window_size,
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=qkv_bias,
+                qk_scale=qk_scale,
+                drop=drop_rate,
+                attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                use_checkpoint=use_checkpoint)
+            self.layers.append(layer)
+        self.norm = norm_layer(self.num_features)
+
+        # build decoder layers (Branch 1)
+        self.layers_up1 = nn.ModuleList()
+        self.concat_back_dim1 = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            concat_linear = nn.Linear(
+                2 * int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
+                int(embed_dim * 2 ** (self.num_layers - 1 - i_layer))
+            ) if i_layer > 0 else nn.Identity()
+
+            if i_layer == 0:
+                layer_up = PatchExpand(
+                    input_resolution=(patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
+                                      patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
+                    dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)), dim_scale=2, norm_layer=norm_layer)
+            else:
+                layer_up = BasicLayer_up(
+                    dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
+                    input_resolution=(
+                        patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
+                        patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
+                    depth=depths[(self.num_layers - 1 - i_layer)],
+                    num_heads=num_heads[(self.num_layers - 1 - i_layer)],
+                    window_size=window_size,
+                    mlp_ratio=self.mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    qk_scale=qk_scale,
+                    drop=drop_rate,
+                    attn_drop=attn_drop_rate,
+                    drop_path=dpr[sum(depths[:(self.num_layers - 1 - i_layer)]):
+                                  sum(depths[:(self.num_layers - 1 - i_layer) + 1])],
+                    norm_layer=norm_layer,
+                    upsample=PatchExpand if (i_layer < self.num_layers - 1) else None,
+                    use_checkpoint=use_checkpoint)
+            self.layers_up1.append(layer_up)
+            self.concat_back_dim1.append(concat_linear)
+        self.norm_up1 = norm_layer(self.embed_dim)
+
+        if self.final_upsample == 'expand_first':
+            # print('---final upsample expand_first---')
+            self.up1 = FinalPatchExpand_X4(
+                input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
+            self.output1 = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
+
+        # build decoder layers (Branch 2)
+        self.layers_up2 = nn.ModuleList()
+        self.concat_back_dim2 = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            concat_linear = nn.Linear(
+                2 * int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
+                int(embed_dim * 2 ** (self.num_layers - 1 - i_layer))
+            ) if i_layer > 0 else nn.Identity()
+
+            if i_layer == 0:
+                layer_up = PatchExpand(
+                    input_resolution=(patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
+                                      patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
+                    dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)), dim_scale=2, norm_layer=norm_layer)
+            else:
+                layer_up = BasicLayer_up(
+                    dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
+                    input_resolution=(
+                        patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
+                        patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
+                    depth=depths[(self.num_layers - 1 - i_layer)],
+                    num_heads=num_heads[(self.num_layers - 1 - i_layer)],
+                    window_size=window_size,
+                    mlp_ratio=self.mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    qk_scale=qk_scale,
+                    drop=drop_rate,
+                    attn_drop=attn_drop_rate,
+                    drop_path=dpr[sum(depths[:(self.num_layers - 1 - i_layer)]):
+                                  sum(depths[:(self.num_layers - 1 - i_layer) + 1])],
+                    norm_layer=norm_layer,
+                    upsample=PatchExpand if (i_layer < self.num_layers - 1) else None,
+                    use_checkpoint=use_checkpoint)
+            self.layers_up2.append(layer_up)
+            self.concat_back_dim2.append(concat_linear)
+        self.norm_up2 = norm_layer(self.embed_dim)
+
+        if self.final_upsample == 'expand_first':
+            # print('---final upsample expand_first---')
+            self.up2 = FinalPatchExpand_X4(
+                input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
+            self.output2 = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    # Encoder and Bottleneck
+    def forward_features(self, x):
+        x = self.patch_embed(x)
+        if self.ape:
+            x = x + self.absolute_pos_embed
+        x = self.pos_drop(x)
+        x_downsample = []
+
+        for layer in self.layers:
+            x_downsample.append(x)
+            x = layer(x)
+
+        x = self.norm(x)  # B L C
+
+        return x, x_downsample
+
+    # Decoder and Skip connection
+    def forward_up_features(self, x, x_downsample, branch):
+        if branch == 1:
+            layers_up = self.layers_up1
+            concat_back_dim = self.concat_back_dim1
+            norm_up = self.norm_up1
+        else:
+            layers_up = self.layers_up2
+            concat_back_dim = self.concat_back_dim2
+            norm_up = self.norm_up2
+
+        for inx, layer_up in enumerate(layers_up):
+            if inx == 0:
+                x = layer_up(x)
+            else:
+                x = torch.cat([x, x_downsample[3 - inx]], -1)
+                x = concat_back_dim[inx](x)
+                x = layer_up(x)
+
+        x = norm_up(x)  # B L C
+
+        return x
+
+    def up_x4(self, x, branch):
+        if branch == 1:
+            up = self.up1
+            output = self.output1
+        else:
+            up = self.up2
+            output = self.output2
+
+        H, W = self.patches_resolution
+        B, L, C = x.shape
+        assert L == H * W, 'input features has wrong size'
+
+        if self.final_upsample == 'expand_first':
+            x = up(x)
+            x = x.view(B, 4 * H, 4 * W, -1)
+            x = x.permute(0, 3, 1, 2)  # B, C, H, W
+            x = output(x)
+
+        return x
+
+    def forward(self, x):
+        if x.size()[1] == 1:
+            x = x.repeat(1, 3, 1, 1)
+
+        x, x_downsample = self.forward_features(x)
+
+        x1 = self.forward_up_features(x, x_downsample, 1)
+        x1 = self.up_x4(x1, 1)
+
+        x2 = self.forward_up_features(x, x_downsample, 2)
+        x2 = self.up_x4(x2, 2)
+
+        return x1, x2
+
+    def flops(self):
+        flops = 0
+        flops += self.patch_embed.flops()
+        for i, layer in enumerate(self.layers):
+            flops += layer.flops()
+        flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
+        flops += self.num_features * self.num_classes
+        return flops
+
+
 if __name__ == '__main__':
     _batch_size = 4
     _in_channels, _out_channels = 3, 1
@@ -842,6 +1104,7 @@ if __name__ == '__main__':
     _patch_size = 4
     _models = [
         SwinUnet(in_channels=_in_channels, out_channels=_out_channels, img_size=_height, patch_size=_patch_size),
+        DualSwinUnet(in_channels=_in_channels, out_channels=_out_channels, img_size=_height, patch_size=_patch_size),
     ]
     random_data = torch.randn((_batch_size, _in_channels, _height, _width))
     for _model in _models:
