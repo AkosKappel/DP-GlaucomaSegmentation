@@ -3,8 +3,13 @@ import numpy as np
 from pathlib import Path
 
 __all__ = [
-    'extract_optic_disc', 'extract_optic_cup', 'localize_roi', 'clahe', 'histogram_equalization',
-    'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpen', 'blur', 'split_train_val_test',
+    'extract_optic_disc', 'extract_optic_cup',
+    'get_bounding_box', 'gaussian_kernel', 'circular_kernel', 'otsu',
+    'localize_roi',
+    'clahe', 'histogram_equalization',
+    'split_rgb_channels', 'to_greyscale',
+    'brightness_contrast', 'sharpen', 'blur',
+    'split_train_val_test',
     'distance_transform', 'boundary_transform',
 ]
 
@@ -47,6 +52,89 @@ def extract_optic_cup(src_dir: Path, dst_dir: Path, value: int = 1):
         num += 1
 
     print(f'Extracted optic cup from {num} images from {src_dir} and saved to {dst_dir}')
+
+
+def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
+    # Find the contours of the binary mask (there should be only one)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0, 0, 0, 0
+
+    # Get the largest / only contour
+    max_contour = max(contours, key=cv.contourArea)
+
+    # Get the bounding box of the contour
+    x, y, w, h = cv.boundingRect(max_contour)
+
+    return x, y, w, h
+
+
+def gaussian_kernel(width: int, height: int = None) -> np.ndarray:
+    if height is None:
+        height = width
+
+    shape = (height, width)
+    size = np.max(shape)
+    x, y = np.mgrid[-size:size + 1, -size:size + 1]
+    kernel = np.exp(-(x ** 2 + y ** 2) / (2 * size ** 2))
+
+    if shape != (size, size):
+        kernel = cv.resize(kernel, shape[::-1], interpolation=cv.INTER_LINEAR)
+
+    return kernel / kernel.sum()
+
+
+def circular_kernel(width: int, height: int = None) -> np.ndarray:
+    if height is None:
+        height = width
+
+    center_x, center_y = width // 2, height // 2
+    y_coords, x_coords = np.ogrid[:height, :width]
+
+    distances = np.sqrt((x_coords - center_x) ** 2 + (y_coords - center_y) ** 2)
+    max_distance = np.sqrt(center_x ** 2 + center_y ** 2)
+
+    kernel = 1 - (distances / max_distance)
+    return kernel
+
+
+def otsu(gray, ignore_value=None):
+    pixel_number = gray.shape[0] * gray.shape[1]
+    mean_weight = 1.0 / pixel_number
+
+    his, bins = np.histogram(gray, np.arange(0, 257))
+    intensity_arr = np.arange(256)
+
+    final_thresh = -1
+    final_value = -1
+
+    if ignore_value is not None:
+        his[ignore_value] = 0
+
+    for t in bins[1:-1]:
+        pcb = np.sum(his[:t])
+        pcf = np.sum(his[t:])
+
+        if pcb == 0:
+            continue
+        if pcf == 0:
+            break
+
+        wb = pcb * mean_weight
+        wf = pcf * mean_weight
+
+        mub = np.sum(intensity_arr[:t] * his[:t]) / float(pcb)
+        muf = np.sum(intensity_arr[t:] * his[t:]) / float(pcf)
+        value = wb * wf * (mub - muf) ** 2
+
+        if value > final_value:
+            final_thresh = t
+            final_value = value
+
+    final_img = gray.copy()
+    final_img[gray > final_thresh] = 255
+    final_img[gray < final_thresh] = 0
+    return final_thresh - 1, final_img
 
 
 def localize_roi(src_dir: Path, dst_dir: Path):

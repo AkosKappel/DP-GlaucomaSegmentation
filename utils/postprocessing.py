@@ -13,7 +13,6 @@ __all__ = [
     'fill_holes', 'apply_hole_filling',
     'fit_ellipse', 'apply_ellipse_fitting',
     'dense_crf', 'douglas_peucker', 'smooth_contours', 'snakes',
-    'get_bounding_box',
 ]
 
 
@@ -260,18 +259,3 @@ def snakes(binary_mask: np.ndarray, alpha: float = 0.1, beta: float = 10.5, gamm
         cv.drawContours(snake_mask, [snake.astype(np.int32)], -1, color=1, thickness=-1)
 
     return snake_mask
-
-
-def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
-    # Find the contours of the binary mask (there should be only one)
-    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return 0, 0, 0, 0
-
-    # Get the largest / only contour
-    max_contour = max(contours, key=cv.contourArea)
-
-    # Get the bounding box of the contour
-    x, y, w, h = cv.boundingRect(max_contour)
-
-    return x, y, w, h
