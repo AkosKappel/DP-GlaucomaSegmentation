@@ -4,8 +4,9 @@ from pathlib import Path
 
 __all__ = [
     'extract_optic_disc', 'extract_optic_cup',
-    'get_bounding_box', 'gaussian_kernel', 'circular_kernel', 'parabolic_kernel', 'otsu',
-    'localize_roi', 'clahe', 'histogram_equalization',
+    'calculate_rgb_cumsum', 'source_to_target_correction',
+    'gaussian_kernel', 'circular_kernel', 'parabolic_kernel',
+    'localize_roi', 'get_bounding_box', 'otsu', 'clahe', 'histogram_equalization',
     'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpen', 'blur',
     'split_train_val_test', 'distance_transform', 'boundary_transform',
 ]
@@ -51,19 +52,39 @@ def extract_optic_cup(src_dir: Path, dst_dir: Path, value: int = 1):
     print(f'Extracted optic cup from {num} images from {src_dir} and saved to {dst_dir}')
 
 
-def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
-    # Find the contours of the binary mask (there should be only one)
-    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return 0, 0, 0, 0
+def calculate_rgb_cumsum(image):
+    r_hist = cv.calcHist([image], [0], None, [256], [0, 256])
+    g_hist = cv.calcHist([image], [1], None, [256], [0, 256])
+    b_hist = cv.calcHist([image], [2], None, [256], [0, 256])
 
-    # Get the largest / only contour
-    max_contour = max(contours, key=cv.contourArea)
+    r_cdf = r_hist.cumsum()
+    g_cdf = g_hist.cumsum()
+    c_blue = b_hist.cumsum()
 
-    # Get the bounding box of the contour
-    x, y, w, h = cv.boundingRect(max_contour)
+    # normalize to [0, 1]
+    r_cdf /= r_cdf[-1]
+    g_cdf /= g_cdf[-1]
+    c_blue /= c_blue[-1]
 
-    return x, y, w, h
+    return r_cdf, g_cdf, c_blue
+
+
+def source_to_target_correction(source, target):
+    cdf_source_red, cdf_source_green, cdf_source_blue = calculate_rgb_cumsum(source)
+    cdf_target_red, cdf_target_green, cdf_target_blue = calculate_rgb_cumsum(target)
+
+    # interpolate CDFs
+    red_lookup = np.interp(cdf_source_red, cdf_target_red, np.arange(256))
+    green_lookup = np.interp(cdf_source_green, cdf_target_green, np.arange(256))
+    blue_lookup = np.interp(cdf_source_blue, cdf_target_blue, np.arange(256))
+
+    # apply the lookup tables to the source image
+    corrected = source.copy()
+    corrected[..., 0] = red_lookup[source[..., 0]].reshape(source.shape[:2])
+    corrected[..., 1] = green_lookup[source[..., 1]].reshape(source.shape[:2])
+    corrected[..., 2] = blue_lookup[source[..., 2]].reshape(source.shape[:2])
+
+    return corrected
 
 
 def gaussian_kernel(width: int, height: int = None, sigma: float = None) -> np.ndarray:
@@ -109,6 +130,21 @@ def parabolic_kernel(width: int, height: int = None) -> np.ndarray:
 
     kernel = 1 - (distances / max_distance) ** 2
     return kernel
+
+
+def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
+    # Find the contours of the binary mask (there should be only one)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0, 0, 0, 0
+
+    # Get the largest / only contour
+    max_contour = max(contours, key=cv.contourArea)
+
+    # Get the bounding box of the contour
+    x, y, w, h = cv.boundingRect(max_contour)
+
+    return x, y, w, h
 
 
 def otsu(gray, ignore_value=None):
