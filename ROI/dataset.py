@@ -1,50 +1,37 @@
 import cv2 as cv
 import numpy as np
 from torch.utils.data import Dataset
-from torchvision import transforms
-
-
-class Normalize:
-
-    def __init__(self):
-        self.mean = [0.9400, 0.6225, 0.3316]
-        self.std = [0.1557, 0.1727, 0.1556]
-        self.norm = transforms.Normalize(self.mean, self.std)
-
-    def __call__(self, image):
-        image = image.astype(np.float32) / 255
-        image -= self.mean
-        image /= self.std
-        return image
 
 
 class RoiDataset(Dataset):
-    def __init__(self, files, labels, input_size, in_scale, model_scale, transform=None):
+    def __init__(self, files, df, input_size, in_scale, model_scale, transform=None):
         self.files = files
-        self.labels = labels
+        self.df = df
+        self.transform = transform
 
         self.input_size = input_size
         self.model_scale = model_scale
         self.in_scale = in_scale
 
-        if transform:
-            self.transform = transform
-        self.normalize = Normalize()
-
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
-        image = cv.imread(self.files[idx])
-        image = cv.resize(image, (self.input_size, self.input_size))
-        image = self.normalize(image)
-        image = image.transpose([2, 0, 1])
+        file = self.files[idx]
+        image = cv.cvtColor(cv.imread(file), cv.COLOR_BGR2RGB)
 
-        target = self.labels[self.labels['image_id'] == self.files[idx]]
-        heatmap, regmap = self.create_heatmap_and_regmap(target)
-        return image, heatmap, regmap
+        bboxes = self.df[self.df['image_id'] == file][['x', 'y', 'w', 'h']].values
+        labels = [0] * len(bboxes)
 
-    def create_heatmap_and_regmap(self, target):
+        if self.transform is not None:
+            augmented = self.transform(image=image, bboxes=bboxes, labels=labels)
+            image = augmented['image']
+            bboxes = np.array(augmented['bboxes'])
+
+        heatmap, regmap = self.create_heatmap_and_regmap(bboxes)
+        return image, heatmap, regmap, bboxes
+
+    def create_heatmap_and_regmap(self, bboxes):
         # Define the dimensions of the output heatmap and regression maps
         map_size = self.input_size // self.model_scale
 
@@ -53,15 +40,12 @@ class RoiDataset(Dataset):
         regression_map = np.zeros([2, map_size, map_size])
 
         # If the target is empty, return the initialized maps
-        if len(target) == 0:
+        if len(bboxes) == 0:
             return heatmap, regression_map
 
         # Extract the center and dimensions of the target
-        center = np.array([
-            target['x'] + target['w'] // 2,
-            target['y'] + target['h'] // 2,
-            target['w'], target['h'],
-        ]).T
+        x, y, w, h = bboxes[:, 0], bboxes[:, 1], bboxes[:, 2], bboxes[:, 3]
+        center = np.array([x + w // 2, y + h // 2, w, h]).T
 
         # Iterate through the centers and create Gaussian heatmaps
         for c in center:
