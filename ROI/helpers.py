@@ -22,7 +22,7 @@ def pool_duplicates(data, stride: int = 3):
     return data
 
 
-def convert_predictions_to_boxes(heatmap, regression, input_size, model_scale, thresh: float = 0.9):
+def prediction_to_bboxes(heatmap, regression, input_size, model_scale, thresh: float = 0.9):
     # Get predicted center locations
     prediction_mask = heatmap > thresh
     predicted_centers = np.where(heatmap > thresh)
@@ -44,15 +44,3 @@ def convert_predictions_to_boxes(heatmap, regression, input_size, model_scale, t
         bboxes.append(bbox)
 
     return np.asarray(bboxes), scores
-
-
-def show_box(image, heatmap, regression, input_size, model_scale, thresh: float = 0.9, color: tuple = (0, 220, 0)):
-    boxes, _ = convert_predictions_to_boxes(heatmap, regression, input_size, model_scale, thresh)
-    sample = image
-    print('boxes:', boxes.shape)
-
-    for box in boxes:
-        x, y, w, h = box
-        cv.rectangle(sample, (int(x), int(y + h)), (int(x + w), int(y)), color, 3)
-
-    return sample
