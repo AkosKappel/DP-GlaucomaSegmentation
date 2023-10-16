@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 
 
 def focal_loss(pred, gt):
@@ -25,19 +26,27 @@ def focal_loss(pred, gt):
     return loss
 
 
-def center_loss(prediction, mask, regr, mask_weight: float = 1.0, regr_weight: float = 1.0, size_average: bool = True):
-    # Binary mask loss
-    pred_mask = torch.sigmoid(prediction[:, 0])
-    mask_loss = focal_loss(pred_mask, mask)
+class CenterLoss(nn.Module):
 
-    # Regression L1 loss
-    pred_regr = prediction[:, 1:]
-    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)
-    regr_loss = regr_loss.mean(0)
+    def __init__(self, mask_weight: float = 1.0, regr_weight: float = 1.0, size_average: bool = True):
+        super(CenterLoss, self).__init__()
+        self.mask_weight = mask_weight
+        self.regr_weight = regr_weight
+        self.size_average = size_average
 
-    # Weighted total loss
-    loss = mask_weight * mask_loss + regr_weight * regr_loss
-    if not size_average:
-        loss *= prediction.shape[0]
+    def forward(self, prediction, mask, regr):
+        # Binary mask loss
+        pred_mask = torch.sigmoid(prediction[:, 0])
+        mask_loss = focal_loss(pred_mask, mask)
 
-    return loss, mask_loss, regr_loss
+        # Regression L1 loss
+        pred_regr = prediction[:, 1:]
+        regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)
+        regr_loss = regr_loss.mean(0)
+
+        # Weighted total loss
+        loss = self.mask_weight * mask_loss + self.regr_weight * regr_loss
+        if not self.size_average:
+            loss *= prediction.shape[0]
+
+        return loss, mask_loss, regr_loss
