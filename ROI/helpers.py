@@ -1,60 +1,16 @@
-import cv2 as cv
 import numpy as np
-import os
-import pandas as pd
-from pathlib import Path
 
 
-def generate_bbox_csv(image_dir: str = '', mask_dir: str = '', csv_file: str = '', margin: int = 0):
-    image_dir = Path(image_dir)
-    mask_dir = Path(mask_dir)
-    csv_file = Path(csv_file)
+def resize_to_square(box, keep_larger_side: bool = True):
+    x, y, w, h = box
+    center_x = x + w / 2
+    center_y = y + h / 2
 
-    image_files = sorted([image_dir / f for f in os.listdir(image_dir) if not f.startswith('.')])
-    mask_files = sorted([mask_dir / f for f in os.listdir(mask_dir) if not f.startswith('.')])
+    side = max(w, h) if keep_larger_side else min(w, h)
+    x = center_x - side / 2
+    y = center_y - side / 2
 
-    df = pd.DataFrame()
-    for i, (image_path, mask_path) in enumerate(zip(image_files, mask_files)):
-        # image = cv.imread(str(image_path))
-        # image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
-        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
-
-        mask_cup = np.where(mask >= 2, 1, 0).astype(np.uint8)
-        mask_disc = np.where(mask >= 1, 1, 0).astype(np.uint8)
-
-        disc_contours, _ = cv.findContours(mask_disc, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-        cup_contours, _ = cv.findContours(mask_cup, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-
-        disc_x, disc_y, disc_w, disc_h = cv.boundingRect(disc_contours[0])
-        cup_x, cup_y, cup_w, cup_h = cv.boundingRect(cup_contours[0])
-
-        x, y, w, h = min(cup_x, disc_x), min(cup_y, disc_y), max(cup_w, disc_w), max(cup_h, disc_h)
-
-        row = {
-            'image_id': image_path,
-            'mask_id': mask_path,
-            'x': float(x - margin),
-            'y': float(y - margin),
-            'w': float(w + 2 * margin),
-            'h': float(h + 2 * margin),
-            'disc_center_x': float(disc_x + disc_w // 2),
-            'disc_center_y': float(disc_y + disc_h // 2),
-            'cup_center_x': float(cup_x + cup_w // 2),
-            'cup_center_y': float(cup_y + cup_h // 2),
-            'disc_x': float(disc_x),
-            'disc_y': float(disc_y),
-            'disc_w': float(disc_w),
-            'disc_h': float(disc_h),
-            'cup_x': float(cup_x),
-            'cup_y': float(cup_y),
-            'cup_w': float(cup_w),
-            'cup_h': float(cup_h),
-        }
-        df = pd.concat([df, pd.DataFrame(row, index=[i])])
-
-    if csv_file.exists():
-        os.remove(csv_file)
-    df.to_csv(csv_file, index=False)
+    return [int(x), int(y), int(side), int(side)]
 
 
 def calculate_coverage(inner_box, outer_box):
