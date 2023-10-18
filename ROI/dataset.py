@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from torch.utils.data import Dataset
 from pathlib import Path
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 
 class RoiDataset(Dataset):
@@ -219,8 +219,8 @@ def generate_bbox_csv(images_dir: str, masks_dir: str, csv_file: str, margin: in
         image_path = images_dir / img_name
         mask_path = masks_dir / mask_name
 
-        image = cv.imread(str(image_path))
-        mask = cv.imread(str(mask_path))
+        # image = cv.imread(str(image_path))
+        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
 
         mask_disc = np.where(mask >= 1, 1, 0).astype(np.uint8)
         mask_cup = np.where(mask >= 2, 1, 0).astype(np.uint8)
@@ -247,6 +247,8 @@ def generate_bbox_csv(images_dir: str, masks_dir: str, csv_file: str, margin: in
         os.remove(csv_file)
     df.to_csv(csv_file, index=False)
 
+    return df
+
 
 def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_images_dir: str, dst_masks_dir: str,
                              size: tuple | int = 512, interpolation: int = cv.INTER_AREA):
@@ -261,7 +263,8 @@ def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_im
     dst_images_dir.mkdir(exist_ok=True, parents=True)
     dst_masks_dir.mkdir(exist_ok=True, parents=True)
 
-    for i, row in tqdm(df.iterrows(), total=len(df)):
+    title = f'Generating cropped optic disc dataset'
+    for i, row in tqdm(df.iterrows(), total=len(df), desc=title):
         img1_file, mask1_file, box1_x, box1_y, box1_w, box1_h = row[['image_id', 'mask_id', 'x', 'y', 'w', 'h']]
 
         img1_file = Path(img1_file)
@@ -295,8 +298,13 @@ def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_im
         box2_h = int(np.round(box1_h * res_y))
 
         # Crop images and masks to bounding box
-        cropped_img = img2[box2_y:box2_y + box2_h, box2_x:box2_x + box2_w]
-        cropped_mask = mask2[box2_y:box2_y + box2_h, box2_x:box2_x + box2_w]
+        start_x = max(0, box2_x)
+        end_x = min(w2, box2_x + box2_w)
+        start_y = max(0, box2_y)
+        end_y = min(h2, box2_y + box2_h)
+
+        cropped_img = img2[start_y:end_y, start_x:end_x]
+        cropped_mask = mask2[start_y:end_y, start_x:end_x]
 
         # Resize to 512x512
         if isinstance(size, int):

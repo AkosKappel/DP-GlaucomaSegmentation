@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 
 
 class DoubleConv(nn.Module):
@@ -49,28 +50,28 @@ class Up(nn.Module):
 
 class CenterNet(nn.Module):
 
-    def __init__(self, n_classes: int = 1, model_name: str = 'resnet18'):
+    def __init__(self, n_classes: int = 1, base: str = 'resnet18', pretrained: bool = False):
         super(CenterNet, self).__init__()
 
         # Backbone
-        model_name = model_name.lower()
-        if model_name == 'resnet18':
-            basemodel = ResNet18()
-        elif model_name == 'resnet34':
-            basemodel = ResNet34()
-        elif model_name == 'resnet50':
-            basemodel = ResNet50()
-        elif model_name == 'resnet101':
-            basemodel = ResNet101()
-        elif model_name == 'resnet152':
-            basemodel = ResNet152()
+        base = base.lower()
+        if base == 'resnet18':
+            basemodel = models.resnet18(weights=models.ResNet18_Weights.DEFAULT) if pretrained else ResNet18()
+        elif base == 'resnet34':
+            basemodel = models.resnet34(weights=models.ResNet34_Weights.DEFAULT) if pretrained else ResNet34()
+        elif base == 'resnet50':
+            basemodel = models.resnet50(weights=models.ResNet50_Weights.DEFAULT) if pretrained else ResNet50()
+        elif base == 'resnet101':
+            basemodel = models.resnet101(weights=models.ResNet101_Weights.DEFAULT) if pretrained else ResNet101()
+        elif base == 'resnet152':
+            basemodel = models.resnet152(weights=models.ResNet152_Weights.DEFAULT) if pretrained else ResNet152()
         else:
-            raise NotImplementedError(f'Model {model_name} is not implemented.')
+            raise NotImplementedError(f'Model {base} is not implemented.')
 
         basemodel = nn.Sequential(*list(basemodel.children())[:-2])
         self.backbone = basemodel
 
-        if model_name in ('resnet34', 'resnet18'):
+        if base in ('resnet34', 'resnet18'):
             num_ch = 512
         else:
             num_ch = 2048

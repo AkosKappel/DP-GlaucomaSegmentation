@@ -1,4 +1,10 @@
+import cv2 as cv
+import matplotlib.pyplot as plt
 import numpy as np
+import os
+import pandas as pd
+import torch
+from tqdm.notebook import tqdm
 
 
 def resize_to_square(box, keep_larger_side: bool = True):
@@ -130,3 +136,86 @@ def prediction_to_bboxes(heatmap, regression, input_size, model_scale, thresh: f
         bboxes.append(bbox)
 
     return np.asarray(bboxes), scores
+
+
+def detect_optic_discs(model, loader, device, input_size, model_scale,
+                       margin: int = 16, threshold: float = 0.6, out_file: str = ''):
+    df = pd.DataFrame()
+
+    title = 'Detecting optic discs'
+    for imgs, _, _, gt_boxes, img_files, mask_files in tqdm(loader, total=len(loader), desc=title):
+        # Move to default device
+        imgs = imgs.to(device)
+
+        # Make predictions
+        with torch.no_grad():
+            heatmap, regression = model(imgs)
+
+        # Move to CPU
+        imgs = imgs.detach().cpu().numpy()
+        gt_boxes = gt_boxes.detach().cpu().numpy()
+        regression = regression.detach().cpu().numpy()
+
+        # Iterate over batch
+        for img, hm, reg, gt_box, img_file, mask_file in zip(
+                imgs, heatmap, regression, gt_boxes, img_files, mask_files):
+
+            # Get bounding boxes from heatmap and regression
+            hm = hm.squeeze()
+            hm = torch.sigmoid(hm).cpu().numpy()
+            hm = pool_duplicates(hm)
+            bboxes, scores = prediction_to_bboxes(hm, reg, input_size, model_scale, threshold)
+
+            if len(bboxes) == 0:
+                bboxes, scores = prediction_to_bboxes(hm, reg, input_size, model_scale, hm.max() - 0.01)
+
+            merged_box = merge_overlapping_boxes(bboxes, scores, 0.5)
+            x, y, w, h = merged_box
+
+            # Add margin to merged box
+            x = int(max(0, x - margin))
+            y = int(max(0, y - margin))
+            w = int(min(input_size, w + 2 * margin))
+            h = int(min(input_size, h + 2 * margin))
+
+            # Resize to a square shaped box
+            x, y, w, h = resize_to_square([x, y, w, h])
+
+            row = {
+                'image_id': img_file,
+                'mask_id': mask_file,
+                'x': x,
+                'y': y,
+                'w': w,
+                'h': h,
+            }
+            df = pd.concat([df, pd.DataFrame([row])])
+
+            # TODO: remove this later
+            # Visualize & check if the box covers the entire optic disc
+            coverage = calculate_coverage(gt_box[0], [x, y, w, h])
+            if coverage < 1.0:
+                print(f'Bounding box of {img_file} does not cover the entire optic disc')
+
+                img = img.transpose(1, 2, 0)
+                img = (img - img.min()) / (img.max() - img.min())
+                img = (img * 255).astype(np.uint8)
+
+                x, y, w, h = gt_box[0]
+                x, y, w, h = int(x), int(y), int(w), int(h)
+                img = img.copy()
+                img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
+                img = cv.putText(img, f'{coverage:.2f}', (20, 30), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+                _ = plt.subplots(1, 1, figsize=(8, 8))
+                plt.imshow(img)
+                plt.title(img_file)
+                plt.show()
+
+    # Save results
+    if out_file:
+        if os.path.exists(out_file):
+            os.remove(out_file)
+        df.to_csv(out_file, index=False)
+
+    return df
