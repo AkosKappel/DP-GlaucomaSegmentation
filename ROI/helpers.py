@@ -70,6 +70,7 @@ def calculate_iou(box1, box2):
 
 def merge_overlapping_boxes(bboxes, scores, iou_threshold):
     assert len(bboxes) == len(scores), 'Number of bounding boxes and scores must be the same.'
+    assert len(bboxes) > 0, 'No bounding boxes to merge.'
 
     # Sort the boxes in descending order based on their scores
     indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
@@ -83,7 +84,8 @@ def merge_overlapping_boxes(bboxes, scores, iou_threshold):
         if calculate_iou(box, bboxes[0]) >= iou_threshold
     ]
 
-    assert len(filtered_bboxes) > 0, 'No bounding boxes left for merging.'
+    if len(filtered_bboxes) == 0:
+        return sorted_bboxes[0]
 
     # Compute a single merged bounding box that covers all the boxes
     x = min(box[0] for box in filtered_bboxes)
@@ -201,9 +203,14 @@ def detect_optic_discs(model, loader, device, input_size, model_scale,
                 img = (img - img.min()) / (img.max() - img.min())
                 img = (img * 255).astype(np.uint8)
 
-                x, y, w, h = gt_box[0]
+                # Draw predicted bounding box
                 x, y, w, h = int(x), int(y), int(w), int(h)
                 img = img.copy()
+                img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
+
+                # Draw ground truth bounding box
+                x, y, w, h = gt_box[0]
+                x, y, w, h = int(x), int(y), int(w), int(h)
                 img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
                 img = cv.putText(img, f'{coverage:.2f}', (20, 30), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
@@ -217,5 +224,7 @@ def detect_optic_discs(model, loader, device, input_size, model_scale,
         if os.path.exists(out_file):
             os.remove(out_file)
         df.to_csv(out_file, index=False)
+
+    print(f'Found {len(df)} bounding boxes.')
 
     return df

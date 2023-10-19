@@ -50,21 +50,21 @@ class Up(nn.Module):
 
 class CenterNet(nn.Module):
 
-    def __init__(self, n_classes: int = 1, base: str = 'resnet18', pretrained: bool = False):
+    def __init__(self, n_classes: int = 1, base: str = 'resnet18', custom: bool = False, weights=None):
         super(CenterNet, self).__init__()
 
         # Backbone
         base = base.lower()
         if base == 'resnet18':
-            basemodel = models.resnet18(weights=models.ResNet18_Weights.DEFAULT) if pretrained else ResNet18()
+            basemodel = ResNet18() if custom else models.resnet18(weights=weights)
         elif base == 'resnet34':
-            basemodel = models.resnet34(weights=models.ResNet34_Weights.DEFAULT) if pretrained else ResNet34()
+            basemodel = ResNet34() if custom else models.resnet34(weights=weights)
         elif base == 'resnet50':
-            basemodel = models.resnet50(weights=models.ResNet50_Weights.DEFAULT) if pretrained else ResNet50()
+            basemodel = ResNet50() if custom else models.resnet50(weights=weights)
         elif base == 'resnet101':
-            basemodel = models.resnet101(weights=models.ResNet101_Weights.DEFAULT) if pretrained else ResNet101()
+            basemodel = ResNet101() if custom else models.resnet101(weights=weights)
         elif base == 'resnet152':
-            basemodel = models.resnet152(weights=models.ResNet152_Weights.DEFAULT) if pretrained else ResNet152()
+            basemodel = ResNet152() if custom else models.resnet152(weights=weights)
         else:
             raise NotImplementedError(f'Model {base} is not implemented.')
 

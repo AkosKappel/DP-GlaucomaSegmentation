@@ -4,11 +4,19 @@ from IPython.display import clear_output
 from tqdm.notebook import tqdm
 
 
-def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs, scheduler=None):
+def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
+        scheduler=None, early_stopping_patience: int = 10):
     history = defaultdict(list)
+    best_loss = float('inf')
+    epochs_without_improvement = 0
+    best_model_weights = None
 
-    for epoch in range(epochs):
-        print(f'Epoch {epoch + 1}/{epochs}')
+    for epoch in range(1, epochs + 1):
+        # Clear output
+        if epoch % 10 == 0:
+            clear_output()
+
+        print(f'Epoch {epoch}/{epochs}')
         running = defaultdict(float)
 
         # Training loop
@@ -70,17 +78,9 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs, s
                     f'{k}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('val')
                 ]))
 
-        # Update learning rate
-        if scheduler is not None:
-            scheduler.step(running['val_loss'])
-
-        # Clear output
-        if epoch % 10 == 0:
-            clear_output()
-
         # Save logs
         epoch_log = {
-            'epoch': epoch + 1,
+            'epoch': epoch,
             'lr': optimizer.state_dict()['param_groups'][0]['lr'],
             'train_loss': running['train_loss'] / len(train_loader),
             'train_mask': running['train_mask'] / len(train_loader),
@@ -92,4 +92,19 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs, s
         for k, v in epoch_log.items():
             history[k].append(v)
 
-    return history
+        # Update learning rate
+        if scheduler is not None:
+            scheduler.step(running['val_loss'])
+
+        # Check for early stopping
+        if running['val_loss'] < best_loss:
+            best_loss = running['val_loss']
+            epochs_without_improvement = 0
+            best_model_weights = model.state_dict()
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= early_stopping_patience > 0:
+                print(f'Early stopping after {epoch} epochs with best loss = {best_loss / len(val_loader):.3f}.')
+                break
+
+    return history, best_model_weights

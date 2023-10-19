@@ -1,18 +1,74 @@
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2 as cv
+import numpy as np
 from sklearn.model_selection import train_test_split
+import torch
 from torch.utils.data import Dataset, DataLoader
 import os
 
 __all__ = [
-    'ORIGA_MEANS', 'ORIGA_STDS', 'OrigaDataset', 'load_origa',
-    'load_fundus',
+    'ORIGA_MEANS', 'ORIGA_STDS', 'ROI_ORIGA_MEANS', 'ROI_ORIGA_STDS', 'PADDED_ORIGA_MEANS', 'PADDED_ORIGA_STDS',
+    'get_mean_and_standard_deviation_from_files', 'get_mean_and_standard_deviation_from_dataloader',
+    'OrigaDataset', 'load_origa', 'load_fundus',
 ]
 
-# calculated from the training set
-ORIGA_MEANS = (0.9400, 0.6225, 0.3316)
-ORIGA_STDS = (0.1557, 0.1727, 0.1556)
+# calculated from only the training set using the functions below
+ORIGA_MEANS = (0.5543, 0.3410, 0.1510)
+ORIGA_STDS = (0.2541, 0.1580, 0.0823)
+
+ROI_ORIGA_MEANS = (0.9400, 0.6225, 0.3316)
+ROI_ORIGA_STDS = (0.1557, 0.1727, 0.1556)
+
+PADDED_ORIGA_MEANS = (0.4579, 0.2808, 0.1239)
+PADDED_ORIGA_STDS = (0.3188, 0.1990, 0.1055)
+
+
+def get_mean_and_standard_deviation_from_files(image_paths):
+    """
+    Calculate the mean and standard deviation of a dataset. The values are calculated per channel
+    across all images. The images should be just from the training set, not the entire dataset to
+    avoid data leakage.
+    """
+    # Initialize variables to store running sums for mean and standard deviation
+    mean = np.zeros(3)
+    std = np.zeros(3)
+
+    # Iterate through the images and update mean and std
+    for image_path in image_paths:
+        # Load the image using OpenCV and convert to RGB
+        image = cv.imread(str(image_path))
+        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+
+        # Normalize the pixel values to the range [0, 1]
+        if image.max() > 1:
+            image = image / 255.0
+
+        # Compute the mean and standard deviation for each channel
+        mean += np.mean(image, axis=(0, 1))
+        std += np.std(image, axis=(0, 1))
+
+    num_images = len(image_paths)
+    mean /= num_images
+    std /= num_images
+
+    return mean, std
+
+
+def get_mean_and_standard_deviation_from_dataloader(loader):
+    channels_sum, channels_squared_sum, num_batches = 0, 0, 0
+
+    for images, *_ in loader:
+        if images.max() > 1:
+            images = images / 255.0
+        channels_sum += torch.mean(images, dim=[0, 2, 3])
+        channels_squared_sum += torch.mean(images ** 2, dim=[0, 2, 3])
+        num_batches += 1
+
+    mean = channels_sum / num_batches
+    std = (channels_squared_sum / num_batches - mean ** 2) ** 0.5
+
+    return mean, std
 
 
 class OrigaDataset(Dataset):

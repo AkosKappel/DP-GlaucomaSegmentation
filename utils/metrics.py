@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 __all__ = [
-    'calculate_metrics', 'get_metrics', 'update_metrics', 'get_mean_and_standard_deviation', 'get_extreme_examples',
+    'calculate_metrics', 'get_metrics', 'update_metrics', 'get_extreme_examples',
     'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_and_worst_OD_examples',
     'get_best_OC_examples', 'get_worst_OC_examples', 'get_best_and_worst_OC_examples',
 ]
@@ -104,25 +104,6 @@ def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[f
         old[k].append(value)
 
     return new
-
-
-def get_mean_and_standard_deviation(loader):
-    """
-    Calculate the mean and standard deviation of a dataset. The values are calculated per channel
-    across all images. The images should be just from the training set, not the entire dataset to
-    avoid data leakage.
-    """
-    channels_sum, channels_squared_sum, num_batches = 0, 0, 0
-
-    for images, _ in loader:
-        channels_sum += torch.mean(images, dim=[0, 2, 3])
-        channels_squared_sum += torch.mean(images ** 2, dim=[0, 2, 3])
-        num_batches += 1
-
-    mean = channels_sum / num_batches
-    std = (channels_squared_sum / num_batches - mean ** 2) ** 0.5
-
-    return mean, std
 
 
 def get_best_OD_examples(*args, **kwargs):
