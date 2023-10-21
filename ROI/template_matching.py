@@ -156,14 +156,7 @@ class TemplateMatching:
             height += 2 * self.margin_y
 
             # Align to square
-            if width > height:
-                diff = width - height
-                top_left_y -= diff // 2
-                height += diff
-            elif height > width:
-                diff = height - width
-                top_left_x -= diff // 2
-                width += diff
+            top_left_x, top_left_y, width, height = align_to_square(top_left_x, top_left_y, width, height)
 
             # Move bounding box inside the image
             top_left_x = max(0, top_left_x)
@@ -186,18 +179,41 @@ class TemplateMatching:
             return best_bbox[:4].astype(int)
 
         if self.reduce == 'mean':
-            return np.mean(bboxes, axis=0)[:4].astype(int)
+            bbox = np.mean(bboxes, axis=0)[:4].astype(int)
         elif self.reduce == 'median':
-            return np.median(bboxes, axis=0)[:4].astype(int)
+            bbox = np.median(bboxes, axis=0)[:4].astype(int)
         elif self.reduce == 'max':
-            return np.max(bboxes, axis=0)[:4].astype(int)
+            bbox = np.max(bboxes, axis=0)[:4].astype(int)
         elif self.reduce == 'min':
-            return np.min(bboxes, axis=0)[:4].astype(int)
+            bbox = np.min(bboxes, axis=0)[:4].astype(int)
         elif self.reduce == 'join':
             # Join the bounding boxes in extreme points
             x_min = np.min(bboxes[:, 0])
             y_min = np.min(bboxes[:, 1])
             x_max = np.max(bboxes[:, 0] + bboxes[:, 2])
             y_max = np.max(bboxes[:, 1] + bboxes[:, 3])
-            return np.array([x_min, y_min, x_max - x_min, y_max - y_min]).astype(int)
-        return bboxes[:, :4].astype(int)
+            bbox = np.array([x_min, y_min, x_max - x_min, y_max - y_min]).astype(int)
+        else:
+            return bboxes[:, :4].astype(int)
+
+        # Align to square
+        bbox = align_to_square(*bbox)
+
+        # Move bounding box inside the image
+        bbox = np.maximum(bbox, 0)
+        bbox[0] = min(bbox[0], image.shape[1] / self.scale - bbox[2])
+        bbox[1] = min(bbox[1], image.shape[0] / self.scale - bbox[3])
+
+        return bbox
+
+
+def align_to_square(x, y, w, h):
+    if w > h:
+        diff = w - h
+        y -= diff // 2
+        h += diff
+    elif h > w:
+        diff = h - w
+        x -= diff // 2
+        w += diff
+    return x, y, w, h
