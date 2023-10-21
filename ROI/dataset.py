@@ -251,17 +251,19 @@ def generate_bbox_csv(images_dir: str, masks_dir: str, csv_file: str, margin: in
 
 
 def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_images_dir: str, dst_masks_dir: str,
-                             size: tuple | int = 512, interpolation: int = cv.INTER_AREA):
+                             size: tuple | int = 512, interpolation: int = cv.INTER_AREA, margin: int = 0):
     src_images_dir = Path(src_images_dir)
     src_masks_dir = Path(src_masks_dir)
     dst_masks_dir = Path(dst_masks_dir)
     dst_images_dir = Path(dst_images_dir)
+    overlay_dir = dst_images_dir / '../Overlaid_Images'
 
     assert src_images_dir.exists()
     assert src_masks_dir.exists()
 
     dst_images_dir.mkdir(exist_ok=True, parents=True)
     dst_masks_dir.mkdir(exist_ok=True, parents=True)
+    overlay_dir.mkdir(exist_ok=True, parents=True)
 
     title = f'Generating cropped optic disc dataset'
     for i, row in tqdm(df.iterrows(), total=len(df), desc=title):
@@ -297,6 +299,12 @@ def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_im
         box2_w = int(np.round(box1_w * res_x))
         box2_h = int(np.round(box1_h * res_y))
 
+        # Add margin to new bounding box
+        box2_x = max(0, box2_x - margin)
+        box2_y = max(0, box2_y - margin)
+        box2_w = min(w2, box2_w + 2 * margin)
+        box2_h = min(h2, box2_h + 2 * margin)
+
         # Crop images and masks to bounding box
         start_x = max(0, box2_x)
         end_x = min(w2, box2_x + box2_w)
@@ -316,3 +324,9 @@ def generate_cropped_dataset(df, src_images_dir: str, src_masks_dir: str, dst_im
         # Save images
         cv.imwrite(str(dst_images_dir / img1_file.name), resized_img)
         cv.imwrite(str(dst_masks_dir / mask1_file.name), resized_mask)
+
+        # Visualize OD and OC overlay on the cropped and resized image
+        resized_mask = np.repeat(resized_mask[:, :, np.newaxis], 3, axis=2)
+        resized_img[resized_mask > 0] = 255
+        resized_img[resized_mask > 1] = 127
+        cv.imwrite(str(overlay_dir / img1_file.name), resized_img)

@@ -183,6 +183,14 @@ def detect_optic_discs(model, loader, device, input_size, model_scale,
             # Resize to a square shaped box
             x, y, w, h = resize_to_square([x, y, w, h])
 
+            # Clip box coordinates to ensure they are within the image bounds
+            x = max(0, x)
+            y = max(0, y)
+            if x + w > input_size:
+                x = input_size - w
+            if y + h > input_size:
+                y = input_size - h
+
             row = {
                 'image_id': img_file,
                 'mask_id': mask_file,
@@ -194,9 +202,9 @@ def detect_optic_discs(model, loader, device, input_size, model_scale,
             df = pd.concat([df, pd.DataFrame([row])])
 
             # TODO: remove this later
-            # Visualize & check if the box covers the entire optic disc
-            coverage = calculate_coverage(gt_box[0], [x, y, w, h])
-            if coverage < 1.0:
+            mask = cv.imread(mask_file, cv.IMREAD_GRAYSCALE)
+            # Check if entire optic disc is covered by the predicted bounding box
+            if np.sum(mask[y:y + h, x:x + w]) != np.sum(mask):
                 print(f'Bounding box of {img_file} does not cover the entire optic disc')
 
                 img = img.transpose(1, 2, 0)
@@ -206,13 +214,12 @@ def detect_optic_discs(model, loader, device, input_size, model_scale,
                 # Draw predicted bounding box
                 x, y, w, h = int(x), int(y), int(w), int(h)
                 img = img.copy()
-                img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
+                img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 1)
 
                 # Draw ground truth bounding box
                 x, y, w, h = gt_box[0]
                 x, y, w, h = int(x), int(y), int(w), int(h)
                 img = cv.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 1)
-                img = cv.putText(img, f'{coverage:.2f}', (20, 30), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
                 _ = plt.subplots(1, 1, figsize=(8, 8))
                 plt.imshow(img)
