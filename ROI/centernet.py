@@ -50,7 +50,7 @@ class Up(nn.Module):
 
 class CenterNet(nn.Module):
 
-    def __init__(self, n_classes: int = 1, base: str = 'resnet18', custom: bool = False, weights=None):
+    def __init__(self, n_classes: int = 1, base: str = 'resnet18', custom: bool = True, weights=None):
         super(CenterNet, self).__init__()
 
         # Backbone
