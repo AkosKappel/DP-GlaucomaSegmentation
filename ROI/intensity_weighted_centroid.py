@@ -78,12 +78,14 @@ class IntensityWeightedCentroid:
             if self.shape != (h, w):
                 cropped_image = cv.resize(cropped_image, self.shape[::-1], interpolation=cv.INTER_AREA)
                 cropped_mask = cv.resize(cropped_mask, self.shape[::-1], interpolation=cv.INTER_AREA)
+                overlay_image = cv.resize(overlay_image, self.shape[::-1], interpolation=cv.INTER_AREA)
 
             cv.imwrite(str(dst_images_dir / image_name), cropped_image)
             cv.imwrite(str(dst_masks_dir / mask_name), cropped_mask)
-            cv.imwrite(str(overlay_dir / image_name), cropped_image)
+            cv.imwrite(str(overlay_dir / image_name), overlay_image)
 
             pbar.set_postfix({'coverage': f'{total_coverage * 100 / i:.2f}%'})
+        print(f'Final average coverage: {total_coverage * 100 / len(images):.2f}%')
 
     def apply(self, image, debug: bool = False):
         if isinstance(image, str):
