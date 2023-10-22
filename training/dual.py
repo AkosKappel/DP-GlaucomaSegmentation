@@ -142,6 +142,7 @@ class DualLogger:
         if self.wandb:
             wandb.log({'learning_rate': optimizer.param_groups[0]['lr']}, step=epoch)
             wandb.log({k: v[-1] for k, v in history.items()}, step=epoch)
+            wandb.log({f'max_{k}': np.max(v) for k, v in history.items() if 'loss' not in k}, step=epoch)
 
         if not force and (not self.interval or epoch % self.interval != 0):
             return
