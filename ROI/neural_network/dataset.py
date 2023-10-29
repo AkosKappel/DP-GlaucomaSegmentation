@@ -3,76 +3,86 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-class RoiDataset(Dataset):
+class CenterNetDataset(Dataset):
 
-    def __init__(self, files, df, input_size, in_scale, model_scale, transform=None):
-        self.files = files
+    def __init__(self, df, input_size, model_scale, transform=None):
         self.df = df
-        self.transform = transform
-
         self.input_size = input_size
         self.model_scale = model_scale
-        self.in_scale = in_scale
+        self.transform = transform
 
     def __len__(self):
-        return len(self.files)
+        return len(self.df)
 
     def __getitem__(self, idx):
-        file = self.files[idx]
-        image = cv.cvtColor(cv.imread(file), cv.COLOR_BGR2RGB)
+        target = self.df.iloc[idx]
+        # Each image has exactly 1 bounding box, but in case of multiple bounding boxes use:
+        # targets = self.df[self.df['image_id'] == image_id]
+        image_id = target['image_id']
+        mask_id = target['mask_id']
 
-        target = self.df[self.df['image_id'] == file]
+        # Read image
+        image = cv.imread(image_id)
+        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+
+        original_image_size = max(image.shape[:2])  # Image should be square at this point
+        in_scale = original_image_size // self.input_size
+
+        # Get bounding box and its label
         bboxes = target[['x', 'y', 'w', 'h']].values
-        mask = target['mask_id'].values[0]
+        bboxes = bboxes.reshape(-1, 4)  # (n_boxes, 4)
         labels = [0] * len(bboxes)
 
+        # Apply data augmentation
         if self.transform is not None:
             augmented = self.transform(image=image, bboxes=bboxes, labels=labels)
             image = augmented['image']
             bboxes = np.array(augmented['bboxes'])
 
-        heatmap, regmap = self.create_heatmap_and_regmap(bboxes)
-        return image, heatmap, regmap, bboxes, file, mask
+        # Create heatmap and regression map
+        heatmap, regmap = create_heatmap_and_regmap(bboxes, self.input_size, self.model_scale, in_scale)
+        return image, heatmap, regmap, bboxes, image_id, mask_id
 
-    def create_heatmap_and_regmap(self, bboxes):
-        # Define the dimensions of the output heatmap and regression maps
-        map_size = self.input_size // self.model_scale
 
-        # Initialize the heatmap and regression maps with zeros
-        heatmap = np.zeros([map_size, map_size])
-        regression_map = np.zeros([2, map_size, map_size])
+def create_heatmap_and_regmap(bboxes, input_size, model_scale, in_scale):
+    # Define the dimensions of the output heatmap and regression maps
+    map_size = input_size // model_scale
 
-        # If the target is empty, return the initialized maps
-        if len(bboxes) == 0:
-            return heatmap, regression_map
+    # Initialize the heatmap and regression maps with zeros
+    heatmap = np.zeros([map_size, map_size])
+    regression_map = np.zeros([2, map_size, map_size])
 
-        # Extract the center and dimensions of the target
-        x, y, w, h = bboxes[:, 0], bboxes[:, 1], bboxes[:, 2], bboxes[:, 3]
-        center = np.array([x + w // 2, y + h // 2, w, h]).T
-
-        # Iterate through the centers and create Gaussian heatmaps
-        for c in center:
-            x = int(c[0]) // self.model_scale // self.in_scale
-            y = int(c[1]) // self.model_scale // self.in_scale
-            sigma = np.clip(c[2] * c[3] // 2000, 2, 4)
-            heatmap = draw_gaussian_on_heatmap(heatmap, [x, y], sigma=sigma)
-
-        # Convert targets to their centers
-        regr_targets = center[:, 2:] / self.input_size / self.in_scale
-
-        # Plot regression values to the regression map
-        for r, c in zip(regr_targets, center):
-            for i in range(-2, 3):
-                for j in range(-2, 3):
-                    x = int(c[0]) // self.model_scale // self.in_scale + i
-                    y = int(c[1]) // self.model_scale // self.in_scale + j
-                    regression_map[:, x, y] = r
-
-        # Transpose the regression maps for consistency
-        regression_map[0] = regression_map[0].T
-        regression_map[1] = regression_map[1].T
-
+    # If the target is empty, return the initialized maps
+    if len(bboxes) == 0:
         return heatmap, regression_map
+
+    # Extract the center and dimensions of the target
+    x, y, w, h = bboxes[:, 0], bboxes[:, 1], bboxes[:, 2], bboxes[:, 3]
+    center = np.array([x + w // 2, y + h // 2, w, h]).T
+
+    # Iterate through the centers and create Gaussian heatmaps
+    for c in center:
+        x = int(c[0]) // model_scale // in_scale
+        y = int(c[1]) // model_scale // in_scale
+        sigma = np.clip(c[2] * c[3] // 2000, 2, 4)
+        heatmap = draw_gaussian_on_heatmap(heatmap, [x, y], sigma=sigma)
+
+    # Convert targets to their centers
+    regr_targets = center[:, 2:] / input_size / in_scale
+
+    # Plot regression values to the regression map
+    for r, c in zip(regr_targets, center):
+        for i in range(-2, 3):
+            for j in range(-2, 3):
+                x = int(c[0]) // model_scale // in_scale + i
+                y = int(c[1]) // model_scale // in_scale + j
+                regression_map[:, x, y] = r
+
+    # Transpose the regression maps for consistency
+    regression_map[0] = regression_map[0].T
+    regression_map[1] = regression_map[1].T
+
+    return heatmap, regression_map
 
 
 def draw_gaussian_on_heatmap(heatmap, center, sigma: float = 2.0):

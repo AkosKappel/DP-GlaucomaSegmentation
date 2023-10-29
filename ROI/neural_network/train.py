@@ -41,13 +41,15 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
             running['train_mask'] += mask_loss.item()
             running['train_regr'] += regr_loss.item()
 
+            # TODO: add metrics
+
             # Backward pass
             loss.backward()
             optimizer.step()
 
             # Show stats in progress bar
             pbar.set_description('Training: ' + ', '.join([
-                f'{k}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('train')
+                f'{k[5:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('train')
             ]))
 
         # Validation loop
@@ -75,7 +77,7 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
 
                 # Show stats in progress bar
                 pbar.set_description('Validation: ' + ', '.join([
-                    f'{k}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('val')
+                    f'{k[3:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('val')
                 ]))
 
         # Save logs
