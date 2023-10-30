@@ -23,7 +23,7 @@ class SingleConv(nn.Module):
 
 class DoubleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None):
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
         super(DoubleConv, self).__init__()
 
         if mid_channels is None:
@@ -36,6 +36,7 @@ class DoubleConv(nn.Module):
             nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(p=dropout),
         )
 
     def forward(self, x):

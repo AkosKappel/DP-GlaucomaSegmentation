@@ -69,19 +69,20 @@ class CBAM(nn.Module):
 
 class SingleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.0):
         super(SingleConv, self).__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
         self.bn = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout)
 
     def forward(self, x):  # Conv3x3 -> BN -> ReLU (1x)
-        return F.relu(self.bn(self.conv(x)), inplace=True)
+        return F.relu(self.dropout(self.bn(self.conv(x))), inplace=True)
 
 
 class DoubleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None):
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.0):
         super(DoubleConv, self).__init__()
 
         if mid_channels is None:
@@ -93,9 +94,11 @@ class DoubleConv(nn.Module):
         self.conv2 = nn.Conv2d(mid_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
 
+        self.dropout = nn.Dropout2d(dropout)
+
     def forward(self, x):  # Conv3x3 -> BN -> ReLU (2x)
         out = F.relu(self.bn1(self.conv1(x)), inplace=True)
-        return F.relu(self.bn2(self.conv2(out)), inplace=True)
+        return F.relu(self.dropout(self.bn2(self.conv2(out))), inplace=True)
 
 
 class ConvCBAM(nn.Module):
