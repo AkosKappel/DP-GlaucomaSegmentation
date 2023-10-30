@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+__all__ = ['CenterNet', 'ResNet18', 'ResNet34', 'ResNet50', 'ResNet101', 'ResNet152']
+
 
 class DoubleConv(nn.Module):
 
@@ -50,8 +52,9 @@ class Up(nn.Module):
 
 class CenterNet(nn.Module):
 
-    def __init__(self, n_classes: int = 1, base: str = 'resnet18', custom: bool = True, weights=None):
+    def __init__(self, n_classes: int = 1, scale: int = 1, base: str = 'resnet18', custom: bool = True, weights=None):
         super(CenterNet, self).__init__()
+        self.scale = scale
 
         # Backbone
         base = base.lower()

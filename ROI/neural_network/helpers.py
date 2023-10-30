@@ -2,16 +2,13 @@ import cv2 as cv
 import numpy as np
 import os
 import pandas as pd
-import scipy.io as sio
 import torch
 from pathlib import Path
 from tqdm.notebook import tqdm
 
 __all__ = [
-    'preprocess_centernet_input', 'generate_centernet_dataset',
-    'generate_ground_truth_bbox_csv', 'generate_roi_dataset', 'detect_roi',
-    'calculate_iou', 'pad_to_square', 'resize_box_to_square',
-    'merge_overlapping_boxes', 'pool_duplicates', 'prediction_to_bboxes',
+    'preprocess_centernet_input', 'detect_roi', 'prediction_to_bbox',
+    'generate_centernet_dataset', 'generate_ground_truth_bbox_csv', 'generate_roi_dataset',
 ]
 
 
@@ -95,10 +92,7 @@ def generate_centernet_dataset(src_images_dir: str, src_masks_dir: str, dst_imag
         mask_path = src_masks_dir / mask_name
 
         image = cv.imread(str(image_path))
-        if mask_path.suffix == '.mat':
-            mask = sio.loadmat(str(mask_path))['mask']
-        else:
-            mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
+        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
 
         image, mask = preprocess_centernet_input(image, mask, otsu_crop, crop_margin, pad_margin)
 
@@ -124,10 +118,7 @@ def generate_ground_truth_bbox_csv(images_dir: str, masks_dir: str, csv_file: st
         mask_path = masks_dir / mask_name
 
         # image = cv.imread(str(image_path))
-        if mask_path.suffix == '.mat':
-            mask = sio.loadmat(str(mask_path))['mask']
-        else:
-            mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
+        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
 
         # Create binary masks
         mask_disc = np.where(mask >= 1, 1, 0).astype(np.uint8)
@@ -173,7 +164,7 @@ def generate_ground_truth_bbox_csv(images_dir: str, masks_dir: str, csv_file: st
 
 @torch.no_grad()
 def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_dir: str, dst_masks_dir: str, transform,
-                         input_size: int, model_scale: int, device=None, small_margin: int = 16, large_margin: int = 0,
+                         input_size: int, device=None, small_margin: int = 16, large_margin: int = 0,
                          threshold: float = 0.6, roi_size: int = 512, interpolation: int = cv.INTER_AREA):
     dst_images_dir = Path(dst_images_dir)
     dst_masks_dir = Path(dst_masks_dir)
@@ -198,16 +189,13 @@ def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_
 
         # Read mask if given
         if mask_file:
-            if Path(mask_file).suffix == '.mat':
-                mask = sio.loadmat(mask_file)['mask']
-            else:
-                mask = cv.imread(mask_file, cv.IMREAD_GRAYSCALE)
+            mask = cv.imread(mask_file, cv.IMREAD_GRAYSCALE)
         else:
             mask = np.zeros(image.shape[:2], dtype=np.uint8)
 
         # Detect Region of Interest (RoI)
         x, y, w, h = detect_roi(
-            model, image, mask, transform, input_size, model_scale, device,
+            model, image, mask, transform, input_size, device,
             small_margin, large_margin, threshold, roi_size, interpolation, return_bbox=True,
         )
 
@@ -241,8 +229,8 @@ def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_
 
 
 @torch.no_grad()
-def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray, transform, input_size: int,
-               model_scale: int, device=None, small_margin: int = 16, large_margin: int = 0, threshold: float = 0.6,
+def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray | None, transform, input_size: int,
+               device=None, small_margin: int = 16, large_margin: int = 0, threshold: float = 0.6,
                roi_size: int = 512, interpolation: int = cv.INTER_AREA, return_bbox: bool = False):
     # Read image
     if isinstance(image_file, str):
@@ -254,10 +242,7 @@ def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray,
     # Read mask if given
     if mask_file is not None:
         if isinstance(mask_file, str):
-            if Path(mask_file).suffix == '.mat':
-                original_mask = sio.loadmat(mask_file)['mask']
-            else:
-                original_mask = cv.imread(mask_file, cv.IMREAD_GRAYSCALE)
+            original_mask = cv.imread(mask_file, cv.IMREAD_GRAYSCALE)
         else:
             original_mask = mask_file
     else:
@@ -292,15 +277,7 @@ def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray,
     # image = (image * 255).astype(np.uint8)
 
     # Get bounding boxes from heatmap and regression
-    heatmap = pool_duplicates(heatmap)
-    bboxes, scores = prediction_to_bboxes(heatmap, regression, input_size, model_scale, threshold)
-
-    # Take the bounding box with the highest score if none of the boxes has a score above the threshold
-    if len(bboxes) == 0:
-        bboxes, scores = prediction_to_bboxes(heatmap, regression, input_size, model_scale, heatmap.max() - 0.01)
-
-    # Join overlapping bounding boxes into a single box
-    x, y, w, h = merge_overlapping_boxes(bboxes, scores, iou_threshold=0.5)
+    x, y, w, h = prediction_to_bbox(heatmap, regression, input_size, model.scale, threshold)
 
     # Add margin to merged bounding box of the smaller image
     x = int(max(0, x - small_margin))
@@ -352,6 +329,94 @@ def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray,
     return roi_image, roi_mask
 
 
+def prediction_to_bbox(heatmap, regression, input_size, model_scale, threshold):
+    # Get bounding boxes from heatmap and regression
+    heatmap = pool_duplicates(heatmap)
+    bboxes, scores = prediction_to_bboxes(heatmap, regression, input_size, model_scale, threshold)
+
+    # Take the bounding box with the highest score if none of the boxes has a score above the threshold
+    if len(bboxes) == 0:
+        bboxes, scores = prediction_to_bboxes(heatmap, regression, input_size, model_scale, heatmap.max() - 0.01)
+
+    # Join overlapping bounding boxes into a single box
+    merged_bbox = merge_overlapping_boxes(bboxes, scores, iou_threshold=0.5)
+
+    return merged_bbox
+
+
+def prediction_to_bboxes(heatmap, regression, input_size, model_scale, threshold: float = 0.9):
+    # Get predicted center locations
+    prediction_mask = heatmap > threshold
+    predicted_centers = np.where(heatmap > threshold)
+
+    # Get regression values for the predicted centers
+    predicted_regressions = regression[:, prediction_mask].T
+
+    # Create bounding boxes and adjust for the original image size
+    bboxes = []
+    scores = heatmap[prediction_mask]
+    for i, reg in enumerate(predicted_regressions):
+        bbox = np.array([
+            predicted_centers[1][i] * model_scale - reg[0] * input_size // 2,
+            predicted_centers[0][i] * model_scale - reg[1] * input_size // 2,
+            int(reg[0] * input_size),
+            int(reg[1] * input_size),
+        ])
+        # Clip box coordinates to ensure they are within the image bounds
+        bbox = np.clip(bbox, 0, input_size)
+        bboxes.append(bbox)
+
+    return np.asarray(bboxes), scores
+
+
+def pool_duplicates(data, stride: int = 3):
+    # Iterate over the data array with the specified stride
+    for y in np.arange(1, data.shape[1] - 1, stride):
+        for x in np.arange(1, data.shape[0] - 1, stride):
+            # Extract a 3x3 subarray
+            subarray = data[x - 1:x + 2, y - 1:y + 2]
+
+            # Find the indices of the maximum value in the subarray
+            max_indices = np.asarray(np.unravel_index(np.argmax(subarray), subarray.shape))
+
+            # Iterate over the elements in the 3x3 subarray
+            for c1 in range(3):
+                for c2 in range(3):
+                    if not (c1 == max_indices[0] and c2 == max_indices[1]):
+                        # Set non-maximum values to -1
+                        data[x + c1 - 1, y + c2 - 1] = -1
+
+    return data
+
+
+def merge_overlapping_boxes(bboxes, scores, iou_threshold):
+    assert len(bboxes) == len(scores), 'Number of bounding boxes and scores must be the same.'
+    assert len(bboxes) > 0, 'No bounding boxes to merge.'
+
+    # Sort the boxes in descending order based on their scores
+    indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    sorted_bboxes = [bboxes[i] for i in indices]
+    sorted_scores = [scores[i] for i in indices]
+
+    # Remove boxes with low IoU with the highest scoring box
+    filtered_bboxes = [
+        box
+        for box, score in zip(sorted_bboxes, sorted_scores)
+        if calculate_iou(box, bboxes[0]) >= iou_threshold
+    ]
+
+    if len(filtered_bboxes) == 0:
+        return sorted_bboxes[0]
+
+    # Compute a single merged bounding box that covers all the boxes
+    x = min(box[0] for box in filtered_bboxes)
+    y = min(box[1] for box in filtered_bboxes)
+    w = max(box[0] + box[2] for box in filtered_bboxes) - x
+    h = max(box[1] + box[3] for box in filtered_bboxes) - y
+
+    return [x, y, w, h]
+
+
 def calculate_iou(box1, box2):
     # Box format: [x, y, w, h]
 
@@ -398,76 +463,3 @@ def resize_box_to_square(bbox, keep_larger_side: bool = True):
     y = center_y - side / 2
 
     return [int(x), int(y), int(side), int(side)]
-
-
-def merge_overlapping_boxes(bboxes, scores, iou_threshold):
-    assert len(bboxes) == len(scores), 'Number of bounding boxes and scores must be the same.'
-    assert len(bboxes) > 0, 'No bounding boxes to merge.'
-
-    # Sort the boxes in descending order based on their scores
-    indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    sorted_bboxes = [bboxes[i] for i in indices]
-    sorted_scores = [scores[i] for i in indices]
-
-    # Remove boxes with low IoU with the highest scoring box
-    filtered_bboxes = [
-        box
-        for box, score in zip(sorted_bboxes, sorted_scores)
-        if calculate_iou(box, bboxes[0]) >= iou_threshold
-    ]
-
-    if len(filtered_bboxes) == 0:
-        return sorted_bboxes[0]
-
-    # Compute a single merged bounding box that covers all the boxes
-    x = min(box[0] for box in filtered_bboxes)
-    y = min(box[1] for box in filtered_bboxes)
-    w = max(box[0] + box[2] for box in filtered_bboxes) - x
-    h = max(box[1] + box[3] for box in filtered_bboxes) - y
-
-    return [x, y, w, h]
-
-
-def pool_duplicates(data, stride: int = 3):
-    # Iterate over the data array with the specified stride
-    for y in np.arange(1, data.shape[1] - 1, stride):
-        for x in np.arange(1, data.shape[0] - 1, stride):
-            # Extract a 3x3 subarray
-            subarray = data[x - 1:x + 2, y - 1:y + 2]
-
-            # Find the indices of the maximum value in the subarray
-            max_indices = np.asarray(np.unravel_index(np.argmax(subarray), subarray.shape))
-
-            # Iterate over the elements in the 3x3 subarray
-            for c1 in range(3):
-                for c2 in range(3):
-                    if not (c1 == max_indices[0] and c2 == max_indices[1]):
-                        # Set non-maximum values to -1
-                        data[x + c1 - 1, y + c2 - 1] = -1
-
-    return data
-
-
-def prediction_to_bboxes(heatmap, regression, input_size, model_scale, thresh: float = 0.9):
-    # Get predicted center locations
-    prediction_mask = heatmap > thresh
-    predicted_centers = np.where(heatmap > thresh)
-
-    # Get regression values for the predicted centers
-    predicted_regressions = regression[:, prediction_mask].T
-
-    # Create bounding boxes and adjust for the original image size
-    bboxes = []
-    scores = heatmap[prediction_mask]
-    for i, reg in enumerate(predicted_regressions):
-        bbox = np.array([
-            predicted_centers[1][i] * model_scale - reg[0] * input_size // 2,
-            predicted_centers[0][i] * model_scale - reg[1] * input_size // 2,
-            int(reg[0] * input_size),
-            int(reg[1] * input_size),
-        ])
-        # Clip box coordinates to ensure they are within the image bounds
-        bbox = np.clip(bbox, 0, input_size)
-        bboxes.append(bbox)
-
-    return np.asarray(bboxes), scores

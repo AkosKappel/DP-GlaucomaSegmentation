@@ -3,6 +3,8 @@ from collections import defaultdict
 from IPython.display import clear_output
 from tqdm.notebook import tqdm
 
+from .helpers import prediction_to_bbox
+
 
 def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
         scheduler=None, early_stopping_patience: int = 10):
@@ -41,7 +43,7 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
             running['train_mask'] += mask_loss.item()
             running['train_regr'] += regr_loss.item()
 
-            # TODO: add metrics
+            # TODO: add metrics for bounding box (e.g. IoU)
 
             # Backward pass
             loss.backward()
