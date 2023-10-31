@@ -11,14 +11,14 @@ class CenterLoss(nn.Module):
         self.regr_weight = regr_weight
         self.size_average = size_average
 
-    def forward(self, prediction, mask, regr):
+    def forward(self, prediction, true_heatmap, true_regr):
         # Binary mask loss
-        pred_mask = torch.sigmoid(prediction[:, 0])
-        mask_loss = CenterLoss.focal_loss(pred_mask, mask)
+        pred_heatmap = torch.sigmoid(prediction[:, 0])
+        mask_loss = CenterLoss.focal_loss(pred_heatmap, true_heatmap)
 
         # Regression L1 loss
         pred_regr = prediction[:, 1:]
-        regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)
+        regr_loss = (torch.abs(pred_regr - true_regr).sum(1) * true_heatmap).sum(1).sum(1) / true_heatmap.sum(1).sum(1)
         regr_loss = regr_loss.mean(0)
 
         # Weighted total loss

@@ -3,8 +3,6 @@ from collections import defaultdict
 from IPython.display import clear_output
 from tqdm.notebook import tqdm
 
-from .helpers import prediction_to_bbox
-
 
 def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
         scheduler=None, early_stopping_patience: int = 10):
@@ -36,14 +34,12 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
             preds = torch.cat((pred_heatmaps, pred_regressions), dim=1)
 
             # Compute loss
-            loss, mask_loss, regr_loss = criterion(preds, true_heatmaps, true_regressions)
+            loss, heatmap_loss, regression_loss = criterion(preds, true_heatmaps, true_regressions)
 
             # Update tracking variables in history
             running['train_loss'] += loss.item()
-            running['train_mask'] += mask_loss.item()
-            running['train_regr'] += regr_loss.item()
-
-            # TODO: add metrics for bounding box (e.g. IoU)
+            running['train_heatmap'] += heatmap_loss.item()
+            running['train_regression'] += regression_loss.item()
 
             # Backward pass
             loss.backward()
@@ -51,7 +47,7 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
 
             # Show stats in progress bar
             pbar.set_description('Training: ' + ', '.join([
-                f'{k[5:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('train')
+                f'{k[6:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('train')
             ]))
 
         # Validation loop
@@ -70,16 +66,16 @@ def fit(model, optimizer, criterion, device, train_loader, val_loader, epochs,
                 preds = torch.cat((pred_heatmaps, pred_regressions), dim=1)
 
                 # Compute loss
-                loss, mask_loss, regr_loss = criterion(preds, true_heatmaps, true_regressions)
+                loss, heatmap_loss, regression_loss = criterion(preds, true_heatmaps, true_regressions)
 
                 # Update tracking variables in history
                 running['val_loss'] += loss.item()
-                running['val_mask'] += mask_loss.item()
-                running['val_regr'] += regr_loss.item()
+                running['val_heatmap'] += heatmap_loss.item()
+                running['val_regression'] += regression_loss.item()
 
                 # Show stats in progress bar
                 pbar.set_description('Validation: ' + ', '.join([
-                    f'{k[3:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('val')
+                    f'{k[4:]}: {v / batch_idx:.3f}' for k, v in running.items() if k.startswith('val')
                 ]))
 
         # Save logs

@@ -25,9 +25,6 @@ class CenterNetDataset(Dataset):
         image = cv.imread(image_id)
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
-        original_image_size = max(image.shape[:2])  # Image should be square at this point
-        in_scale = original_image_size // self.input_size
-
         # Get bounding box and its label
         bboxes = target[['x', 'y', 'w', 'h']].values
         bboxes = bboxes.reshape(-1, 4)  # (n_boxes, 4)
@@ -40,7 +37,7 @@ class CenterNetDataset(Dataset):
             bboxes = np.array(augmented['bboxes'])
 
         # Create heatmap and regression map
-        heatmap, regmap = create_heatmap_and_regmap(bboxes, self.input_size, self.model_scale, in_scale)
+        heatmap, regmap = create_heatmap_and_regmap(bboxes, self.input_size, self.model_scale, 512 // self.input_size)
         return image, heatmap, regmap, bboxes, image_id, mask_id
 
 

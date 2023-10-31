@@ -1,14 +1,18 @@
 import cv2 as cv
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pandas as pd
 import torch
+from collections import defaultdict
 from pathlib import Path
 from tqdm.notebook import tqdm
 
 __all__ = [
-    'preprocess_centernet_input', 'detect_roi', 'prediction_to_bbox',
+    'preprocess_centernet_input', 'detect_roi', 'prediction_to_bbox', 'prediction_to_bboxes',
     'generate_centernet_dataset', 'generate_ground_truth_bbox_csv', 'generate_roi_dataset',
+    'pool_duplicates', 'merge_overlapping_boxes', 'calculate_iou', 'calculate_coverage', 'calculate_metrics',
+    'pad_to_square', 'resize_box_to_square',
 ]
 
 
@@ -219,7 +223,16 @@ def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_
             total_coverage += coverage
             pbar.set_postfix({'coverage': f'{total_coverage * 100 / i:.2f}%'})
             if coverage < 1.0:
-                print(f'Bounding box of {image_file} covers only {coverage * 100:.2f}% of the optic disc')
+                print(f'Bounding box of {image_file} covers {coverage * 100:.2f}% of the optic disc')
+                # Show the predicted bounding box on the whole image
+                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+                image[mask > 0] = 255
+                image[mask > 1] = 127
+                image = cv.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 5)
+                plt.figure(figsize=(8, 8))
+                plt.title(f'Coverage: {coverage * 100:.2f}%')
+                plt.imshow(image)
+                plt.show()
 
             # Visualize OD and OC overlay on the cropped and resized image
             roi_mask = np.repeat(roi_mask[:, :, np.newaxis], 3, axis=2)
@@ -438,6 +451,64 @@ def calculate_iou(box1, box2):
     intersection = (x2 - x1) * (y2 - y1)
     union = area_box1 + area_box2 - intersection
     return intersection / union
+
+
+def calculate_coverage(inner_box, outer_box):
+    inner_x1, inner_y1, inner_w, inner_h = inner_box
+    inner_x2, inner_y2 = inner_x1 + inner_w, inner_y1 + inner_h
+
+    outer_x1, outer_y1, outer_w, outer_h = outer_box
+    outer_x2, outer_y2 = outer_x1 + outer_w, outer_y1 + outer_h
+
+    # Calculate the area of the inner box
+    inner_area = inner_w * inner_h
+
+    # Inner box is completely outside of outer box
+    if inner_x1 >= outer_x2 or inner_x2 <= outer_x1 or inner_y1 >= outer_y2 or inner_y2 <= outer_y1:
+        return 0.0
+
+    # Calculate the intersection area
+    intersection_x1 = max(inner_x1, outer_x1)
+    intersection_x2 = min(inner_x2, outer_x2)
+    intersection_y1 = max(inner_y1, outer_y1)
+    intersection_y2 = min(inner_y2, outer_y2)
+    intersection_area = max(0, (intersection_x2 - intersection_x1) * (intersection_y2 - intersection_y1))
+
+    # Calculate the coverage percentage
+    coverage = intersection_area / inner_area
+    return coverage
+
+
+def calculate_metrics(pred_heatmaps, pred_regressions, true_bboxes, input_size, model_scale,
+                      threshold: float = 0.9, tolerance_margin: int = 0):
+    # Move to CPU and convert to numpy
+    pred_heatmaps = pred_heatmaps.detach().cpu().numpy()
+    pred_regressions = pred_regressions.detach().cpu().numpy()
+
+    results = defaultdict(list)
+    for i in range(pred_heatmaps.shape[0]):
+        # Get bounding boxes from heatmap and regression
+        pred_heatmap = pred_heatmaps[i].squeeze()
+        pred_regression = pred_regressions[i].squeeze()
+        true_bbox = true_bboxes[i].squeeze().numpy()
+
+        pred_bbox = prediction_to_bbox(pred_heatmap, pred_regression, input_size, model_scale, threshold)
+        pred_bbox = [
+            max(0, pred_bbox[0] - tolerance_margin),
+            max(0, pred_bbox[1] - tolerance_margin),
+            min(input_size, pred_bbox[2] + tolerance_margin),
+            min(input_size, pred_bbox[3] + tolerance_margin),
+        ]
+
+        # Calculate IoU
+        iou = calculate_iou(true_bbox, pred_bbox)
+        results['iou'].append(iou)
+
+        # Calculate coverage
+        coverage = calculate_coverage(true_bbox, pred_bbox)
+        results['coverage'].append(coverage)
+
+    return results
 
 
 def pad_to_square(img, mask, value: int = 0):
