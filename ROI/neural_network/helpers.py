@@ -181,7 +181,7 @@ def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    total_coverage = 0
+    total_coverage, total_area, total_bg_area, total_disc_area, total_cup_area = 0, 0, 0, 0, 0
     model = model.eval().to(device)
     pbar = tqdm(images, desc='Generating RoI dataset')
     for i, image_file in enumerate(pbar, start=1):
@@ -221,7 +221,24 @@ def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_
             # If the ground truth is available, check if the predicted bounding box covers the entire optic disc
             coverage = np.sum(mask[y:y + h, x:x + w]) / np.sum(mask)
             total_coverage += coverage
-            pbar.set_postfix({'coverage': f'{total_coverage * 100 / i:.2f}%'})
+
+            # Calculate how much of the RoI area is covered by the optic disc and the optic cup
+            area = np.prod(roi_mask.shape[:2])
+            bg_area = np.sum(roi_mask == 0)
+            disc_area = np.sum(roi_mask == 1)
+            cup_area = np.sum(roi_mask == 2)
+            total_area += area
+            total_bg_area += bg_area
+            total_disc_area += disc_area
+            total_cup_area += cup_area
+
+            pbar.set_postfix({
+                'coverage': f'{total_coverage * 100 / i:.2f}%',
+                'bg': f'{total_bg_area / total_area * 100:.2f}%',
+                'disc': f'{total_disc_area / total_area * 100:.2f}%',
+                'cup': f'{total_cup_area / total_area * 100:.2f}%',
+            })
+
             if coverage < 1.0:
                 print(f'Bounding box of {image_file} covers {coverage * 100:.2f}% of the optic disc')
                 # Show the predicted bounding box on the whole image
