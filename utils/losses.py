@@ -50,11 +50,11 @@ def probs_to_onehot(probs: torch.Tensor, num_classes: int, thresh: int = None, d
     return labels_to_onehot(probs_to_labels(probs, thresh=thresh, dim=dim), num_classes=num_classes)
 
 
-# Soft Dice Loss for binary or multi-class segmentation
-# soft means that we use probabilities instead of 0/1 predictions for getting the intersection and union
+# Soft Dice Loss for binary or multi-class segmentation (soft means that we use
+# probabilities instead of 0/1 predictions for getting the intersection and union)
 class DiceLoss(nn.Module):
 
-    def __init__(self, num_classes: int, class_weights: list = None, smooth: float = 1e-7):
+    def __init__(self, num_classes: int, class_weights: list[float] = None, smooth: float = 1e-7):
         super(DiceLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
@@ -76,14 +76,14 @@ class DiceLoss(nn.Module):
             f'Probabilities shape {probabilities.shape} does not match targets shape {targets.shape}'
 
         # Calculate intersection and union between predicted probabilities and targets
-        intersection = (probabilities * targets).sum(dim=(2, 3))
+        intersection = (probabilities * targets).sum(dim=(2, 3))  # (batch_size, num_classes)
         union = (probabilities + targets).sum(dim=(2, 3))
 
         # Calculate Dice coefficients for each class per each image in the batch
         dice_coeffs = (2 * intersection + self.smooth) / (union + self.smooth)
 
         # Average across the batch dimension
-        dice_coeffs = dice_coeffs.mean(dim=0)
+        dice_coeffs = dice_coeffs.mean(dim=0)  # (num_classes,)
 
         # Calculate Dice loss for each class (1 - Dice coefficient)
         dice_losses = 1 - dice_coeffs
@@ -99,7 +99,7 @@ class DiceLoss(nn.Module):
 
 class GeneralizedDice(nn.Module):
 
-    def __init__(self, num_classes: int, class_weights: list = None, smooth: float = 1e-7):
+    def __init__(self, num_classes: int, class_weights: list[float] = None, smooth: float = 1e-7):
         super(GeneralizedDice, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
@@ -145,7 +145,7 @@ class GeneralizedDice(nn.Module):
 
 class IoULoss(nn.Module):
 
-    def __init__(self, num_classes: int, class_weights: list = None, smooth: float = 1e-7):
+    def __init__(self, num_classes: int, class_weights: list[float] = None, smooth: float = 1e-7):
         super(IoULoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
@@ -187,12 +187,15 @@ class IoULoss(nn.Module):
 
 class FocalLoss(nn.Module):
 
-    def __init__(self, num_classes: int, alpha: float = 0.25, gamma: float = 2, reduction: str = 'mean'):
+    def __init__(self, num_classes: int, alpha: float = 0.25, gamma: float = 2, reduction: str = 'mean',
+                 class_weights: list[float] = None, ):
         super(FocalLoss, self).__init__()
         self.num_classes = num_classes  # 1 for binary classification
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
+        # WARNING: class weights are not implemented for this loss function
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
 
     def forward(self, logits, targets):
         # logits: (batch_size, num_classes, height, width)
@@ -229,7 +232,7 @@ class FocalLoss(nn.Module):
 class TverskyLoss(nn.Module):
 
     def __init__(self, num_classes: int, alpha: float = 0.5, beta: float = 0.5,
-                 class_weights: list = None, smooth: float = 1e-7):
+                 class_weights: list[float] = None, smooth: float = 1e-7):
         super(TverskyLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
@@ -276,7 +279,7 @@ class TverskyLoss(nn.Module):
 class FocalTverskyLoss(nn.Module):
 
     def __init__(self, num_classes: int, alpha: float = 0.5, beta: float = 0.5, gamma: float = 1.0,
-                 class_weights: list = None, smooth: float = 1e-7):
+                 class_weights: list[float] = None, smooth: float = 1e-7):
         super(FocalTverskyLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
@@ -483,12 +486,14 @@ def onehot_to_dist_map(onehot_batch: torch.Tensor, normalize: bool) -> torch.Ten
 
 class CrossEntropyLoss(nn.Module):
 
-    def __init__(self, num_classes: int = None, smooth: float = 1e-7):
+    def __init__(self, num_classes: int = None, class_weights: list[float] = None, smooth: float = 1e-7):
         super(CrossEntropyLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
 
         self.num_classes = num_classes
+        # WARNING: class weights are not implemented for this loss function
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
         self.smooth = smooth
 
     def forward(self, logits, targets):
@@ -505,18 +510,19 @@ class CrossEntropyLoss(nn.Module):
 
 class SensitivitySpecificityLoss(nn.Module):
 
-    def __init__(self, num_classes: int):
+    def __init__(self, num_classes: int, class_weights: list[float] = None):
         super(SensitivitySpecificityLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
 
         self.num_classes = num_classes
+        self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
 
     def forward(self, logits, target):
         probs = logits_to_probs(logits, self.num_classes)
         target = labels_to_onehot(target, self.num_classes)
 
-        true_positives = (probs * target).sum(dim=(2, 3))
+        true_positives = (probs * target).sum(dim=(2, 3))  # (batch_size, num_classes)
         true_negatives = ((1 - probs) * (1 - target)).sum(dim=(2, 3))
         false_positives = (probs * (1 - target)).sum(dim=(2, 3))
         false_negatives = ((1 - probs) * target).sum(dim=(2, 3))
@@ -524,7 +530,13 @@ class SensitivitySpecificityLoss(nn.Module):
         sensitivity = true_positives / (true_positives + false_negatives)
         specificity = true_negatives / (true_negatives + false_positives)
 
-        return (1 - sensitivity).mean() + (1 - specificity).mean()
+        loss = (1 - sensitivity).mean(dim=0) + (1 - specificity).mean(dim=0)  # (num_classes,)
+
+        if self.class_weights is not None:
+            self.class_weights = self.class_weights.to(logits.device)
+            loss *= self.class_weights
+
+        return loss.mean()
 
 
 # custom loss inspired by boundary loss and hausdorff loss

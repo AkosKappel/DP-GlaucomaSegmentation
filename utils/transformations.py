@@ -3,8 +3,9 @@ import numpy as np
 import torch
 
 __all__ = [
-    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform', 'occlude', 'arctan',
+    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform',
     'keep_red_channel', 'keep_green_channel', 'keep_blue_channel', 'keep_gray_channel',
+    'occlude', 'sharpen', 'arctan',
 ]
 
 
@@ -47,7 +48,29 @@ def undo_polar_transform(images, masks, preds):
     return images, masks, preds
 
 
-def occlude(img, p=0.5, occlusion_size=32, occlusion_value=0, **kwargs):
+def keep_red_channel(img, **kwargs):
+    return img[:, :, 0]
+
+
+def keep_green_channel(img, **kwargs):
+    return img[:, :, 1]
+
+
+def keep_blue_channel(img, **kwargs):
+    return img[:, :, 2]
+
+
+def keep_gray_channel(img, **kwargs):
+    return cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
+
+# Different activation function instead of sigmoid
+# see: https://lars76.github.io/2021/09/05/activations-segmentation.html
+def arctan(x):
+    return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
+
+
+def occlude(img, p: float = 0.5, occlusion_size: int = 32, occlusion_value: int = 0, **kwargs):
     if np.random.rand() > p:
         return img
 
@@ -63,23 +86,32 @@ def occlude(img, p=0.5, occlusion_size=32, occlusion_value=0, **kwargs):
     return img
 
 
-# Different activation function instead of sigmoid
-# see: https://lars76.github.io/2021/09/05/activations-segmentation.html
-def arctan(x):
-    return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
+def sharpen(img, p: float = 0.5, **kwargs):
+    if np.random.rand() > p:
+        return img
 
-
-def keep_red_channel(img, **kwargs):
-    return img[:, :, 0]
-
-
-def keep_green_channel(img, **kwargs):
-    return img[:, :, 1]
-
-
-def keep_blue_channel(img, **kwargs):
-    return img[:, :, 2]
-
-
-def keep_gray_channel(img, **kwargs):
-    return cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    # kernel = np.array([
+    #     [-1, -1, -1],
+    #     [-1, 9, -1],
+    #     [-1, -1, -1],
+    # ])
+    kernel = np.array([
+        [0, -1, 0],
+        [-1, 5, -1],
+        [0, -1, 0],
+    ])
+    # kernel = np.array([
+    #     [-1, -1, -1, -1, -1],
+    #     [-1, 2, 2, 2, -1],
+    #     [-1, 2, 8, 2, -1],
+    #     [-1, 2, 2, 2, -1],
+    #     [-1, -1, -1, -1, -1],
+    # ])
+    # kernel = np.array([
+    #     [0, 0, -1, 0, 0],
+    #     [0, -1, -2, -1, 0],
+    #     [-1, -2, 16, -2, -1],
+    #     [0, -1, -2, -1, 0],
+    #     [0, 0, -1, 0, 0],
+    # ])
+    return cv.filter2D(img, -1, kernel)

@@ -5,7 +5,7 @@ from pathlib import Path
 __all__ = [
     'extract_optic_disc', 'extract_optic_cup',
     'calculate_rgb_cumsum', 'source_to_target_correction',
-    'localize_roi', 'get_bounding_box', 'otsu', 'clahe', 'histogram_equalization',
+    'get_bounding_box', 'otsu', 'clahe', 'histogram_equalization',
     'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpen', 'blur',
     'split_train_val_test', 'distance_transform', 'boundary_transform',
 ]
@@ -138,11 +138,6 @@ def otsu(gray, ignore_value=None):
     final_img[gray > final_thresh] = 255
     final_img[gray < final_thresh] = 0
     return final_thresh - 1, final_img
-
-
-def localize_roi(src_dir: Path, dst_dir: Path):
-    # TODO: add ROI localization technique from article
-    pass
 
 
 def clahe(src_dir: Path, dst_dir: Path, mode='grey', clip_limit: float = 2.0, tile_grid_size: tuple = (8, 8)):
