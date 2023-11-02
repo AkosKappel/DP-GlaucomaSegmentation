@@ -27,6 +27,8 @@ def show_model_view(model, input_size, name='model', fmt='png'):
 
 
 def plot_history(h, figsize=(14, 8)):
+    if h is None:
+        return
     used_metrics = sorted([m[6:] for m in h.keys() if m.startswith('train_')])
 
     n = len(used_metrics)

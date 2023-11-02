@@ -69,7 +69,7 @@ class CBAM(nn.Module):
 
 class SingleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.0):
+    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.2):
         super(SingleConv, self).__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
@@ -82,7 +82,7 @@ class SingleConv(nn.Module):
 
 class DoubleConv(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.0):
+    def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
         super(DoubleConv, self).__init__()
 
         if mid_channels is None:
@@ -169,7 +169,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, features: list[int], out_channels: int, concat_channels: int):
+    def __init__(self, features: list[int], out_channels: int, concat_channels: int, dropout: float = 0.2):
         super(Decoder, self).__init__()
         # concat_features = number of channels per skip connection that will be concatenated
 
@@ -180,27 +180,27 @@ class Decoder(nn.Module):
         self.up8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True)
 
         # Decoder at level 4 (lowest)
-        self.de4_en2 = SingleConv(features[1], concat_channels)
-        self.de4_en4 = SingleConv(features[3], concat_channels)
-        self.de4_de5 = SingleConv(features[4], concat_channels)
+        self.de4_en2 = SingleConv(features[1], concat_channels, dropout=dropout)
+        self.de4_en4 = SingleConv(features[3], concat_channels, dropout=dropout)
+        self.de4_de5 = SingleConv(features[4], concat_channels, dropout=dropout)
         self.de4 = ConvCBAM(3 * concat_channels, features[3])
 
         # Decoder at level 3
-        self.de3_en1 = SingleConv(features[0], concat_channels)
-        self.de3_en3 = SingleConv(features[2], concat_channels)
-        self.de3_de4 = SingleConv(features[3], concat_channels)
+        self.de3_en1 = SingleConv(features[0], concat_channels, dropout=dropout)
+        self.de3_en3 = SingleConv(features[2], concat_channels, dropout=dropout)
+        self.de3_de4 = SingleConv(features[3], concat_channels, dropout=dropout)
         self.de3 = ConvCBAM(3 * concat_channels, features[2])
 
         # Decoder at level 2
-        self.de2_en2 = SingleConv(features[1], concat_channels)
-        self.de2_de3 = SingleConv(features[2], concat_channels)
+        self.de2_en2 = SingleConv(features[1], concat_channels, dropout=dropout)
+        self.de2_de3 = SingleConv(features[2], concat_channels, dropout=dropout)
         self.de2 = ConvCBAM(2 * concat_channels, features[1])
 
         # Decoder at level 1 (highest)
-        self.de1_en1 = SingleConv(features[0], concat_channels)
-        self.de1_de2 = SingleConv(features[1], concat_channels)
-        self.de1_de3 = SingleConv(features[2], concat_channels)
-        self.de1_de4 = SingleConv(features[3], concat_channels)
+        self.de1_en1 = SingleConv(features[0], concat_channels, dropout=dropout)
+        self.de1_de2 = SingleConv(features[1], concat_channels, dropout=dropout)
+        self.de1_de3 = SingleConv(features[2], concat_channels, dropout=dropout)
+        self.de1_de4 = SingleConv(features[3], concat_channels, dropout=dropout)
         self.de1 = ConvCBAM(4 * concat_channels, features[0])
 
         # Final convolution
@@ -238,7 +238,7 @@ class Decoder(nn.Module):
 class RefUnet3PlusCBAM(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, init_weights: bool = True, dropout: float = 0.2):
         super(RefUnet3PlusCBAM, self).__init__()
 
         if features is None:
@@ -250,7 +250,7 @@ class RefUnet3PlusCBAM(nn.Module):
         self.features = features
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder = Decoder(features, out_channels, features[0])
+        self.decoder = Decoder(features, out_channels, features[0], dropout=dropout)
 
         # initialize weights
         if init_weights:
@@ -275,7 +275,7 @@ class RefUnet3PlusCBAM(nn.Module):
 class DualRefUnet3PlusCBAM(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, init_weights: bool = True, dropout: float = 0.2):
         super(DualRefUnet3PlusCBAM, self).__init__()
 
         if features is None:
@@ -287,8 +287,8 @@ class DualRefUnet3PlusCBAM(nn.Module):
         self.features = features
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder1 = Decoder(features, out_channels, features[0])
-        self.decoder2 = Decoder(features, out_channels, features[0])
+        self.decoder1 = Decoder(features, out_channels, features[0], dropout=dropout)
+        self.decoder2 = Decoder(features, out_channels, features[0], dropout=dropout)
 
         # Initialize weights
         if init_weights:

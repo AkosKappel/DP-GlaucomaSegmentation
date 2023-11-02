@@ -96,12 +96,12 @@ class AttentionGate(nn.Module):
 
 class DecoderUnit(nn.Module):
 
-    def __init__(self, in_channels: int, up_channels: int, n_skip_connections: int, out_channels: int):
+    def __init__(self, in_channels: int, up_channels: int, n_skip_connections: int, out_channels: int, dropout: float):
         super(DecoderUnit, self).__init__()
 
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.attention = AttentionGate(in_channels, up_channels, in_channels // 2)
-        self.conv = DoubleConv(in_channels * n_skip_connections + up_channels, out_channels)
+        self.conv = DoubleConv(in_channels * n_skip_connections + up_channels, out_channels, dropout=dropout)
 
     def forward(self, x, skips):
         large_skips, small_skip = skips[:-1], skips[-1]  # shortest skip connection goes through attention gate
@@ -175,30 +175,30 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, features: list[int], out_channels: int, deep_supervision: bool = False):
+    def __init__(self, features: list[int], out_channels: int, deep_supervision: bool = False, dropout: float = 0.2):
         super(Decoder, self).__init__()
         self.deep_supervision = deep_supervision
 
         self.branch1 = nn.ModuleList([
-            DecoderUnit(features[0], features[1], 1, features[0]),
+            DecoderUnit(features[0], features[1], 1, features[0], dropout),
         ])
 
         self.branch2 = nn.ModuleList([
-            DecoderUnit(features[1], features[2], 1, features[1]),
-            DecoderUnit(features[0], features[1], 2, features[0]),
+            DecoderUnit(features[1], features[2], 1, features[1], dropout),
+            DecoderUnit(features[0], features[1], 2, features[0], dropout),
         ])
 
         self.branch3 = nn.ModuleList([
-            DecoderUnit(features[2], features[3], 1, features[2]),
-            DecoderUnit(features[1], features[2], 2, features[1]),
-            DecoderUnit(features[0], features[1], 3, features[0]),
+            DecoderUnit(features[2], features[3], 1, features[2], dropout),
+            DecoderUnit(features[1], features[2], 2, features[1], dropout),
+            DecoderUnit(features[0], features[1], 3, features[0], dropout),
         ])
 
         self.branch4 = nn.ModuleList([
-            DecoderUnit(features[3], features[4], 1, features[3]),
-            DecoderUnit(features[2], features[3], 2, features[2]),
-            DecoderUnit(features[1], features[2], 3, features[1]),
-            DecoderUnit(features[0], features[1], 4, features[0]),
+            DecoderUnit(features[3], features[4], 1, features[3], dropout),
+            DecoderUnit(features[2], features[3], 2, features[2], dropout),
+            DecoderUnit(features[1], features[2], 3, features[1], dropout),
+            DecoderUnit(features[0], features[1], 4, features[0], dropout),
         ])
 
         # Output
@@ -246,7 +246,8 @@ class Decoder(nn.Module):
 class RAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, deep_supervision: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, deep_supervision: bool = False,
+                 init_weights: bool = True, dropout: float = 0.2):
         super(RAUnetPlusPlus, self).__init__()
 
         if features is None:
@@ -258,7 +259,7 @@ class RAUnetPlusPlus(nn.Module):
         self.features = features
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder = Decoder(features, out_channels, deep_supervision)
+        self.decoder = Decoder(features, out_channels, deep_supervision, dropout)
 
         # Initialize weights
         if init_weights:
@@ -287,7 +288,8 @@ class RAUnetPlusPlus(nn.Module):
 class DualRAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, deep_supervision: bool = False, init_weights: bool = True):
+                 multi_scale_input: bool = False, deep_supervision: bool = False,
+                 init_weights: bool = True, dropout: float = 0.2):
         super(DualRAUnetPlusPlus, self).__init__()
 
         if features is None:
@@ -299,8 +301,8 @@ class DualRAUnetPlusPlus(nn.Module):
         self.features = features
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder1 = Decoder(features, out_channels, deep_supervision)
-        self.decoder2 = Decoder(features, out_channels, deep_supervision)
+        self.decoder1 = Decoder(features, out_channels, deep_supervision, dropout)
+        self.decoder2 = Decoder(features, out_channels, deep_supervision, dropout)
 
         # Initialize weights
         if init_weights:

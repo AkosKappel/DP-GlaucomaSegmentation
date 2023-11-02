@@ -9,21 +9,30 @@ __all__ = [
 ]
 
 
-def polar_transform(img, **kwargs):
+def polar_transform(img, radius_ratio: float = 1.0, **kwargs):
     height, width = img.shape[:2]
     center = (width // 2, height // 2)
-    value = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
-    polar_img = cv.linearPolar(img, center, value, cv.WARP_FILL_OUTLIERS)
+
+    # Linear interpolation between inner and outer radius
+    inner_radius = np.min([width, height]) / 2.0
+    outer_radius = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
+    radius = inner_radius + (outer_radius - inner_radius) * radius_ratio
+
+    polar_img = cv.linearPolar(img, center, radius, cv.WARP_FILL_OUTLIERS)
     polar_img = cv.rotate(polar_img, cv.ROTATE_90_COUNTERCLOCKWISE)
     return polar_img
 
 
-def inverse_polar_transform(img, **kwargs):
+def inverse_polar_transform(img, radius_ratio: float = 1.0, **kwargs):
     img = cv.rotate(img, cv.ROTATE_90_CLOCKWISE)
     height, width = img.shape[:2]
     center = (width // 2, height // 2)
-    value = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
-    cartesian_img = cv.linearPolar(img, center, value, cv.WARP_INVERSE_MAP | cv.WARP_FILL_OUTLIERS)
+
+    inner_radius = np.min([width, height]) / 2.0
+    outer_radius = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
+    radius = inner_radius + (outer_radius - inner_radius) * radius_ratio
+
+    cartesian_img = cv.linearPolar(img, center, radius, cv.WARP_INVERSE_MAP | cv.WARP_FILL_OUTLIERS)
     return cartesian_img
 
 

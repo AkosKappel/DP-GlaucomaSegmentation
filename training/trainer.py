@@ -3,7 +3,6 @@ from IPython.display import clear_output
 import os
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import wandb
 
 from .binary import BinaryTrainer, BinaryLogger
@@ -11,13 +10,10 @@ from .multiclass import MulticlassTrainer, MulticlassLogger
 from .multilabel import MultilabelTrainer, MultilabelLogger
 from .cascade import CascadeTrainer, CascadeLogger
 from .dual import DualTrainer, DualLogger
-from utils.losses import *
-from networks import *
 
 __all__ = [
-    'init_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
     'train', 'train_multiclass', 'train_multilabel', 'train_binary', 'train_cascade', 'train_dual',
-    'get_network', 'get_optimizer', 'get_criterion', 'get_scheduler', 'get_scaler',
+    'init_model_weights', 'initialize_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
 ]
 
 CLASS_LABELS = {
@@ -222,8 +218,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
             save_checkpoint({
                 'epoch': epoch,
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
+                'model': model,
+                'optimizer': optimizer,
                 'history': history,
             }, filename=f'{train_mode}-{model_name}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
 
@@ -237,8 +233,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             if save_best_model and checkpoint_dir:
                 save_checkpoint({
                     'epoch': epoch,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
+                    'model': model,
+                    'optimizer': optimizer,
                     'history': history,
                 }, filename=f'best-{train_mode}-{model_name}-model.pth', checkpoint_dir=checkpoint_dir)
         else:
@@ -269,7 +265,7 @@ def initialize_weights(model, mode='fan_in', nonlinearity='relu'):
     print('Initialized weights of model:', model.__class__.__name__)
 
 
-def init_weights(net, init_type='kaiming', gain=0.02):
+def init_model_weights(net, init_type: str = 'kaiming', gain: float = 0.02):
     def init_func(m):
         classname = m.__class__.__name__
         if hasattr(m, 'weight') and (classname.find('Conv') != -1 or classname.find('Linear') != -1):
@@ -298,175 +294,26 @@ def update_history(history, metrics, prefix=''):
         history[f'{prefix}_{k}'].append(v)
 
 
-def save_checkpoint(state, filename='model.pth', checkpoint_dir='.'):
+def save_checkpoint(state, filename='model.pth', checkpoint_dir: str = ''):
+    if not checkpoint_dir:
+        checkpoint_dir = '.'
+
     # create save directory if not exists
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
-    # save model checkpoint
     filename = os.path.join(checkpoint_dir, filename)
     print(f'=> Saving checkpoint: {filename}')
     torch.save(state, filename)
 
 
-def load_checkpoint(filename, model, checkpoint_dir='.'):
-    filename = os.path.join(checkpoint_dir, filename)
-    if not os.path.exists(filename):
-        raise FileNotFoundError(f'Checkpoint file not found: {filename}')
+def load_checkpoint(filename, checkpoint_dir: str = ''):
+    if not checkpoint_dir:
+        checkpoint_dir = '.'
 
-    # load model weights
+    filename = os.path.join(checkpoint_dir, filename)
+    assert os.path.isfile(filename), f'Invalid checkpoint file: {filename}'
+
     print(f'=> Loading checkpoint: {filename}')
     checkpoint = torch.load(filename)
-    model.load_state_dict(checkpoint['model'])
-
-
-def get_network(name, in_channels, out_channels, layers, **kwargs):
-    name = name.lower()
-
-    if name == 'unet':
-        return Unet(in_channels, out_channels, layers, **kwargs)
-    if name == 'unet++':
-        return UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    if name == 'unet3+':
-        return Unet3Plus(in_channels, out_channels, layers, **kwargs)
-    if name == 'resunet':
-        return ResUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'runet':
-        return RUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'r2unet':
-        return R2Unet(in_channels, out_channels, layers, **kwargs)
-    if name == 'attentionunet':
-        return AttentionUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'doubleattentionunet':
-        return DoubleAttentionUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'attentionsqueezeunet':
-        return AttentionSqueezeUnet(in_channels, out_channels, **kwargs)
-    if name == 'squeezeunet':
-        return SqueezeUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'useunet':
-        return USEnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'sarunet':
-        return SARUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'inceptionunet':
-        return InceptionUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'googleunet':
-        return GoogleUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'r2attentionunet':
-        return R2AttentionUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'r2unet++':
-        return R2UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    if name == 'raunet++':
-        return RAUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    if name == 'refunet3+cbam':
-        return RefUnet3PlusCBAM(in_channels, out_channels, layers, **kwargs)
-
-    if name == 'dualunet':
-        return DualUnet(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualunet++':
-    #     return DualUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualunet3+':
-    #     return DualUnet3Plus(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualresunet':
-        return DualResUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualrunet':
-        return DualRUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualr2unet':
-        return DualR2Unet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualattentionunet':
-        return DualAttentionUnet(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualdoubleattentionunet':
-    #     return DualDoubleAttentionUnet(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualattentionsqueezeunet':
-    #     return DualAttentionSqueezeUnet(in_channels, out_channels, **kwargs)
-    if name == 'dualsqueezeunet':
-        return DualSqueezeUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualuseunet':
-        return DualUSEnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualsarunet':
-        return DualSARUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualinceptionunet':
-        return DualInceptionUnet(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualgoogleunet':
-        return DualGoogleUnet(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualr2attentionunet':
-    #     return DualR2AttentionUnet(in_channels, out_channels, layers, **kwargs)
-    # if name == 'dualr2unet++':
-    #     return DualR2UnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualraunet++':
-        return DualRAUnetPlusPlus(in_channels, out_channels, layers, **kwargs)
-    if name == 'dualrefunet3+cbam':
-        return DualRefUnet3PlusCBAM(in_channels, out_channels, layers, **kwargs)
-
-
-def get_optimizer(name, parameters, **kwargs):
-    name = name.lower()
-
-    if name == 'adam':
-        return optim.Adam(parameters, **kwargs)
-    if name == 'sgd':
-        return optim.SGD(parameters, **kwargs)
-    if name == 'rmsprop':
-        return optim.RMSprop(parameters, **kwargs)
-    raise ValueError(f'Invalid optimizer name: {name}')
-
-
-def get_criterion(name, **kwargs):
-    name = name.lower()
-
-    if name == 'cross entropy':
-        return nn.CrossEntropyLoss(**kwargs)
-    if name == 'dice':
-        return DiceLoss(**kwargs)
-    if name == 'generalized dice':
-        return GeneralizedDice(**kwargs)
-    if name == 'iou':
-        return IoULoss(**kwargs)
-    if name == 'focal':
-        return FocalLoss(**kwargs)
-    if name == 'tversky':
-        return TverskyLoss(**kwargs)
-    if name == 'focal tversky':
-        return FocalTverskyLoss(**kwargs)
-    if name == 'hausdorff':
-        return HausdorffLoss(**kwargs)
-    if name == 'boundary':
-        return BoundaryLoss(**kwargs)
-    if name == 'ce':
-        return CrossEntropyLoss(**kwargs)
-    if name == 'ss':
-        return SensitivitySpecificityLoss(**kwargs)
-    if name == 'edge':
-        return EdgeLoss(**kwargs)
-    if name == 'combo':
-        return ComboLoss(**kwargs)
-    raise ValueError(f'Invalid loss function name: {name}')
-
-
-def get_scheduler(name, optimizer, **kwargs):
-    name = name.lower()
-
-    if name == 'none':
-        return None
-    if name == 'step':
-        return optim.lr_scheduler.StepLR(optimizer, **kwargs)
-    if name == 'multistep':
-        return optim.lr_scheduler.MultiStepLR(optimizer, **kwargs)
-    if name == 'exponential':
-        return optim.lr_scheduler.ExponentialLR(optimizer, **kwargs)
-    if name == 'plateau':
-        return optim.lr_scheduler.ReduceLROnPlateau(optimizer, **kwargs)
-    if name == 'cosine':
-        return optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
-    if name == 'cosine warm restarts':
-        return optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, **kwargs)
-    raise ValueError(f'Invalid scheduler name: {name}')
-
-
-def get_scaler(name, **kwargs):
-    name = name.lower()
-
-    if name == 'none':
-        return None
-    if name == 'amp':
-        return torch.cuda.amp.GradScaler(**kwargs)
-    raise ValueError(f'Invalid scaler name: {name}')
+    return checkpoint
