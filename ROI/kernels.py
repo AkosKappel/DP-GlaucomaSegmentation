@@ -1,6 +1,8 @@
 import cv2 as cv
 import numpy as np
 
+__all__ = ['circular_kernel', 'gaussian_kernel', 'parabolic_kernel']
+
 
 def gaussian_kernel(width: int, height: int = None, sigma: float = None) -> np.ndarray:
     if height is None:

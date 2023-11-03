@@ -6,6 +6,8 @@ from pathlib import Path
 from tqdm.notebook import tqdm
 from utils import keep_largest_component, get_bounding_box
 
+__all__ = ['Thresholding']
+
 
 class Thresholding:
 

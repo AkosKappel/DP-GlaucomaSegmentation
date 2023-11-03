@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from tqdm.notebook import tqdm
 
+__all__ = ['TemplateMatching']
+
 
 def get_templates(images_dir, show: bool = False):
     # Load templates

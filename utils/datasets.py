@@ -8,10 +8,13 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
+from ROI import preprocess_centernet_input
+
 __all__ = [
     'ORIGA_MEANS', 'ORIGA_STDS', 'ROI_ORIGA_MEANS', 'ROI_ORIGA_STDS',
     'DRISHTI_MEANS', 'DRISHTI_STDS', 'ROI_DRISHTI_MEANS', 'ROI_DRISHTI_STDS',
-    'EyeFundusDataset', 'load_dataset', 'prepare_origa_dataset', 'prepare_drishti_dataset',
+    'EyeFundusDataset', 'load_dataset', 'softmap_to_binary_mask',
+    'preprocess_origa_dataset', 'preprocess_drishti_dataset',
     'get_mean_and_standard_deviation_from_files', 'get_mean_and_standard_deviation_from_dataloader',
 ]
 
@@ -123,79 +126,117 @@ def load_dataset(image_dir: str, mask_dir: str, image_names: list[str] = None, m
     return train_ds, val_ds, test_ds, train_loader, val_loader, test_loader
 
 
-def prepare_origa_dataset(base_dir):
+# Binarize softmap maps using a threshold
+def softmap_to_binary_mask(softmap_mask, threshold: float = 0.5):
+    softmap_mask = softmap_mask.astype(np.float32)
+    softmap_mask /= softmap_mask.max()
+    binary_mask = (softmap_mask >= threshold).astype(np.uint8)
+    return binary_mask
+
+
+def preprocess_origa_dataset(base_dir: str | Path, test_size: float = 0.1, random_state: int = 411):
+    def prepare_dataset(src_images_dir, src_masks_dir,
+                        dst_images_dir, dst_masks_dir,
+                        img_names, mask_names, desc=None):
+        dst_images_dir.mkdir(parents=True, exist_ok=True)
+        dst_masks_dir.mkdir(parents=True, exist_ok=True)
+
+        for img_name, mask_name in zip(tqdm(img_names, desc=desc), mask_names):
+            img = cv.imread(str(src_images_dir / img_name))
+            assert img is not None
+            img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+
+            mat = scipy.io.loadmat(str(src_masks_dir / mask_name))
+            mask = mat['mask']
+
+            if img.shape[:2] != mask.shape:
+                mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
+
+            img, mask = preprocess_centernet_input(img, mask)
+            img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+
+            cv.imwrite(str(dst_images_dir / img_name), img)
+            cv.imwrite(str(dst_masks_dir / (mask_name[:-4] + '.png')), mask)
+
     if isinstance(base_dir, str):
         base_dir = Path(base_dir)
 
     images_dir = base_dir / 'Images'
     gt_dir = base_dir / 'Semi-automatic-annotations-done-by-doctors-eg-ground-truth'
-    masks_dir = base_dir / 'Masks'
 
     img_names = sorted(os.listdir(images_dir))
     mask_names = sorted([f for f in os.listdir(gt_dir) if Path(f).suffix == '.mat'])
 
-    masks_dir.mkdir(parents=True, exist_ok=True)
+    train_img_names, test_img_names, train_mask_names, test_mask_names = train_test_split(
+        img_names, mask_names, test_size=test_size, random_state=random_state,
+    )
 
-    for img_name, mask_name in zip(tqdm(img_names, desc='Preparing ORIGA dataset'), mask_names):
-        img = cv.imread(str(images_dir / img_name))
+    train_images_dir = base_dir / 'TrainImages'
+    train_masks_dir = base_dir / 'TrainMasks'
+    prepare_dataset(images_dir, gt_dir, train_images_dir, train_masks_dir,
+                    train_img_names, train_mask_names, 'Preparing ORIGA train dataset')
 
-        assert img is not None
-
-        mat = scipy.io.loadmat(str(gt_dir / mask_name))
-        mask = mat['mask']
-
-        if img.shape[:2] != mask.shape:
-            mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
-
-        cv.imwrite(str(masks_dir / (mask_name[:-4] + '.png')), mask)
+    test_images_dir = base_dir / 'TestImages'
+    test_masks_dir = base_dir / 'TestMasks'
+    prepare_dataset(images_dir, gt_dir, test_images_dir, test_masks_dir,
+                    test_img_names, test_mask_names, 'Preparing ORIGA test dataset')
 
 
-def prepare_drishti_dataset(base_dir):
-    def prepare_subset(images_dir, gt_dir, masks_dir, desc=None):
-        img_names = sorted(os.listdir(images_dir))
-        mask_names = sorted([f for f in os.listdir(gt_dir) if (gt_dir / f).is_dir()])
+def preprocess_drishti_dataset(base_dir):
+    def prepare_dataset(src_images_dir, src_masks_dir,
+                        dst_images_dir, dst_masks_dir,
+                        desc=None):
+        img_names = sorted(os.listdir(src_images_dir))
+        mask_names = sorted([f for f in os.listdir(src_masks_dir) if (src_masks_dir / f).is_dir()])
 
-        masks_dir.mkdir(parents=True, exist_ok=True)
+        dst_images_dir.mkdir(parents=True, exist_ok=True)
+        dst_masks_dir.mkdir(parents=True, exist_ok=True)
 
         for img_name, mask_name in zip(tqdm(img_names, desc=desc), mask_names):
-            img = cv.imread(str(images_dir / img_name))
-
+            img = cv.imread(str(src_images_dir / img_name))
             assert img is not None
+            img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
 
-            height, width = img.shape[:2]
-            mask = np.zeros((height, width), dtype=np.uint8)
-
-            disc_file = gt_dir / mask_name / f'AvgBoundary/{mask_name}_ODAvgBoundary.txt'
-            cup_file = gt_dir / mask_name / f'AvgBoundary/{mask_name}_CupAvgBoundary.txt'
+            disc_file = src_masks_dir / mask_name / f'SoftMap/{mask_name}_ODsegSoftmap.png'
+            cup_file = src_masks_dir / mask_name / f'SoftMap/{mask_name}_cupsegSoftmap.png'
 
             assert disc_file.exists()
             assert cup_file.exists()
 
-            disc = np.loadtxt(disc_file, delimiter=' ')
-            # Slice array to remove duplicate entries
-            for i, val in enumerate(disc[1:]):
-                if np.all(val == disc[0]):
-                    disc = disc[:i + 1]
-                    break
-            mask = cv.fillPoly(mask, [disc.astype(np.int32)], 1)
+            disc_mask = cv.imread(str(disc_file), cv.IMREAD_GRAYSCALE)
+            disc_mask = softmap_to_binary_mask(disc_mask)
 
-            cup = np.loadtxt(cup_file, delimiter=' ')
-            for i, val in enumerate(cup[1:]):
-                if np.all(val == cup[0]):
-                    cup = cup[:i + 1]
-                    break
-            mask = cv.fillPoly(mask, [cup.astype(np.int32)], 2)
+            cup_mask = cv.imread(str(cup_file), cv.IMREAD_GRAYSCALE)
+            cup_mask = softmap_to_binary_mask(cup_mask)
 
-            cv.imwrite(str(masks_dir / (mask_name + '.png')), mask)
+            mask = disc_mask + cup_mask
+
+            if img.shape[:2] != mask.shape:
+                mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
+
+            img, mask = preprocess_centernet_input(img, mask, otsu_crop=False)
+            img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+
+            cv.imwrite(str(dst_images_dir / img_name), img)
+            cv.imwrite(str(dst_masks_dir / (mask_name + '.png')), mask)
 
     if isinstance(base_dir, str):
-        base_dir = Path(base_dir) / 'Drishti-GS1_files/Drishti-GS1_files'
+        base_dir = Path(base_dir)
 
-    train_dir = base_dir / 'Training'
-    test_dir = base_dir / 'Test'
+    train_dir = base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Training'
+    test_dir = base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Test'
 
-    prepare_subset(train_dir / 'Images', train_dir / 'Gt', train_dir / 'Masks', 'Preparing Drishti-GS1 training set')
-    prepare_subset(test_dir / 'Images', test_dir / 'Test_Gt', test_dir / 'Masks', 'Preparing Drishti-GS1 test set')
+    images_dir = train_dir / 'Images'
+    gt_dir = train_dir / 'GT'
+    train_images_dir = base_dir / 'TrainImages'
+    train_masks_dir = base_dir / 'TrainMasks'
+    prepare_dataset(images_dir, gt_dir, train_images_dir, train_masks_dir, 'Preparing Drishti training set')
+
+    images_dir = test_dir / 'Images'
+    test_gt_dir = test_dir / 'Test_GT'
+    test_images_dir = base_dir / 'TestImages'
+    test_masks_dir = base_dir / 'TestMasks'
+    prepare_dataset(images_dir, test_gt_dir, test_images_dir, test_masks_dir, 'Preparing Drishti test set')
 
 
 def get_mean_and_standard_deviation_from_files(image_paths: list[str | Path]):

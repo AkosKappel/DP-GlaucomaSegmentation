@@ -6,6 +6,8 @@ from pathlib import Path
 from tqdm.notebook import tqdm
 from .kernels import circular_kernel, gaussian_kernel, parabolic_kernel
 
+__all__ = ['BrightestSpot']
+
 
 class BrightestSpot:
 
