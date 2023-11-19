@@ -4,7 +4,6 @@ import numpy as np
 import os
 from pathlib import Path
 from tqdm.notebook import tqdm
-from utils import keep_largest_component, get_bounding_box
 
 __all__ = ['Thresholding']
 
@@ -102,3 +101,31 @@ class Thresholding:
         height += 2 * self.margin
 
         return top_left_x, top_left_y, width, height
+
+
+def keep_largest_component(binary_mask: np.ndarray) -> np.ndarray:
+    # Find connected components in the binary mask
+    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
+
+    # Find the index of the largest connected component (excluding the background component)
+    largest_component_index = np.argmax(stats[1:, cv.CC_STAT_AREA]) + 1
+
+    # Create a new mask with only the largest connected component
+    largest_component_mask = (labels == largest_component_index).astype(np.uint8)
+
+    return largest_component_mask
+
+
+def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
+    # Find the contours of the binary mask (there should be only one)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0, 0, 0, 0
+
+    # Get the largest / only contour
+    max_contour = max(contours, key=cv.contourArea)
+
+    # Get the bounding box of the contour
+    x, y, w, h = cv.boundingRect(max_contour)
+
+    return x, y, w, h
