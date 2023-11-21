@@ -14,7 +14,7 @@ __all__ = [
     'ORIGA_MEANS', 'ORIGA_STDS', 'ROI_ORIGA_MEANS', 'ROI_ORIGA_STDS',
     'DRISHTI_MEANS', 'DRISHTI_STDS', 'ROI_DRISHTI_MEANS', 'ROI_DRISHTI_STDS',
     'EyeFundusDataset', 'load_dataset', 'softmap_to_binary_mask',
-    'preprocess_origa_dataset', 'preprocess_drishti_dataset',
+    'prepare_origa_dataset', 'prepare_drishti_dataset', 'prepare_rimone_dataset',
     'get_mean_and_standard_deviation_from_files', 'get_mean_and_standard_deviation_from_dataloader',
 ]
 
@@ -134,10 +134,25 @@ def softmap_to_binary_mask(softmap_mask, threshold: float = 0.5):
     return binary_mask
 
 
-def preprocess_origa_dataset(base_dir: str | Path, test_size: float = 0.1, random_state: int = 411):
+def prepare_origa_dataset(base_dir: str | Path, test_size: float = 0.1,
+                          random_state: int = 411, debug: bool = False):
     def prepare_dataset(src_images_dir, src_masks_dir,
                         dst_images_dir, dst_masks_dir,
                         img_names, mask_names, desc=None):
+        # Delete existing directories
+        if dst_images_dir.exists():
+            for f in dst_images_dir.iterdir():
+                f.unlink()
+            dst_images_dir.rmdir()
+        if dst_masks_dir.exists():
+            for f in dst_masks_dir.iterdir():
+                f.unlink()
+            dst_masks_dir.rmdir()
+
+        if len(img_names) == 0:
+            return
+
+        # Create new empty directories
         dst_images_dir.mkdir(parents=True, exist_ok=True)
         dst_masks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,8 +167,15 @@ def preprocess_origa_dataset(base_dir: str | Path, test_size: float = 0.1, rando
             if img.shape[:2] != mask.shape:
                 mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
 
-            img, mask = preprocess_centernet_input(img, mask)
+            img, mask = preprocess_centernet_input(img, mask, otsu_crop=True)
             img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+
+            if debug:
+                mask[mask == 1] = 255
+                mask[mask == 2] = 128
+                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+                img[mask == 255] = 255
+                img[mask == 128] = 128
 
             cv.imwrite(str(dst_images_dir / img_name), img)
             cv.imwrite(str(dst_masks_dir / (mask_name[:-4] + '.png')), mask)
@@ -164,12 +186,17 @@ def preprocess_origa_dataset(base_dir: str | Path, test_size: float = 0.1, rando
     images_dir = base_dir / 'Images'
     gt_dir = base_dir / 'Semi-automatic-annotations-done-by-doctors-eg-ground-truth'
 
-    img_names = sorted(os.listdir(images_dir))
-    mask_names = sorted([f for f in os.listdir(gt_dir) if Path(f).suffix == '.mat'])
+    img_file_names = sorted(os.listdir(images_dir))
+    mask_file_names = sorted([f for f in os.listdir(gt_dir) if Path(f).suffix == '.mat'])
 
-    train_img_names, test_img_names, train_mask_names, test_mask_names = train_test_split(
-        img_names, mask_names, test_size=test_size, random_state=random_state,
-    )
+    if test_size == 0:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = img_file_names, [], mask_file_names, []
+    elif test_size == 1:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = [], img_file_names, [], mask_file_names
+    else:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = train_test_split(
+            img_file_names, mask_file_names, test_size=test_size, random_state=random_state,
+        )
 
     train_images_dir = base_dir / 'TrainImages'
     train_masks_dir = base_dir / 'TrainMasks'
@@ -182,13 +209,25 @@ def preprocess_origa_dataset(base_dir: str | Path, test_size: float = 0.1, rando
                     test_img_names, test_mask_names, 'Preparing ORIGA test dataset')
 
 
-def preprocess_drishti_dataset(base_dir):
+def prepare_drishti_dataset(base_dir: str | Path, test_size: float = 0.1,
+                            random_state: int = 411, debug: bool = False):
     def prepare_dataset(src_images_dir, src_masks_dir,
                         dst_images_dir, dst_masks_dir,
-                        desc=None):
-        img_names = sorted(os.listdir(src_images_dir))
-        mask_names = sorted([f for f in os.listdir(src_masks_dir) if (src_masks_dir / f).is_dir()])
+                        img_names, mask_names, desc=None):
+        # Delete existing directories
+        if dst_images_dir.exists():
+            for f in dst_images_dir.iterdir():
+                f.unlink()
+            dst_images_dir.rmdir()
+        if dst_masks_dir.exists():
+            for f in dst_masks_dir.iterdir():
+                f.unlink()
+            dst_masks_dir.rmdir()
 
+        if len(img_names) == 0:
+            return
+
+        # Create new empty directories
         dst_images_dir.mkdir(parents=True, exist_ok=True)
         dst_masks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,46 +236,142 @@ def preprocess_drishti_dataset(base_dir):
             assert img is not None
             img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
 
-            disc_file = src_masks_dir / mask_name / f'SoftMap/{mask_name}_ODsegSoftmap.png'
-            cup_file = src_masks_dir / mask_name / f'SoftMap/{mask_name}_cupsegSoftmap.png'
-
-            assert disc_file.exists()
-            assert cup_file.exists()
-
-            disc_mask = cv.imread(str(disc_file), cv.IMREAD_GRAYSCALE)
-            disc_mask = softmap_to_binary_mask(disc_mask)
-
-            cup_mask = cv.imread(str(cup_file), cv.IMREAD_GRAYSCALE)
-            cup_mask = softmap_to_binary_mask(cup_mask)
-
-            mask = disc_mask + cup_mask
+            mask = cv.imread(str(src_masks_dir / mask_name), cv.IMREAD_GRAYSCALE)
+            assert mask is not None
 
             if img.shape[:2] != mask.shape:
                 mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
 
-            img, mask = preprocess_centernet_input(img, mask, otsu_crop=False)
+            mask = 2 - mask
+
+            img, mask = preprocess_centernet_input(img, mask)
             img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
 
+            if debug:
+                mask[mask == 1] = 255
+                mask[mask == 2] = 128
+                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+                img[mask == 255] = 255
+                img[mask == 128] = 128
+
             cv.imwrite(str(dst_images_dir / img_name), img)
-            cv.imwrite(str(dst_masks_dir / (mask_name + '.png')), mask)
+            cv.imwrite(str(dst_masks_dir / mask_name), mask)
 
     if isinstance(base_dir, str):
         base_dir = Path(base_dir)
 
-    train_dir = base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Training'
-    test_dir = base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Test'
+    images_dir = base_dir / 'images'
+    gt_dir = base_dir / 'annotations-ONH-ground truth'
 
-    images_dir = train_dir / 'Images'
-    gt_dir = train_dir / 'GT'
+    img_file_names = sorted(os.listdir(images_dir))
+    mask_file_names = sorted([f for f in os.listdir(gt_dir)])
+
+    if test_size == 0:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = img_file_names, [], mask_file_names, []
+    elif test_size == 1:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = [], img_file_names, [], mask_file_names
+    else:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = train_test_split(
+            img_file_names, mask_file_names, test_size=test_size, random_state=random_state,
+        )
+
     train_images_dir = base_dir / 'TrainImages'
     train_masks_dir = base_dir / 'TrainMasks'
-    prepare_dataset(images_dir, gt_dir, train_images_dir, train_masks_dir, 'Preparing Drishti training set')
+    prepare_dataset(images_dir, gt_dir, train_images_dir, train_masks_dir,
+                    train_img_names, train_mask_names, 'Preparing Drishti train dataset')
 
-    images_dir = test_dir / 'Images'
-    test_gt_dir = test_dir / 'Test_GT'
     test_images_dir = base_dir / 'TestImages'
     test_masks_dir = base_dir / 'TestMasks'
-    prepare_dataset(images_dir, test_gt_dir, test_images_dir, test_masks_dir, 'Preparing Drishti test set')
+    prepare_dataset(images_dir, gt_dir, test_images_dir, test_masks_dir,
+                    test_img_names, test_mask_names, 'Preparing Drishti test dataset')
+
+
+def prepare_rimone_dataset(base_dir: str | Path, test_size: float = 0.1, side: str = 'left',
+                           random_state: int = 411, debug: bool = False):
+    def prepare_dataset(src_images_dir, src_masks_dir,
+                        dst_images_dir, dst_masks_dir,
+                        img_names, mask_names, desc=None):
+        # Delete existing directories
+        if dst_images_dir.exists():
+            for f in dst_images_dir.iterdir():
+                f.unlink()
+            dst_images_dir.rmdir()
+        if dst_masks_dir.exists():
+            for f in dst_masks_dir.iterdir():
+                f.unlink()
+            dst_masks_dir.rmdir()
+
+        if len(img_names) == 0:
+            return
+
+        # Create new empty directories
+        dst_images_dir.mkdir(parents=True, exist_ok=True)
+        dst_masks_dir.mkdir(parents=True, exist_ok=True)
+
+        for img_name, mask_name in zip(tqdm(img_names, desc=desc), mask_names):
+            img = cv.imread(str(src_images_dir / img_name))
+            assert img is not None
+            img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+
+            mask = cv.imread(str(src_masks_dir / mask_name), cv.IMREAD_GRAYSCALE)
+            assert mask is not None
+
+            # Keep only the left or right side of the image
+            if side == 'left':
+                img = img[:, :img.shape[1] // 2]
+            elif side == 'right':
+                img = img[:, img.shape[1] // 2:]
+
+            if img.shape[:2] != mask.shape:
+                mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
+
+            # Mirror images of left eye
+            if img_name.endswith('-L.jpg'):
+                mask = cv.flip(mask, 1)
+
+            mask[mask == 255] = 1
+            mask[mask == 128] = 2
+
+            img, mask = preprocess_centernet_input(img, mask)
+            img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+
+            if debug:
+                mask[mask == 1] = 255
+                mask[mask == 2] = 128
+                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+                img[mask == 255] = 255
+                img[mask == 128] = 128
+
+            cv.imwrite(str(dst_images_dir / img_name), img)
+            cv.imwrite(str(dst_masks_dir / mask_name), mask)
+
+    if isinstance(base_dir, str):
+        base_dir = Path(base_dir)
+
+    images_dir = base_dir / 'images'
+    gt_dir = base_dir / 'SegmentationsAverage-GroundTruth'
+
+    img_file_names = sorted(os.listdir(images_dir))
+    mask_file_names = sorted([f for f in os.listdir(gt_dir)])
+
+    if test_size == 0:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = img_file_names, [], mask_file_names, []
+    elif test_size == 1:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = [], img_file_names, [], mask_file_names
+    else:
+        train_img_names, test_img_names, train_mask_names, test_mask_names = train_test_split(
+            img_file_names, mask_file_names, test_size=test_size, random_state=random_state,
+        )
+
+    train_images_dir = base_dir / 'TrainImages'
+    train_masks_dir = base_dir / 'TrainMasks'
+    prepare_dataset(images_dir, gt_dir, train_images_dir, train_masks_dir,
+                    train_img_names, train_mask_names, 'Preparing RIMONE train dataset')
+
+    test_images_dir = base_dir / 'TestImages'
+    test_masks_dir = base_dir / 'TestMasks'
+    prepare_dataset(images_dir, gt_dir, test_images_dir, test_masks_dir,
+                    test_img_names, test_mask_names, 'Preparing RIMONE test dataset')
 
 
 def get_mean_and_standard_deviation_from_files(image_paths: list[str | Path]):

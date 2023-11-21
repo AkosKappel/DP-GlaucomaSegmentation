@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 
-def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bool = True,
+def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bool = False,
                                crop_margin: int = 0, pad_margin: int = 0):
     if isinstance(image, str):
         image = cv.imread(image)
