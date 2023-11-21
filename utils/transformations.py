@@ -95,32 +95,22 @@ def occlude(img, p: float = 0.5, occlusion_size: int = 32, occlusion_value: int 
     return img
 
 
-def sharpen(img, p: float = 0.5, **kwargs):
+def sharpen(img, p: float = 0.5, connectivity: int = 4, **kwargs):
     if np.random.rand() > p:
         return img
 
-    # kernel = np.array([
-    #     [-1, -1, -1],
-    #     [-1, 9, -1],
-    #     [-1, -1, -1],
-    # ])
-    kernel = np.array([
-        [0, -1, 0],
-        [-1, 5, -1],
-        [0, -1, 0],
-    ])
-    # kernel = np.array([
-    #     [-1, -1, -1, -1, -1],
-    #     [-1, 2, 2, 2, -1],
-    #     [-1, 2, 8, 2, -1],
-    #     [-1, 2, 2, 2, -1],
-    #     [-1, -1, -1, -1, -1],
-    # ])
-    # kernel = np.array([
-    #     [0, 0, -1, 0, 0],
-    #     [0, -1, -2, -1, 0],
-    #     [-1, -2, 16, -2, -1],
-    #     [0, -1, -2, -1, 0],
-    #     [0, 0, -1, 0, 0],
-    # ])
+    if connectivity == 4:
+        kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0],
+        ])
+    elif connectivity == 8:
+        kernel = np.array([
+            [-1, -1, -1],
+            [-1, 9, -1],
+            [-1, -1, -1],
+        ])
+    else:
+        raise ValueError(f'Connectivity must be 4 or 8, got {connectivity}')
     return cv.filter2D(img, -1, kernel)
