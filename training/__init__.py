@@ -2,10 +2,10 @@
 from .trainer import *
 
 # Basic training methods
-from .binary import *
-from .multiclass import *
-from .multilabel import *
+from .binary import BinaryTrainer, BinaryLogger
+from .multiclass import MulticlassTrainer, MulticlassLogger
+from .multilabel import MultilabelTrainer, MultilabelLogger
 
 # Proposed training methods
-from .cascade import *
-from .dual import *
+from .cascade import CascadeTrainer, CascadeLogger
+from .dual import DualTrainer, DualLogger

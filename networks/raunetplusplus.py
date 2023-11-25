@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchsummary import summary
-
-# Residual Attention U-Net++
-__all__ = ['RAUnetPlusPlus', 'DualRAUnetPlusPlus']
 
 
 class SingleConv(nn.Module):
@@ -246,67 +242,38 @@ class Decoder(nn.Module):
 class RAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, deep_supervision: bool = False,
-                 init_weights: bool = True, dropout: float = 0.2):
+                 multi_scale_input: bool = False, deep_supervision: bool = False, dropout: float = 0.2):
         super(RAUnetPlusPlus, self).__init__()
-
-        if features is None:
-            features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Residual Attention U-Net++ requires a list of 5 features'
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.features = features
+        self.features = features or [32, 64, 128, 256, 512]
+        assert len(self.features) == 5, 'Residual Attention U-Net++ requires a list of 5 features'
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder = Decoder(features, out_channels, deep_supervision, dropout)
-
-        # Initialize weights
-        if init_weights:
-            self.initialize_weights()
 
     def forward(self, x):
         skips = self.encoder(x)
         x = self.decoder(*skips)
         return x
 
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
 
-
-# Dual decoder branch network
+# Dual-decoder branch network
 class DualRAUnetPlusPlus(nn.Module):
 
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
-                 multi_scale_input: bool = False, deep_supervision: bool = False,
-                 init_weights: bool = True, dropout: float = 0.2):
+                 multi_scale_input: bool = False, deep_supervision: bool = False, dropout: float = 0.2):
         super(DualRAUnetPlusPlus, self).__init__()
-
-        if features is None:
-            features = [32, 64, 128, 256, 512]
-        assert len(features) == 5, 'Dual Residual Attention U-Net++ requires a list of 5 features'
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.features = features
+        self.features = features or [32, 64, 128, 256, 512]
+        assert len(self.features) == 5, 'Dual Residual Attention U-Net++ requires a list of 5 features'
 
         self.encoder = Encoder(in_channels, features, multi_scale_input)
         self.decoder1 = Decoder(features, out_channels, deep_supervision, dropout)
         self.decoder2 = Decoder(features, out_channels, deep_supervision, dropout)
-
-        # Initialize weights
-        if init_weights:
-            self.initialize_weights()
 
     def forward(self, x):
         skips = self.encoder(x)
@@ -314,51 +281,61 @@ class DualRAUnetPlusPlus(nn.Module):
         x2 = self.decoder2(*skips)
         return x1, x2
 
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                # Use Kaiming initialization for ReLU activation function
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
-                # Use zero bias
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize weight to 1 and bias to 0
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
+
+# Cascade network with two models
+class CascadeRAUnetPlusPlus(nn.Module):
+
+    def __init__(self, first_model, second_model,
+                 activation=torch.sigmoid, threshold: float = 0.5, post_processing_functions: list = None):
+        super(CascadeRAUnetPlusPlus, self).__init__()
+
+        self.model1 = torch.load(first_model) if isinstance(first_model, str) else first_model
+        self.model2 = torch.load(second_model) if isinstance(second_model, str) else second_model
+
+        # Parameters inbetween models
+        self.activation = activation
+        self.threshold = threshold
+        self.post_processing = post_processing_functions or []
+
+    def forward(self, x):
+        # First encoder-decoder model
+        self.model1.eval()
+        with torch.no_grad():
+            x1 = self.model1(x)
+            # Create binary mask from first model's output
+            cascade_mask = (self.activation(x1) > self.threshold).long()
+
+        # Post-processing to improve mask quality
+        for func in self.post_processing:
+            cascade_mask = func(cascade_mask)
+
+        # Apply output mask from first model to input image
+        x = x * cascade_mask
+
+        # Second encoder-decoder model
+        x2 = self.model2(x)
+
+        return x1, x2
 
 
 if __name__ == '__main__':
-    _batch_size = 8
+    _batch_size = 4
     _in_channels, _out_channels = 3, 1
-    _height, _width = 128, 128
-    _layers = [16, 32, 64, 128, 256]
-    _models = [
-        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                       deep_supervision=False, multi_scale_input=False),
-        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                       deep_supervision=True, multi_scale_input=False),
-        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                       deep_supervision=False, multi_scale_input=True),
-        RAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                       deep_supervision=True, multi_scale_input=True),
-        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                           deep_supervision=False, multi_scale_input=False),
-        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                           deep_supervision=True, multi_scale_input=False),
-        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                           deep_supervision=False, multi_scale_input=True),
-        DualRAUnetPlusPlus(in_channels=_in_channels, out_channels=_out_channels, features=_layers,
-                           deep_supervision=True, multi_scale_input=True),
-    ]
-    random_data = torch.randn((_batch_size, _in_channels, _height, _width))
-    for _model in _models:
-        predictions = _model(random_data)
-        if isinstance(predictions, tuple):
-            for prediction in predictions:
-                assert prediction.shape == (_batch_size, _out_channels, _height, _width)
-        else:
-            assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(_model)
-        summary(_model.cuda(), (_in_channels, _height, _width))
-        print()
+    _height, _width = 64, 64
+    _layers = [16, 24, 32, 40, 48]
+
+    _random_data = torch.randn((_batch_size, _in_channels, _height, _width))
+
+    _model = RAUnetPlusPlus(_in_channels, _out_channels, _layers)
+    _predictions = _model(_random_data)
+    assert _predictions.shape == (_batch_size, _out_channels, _height, _width)
+
+    _dual_model = DualRAUnetPlusPlus(_in_channels, _out_channels, _layers)
+    _predictions1, _predictions2 = _dual_model(_random_data)
+    assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
+    assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)
+
+    _cascade_model = CascadeRAUnetPlusPlus(_model, RAUnetPlusPlus(_in_channels, _out_channels, _layers))
+    _predictions1, _predictions2 = _cascade_model(_random_data)
+    assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
+    assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)

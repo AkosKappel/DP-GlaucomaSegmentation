@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from torchsummary import summary
-
-__all__ = ['SwinUnet', 'DualSwinUnet']
 
 
 class Mlp(nn.Module):
@@ -363,7 +360,7 @@ class PatchExpand(nn.Module):
         return x
 
 
-class FinalPatchExpand_X4(nn.Module):
+class FinalPatchExpandX4(nn.Module):
     def __init__(self, input_resolution, dim, dim_scale=4, norm_layer=nn.LayerNorm):
         super().__init__()
         self.input_resolution = input_resolution
@@ -466,7 +463,7 @@ class BasicLayer(nn.Module):
         return flops
 
 
-class BasicLayer_up(nn.Module):
+class BasicLayerUp(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
     Args:
@@ -685,7 +682,7 @@ class SwinTransformerSys(nn.Module):
                                       patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)), dim_scale=2, norm_layer=norm_layer)
             else:
-                layer_up = BasicLayer_up(
+                layer_up = BasicLayerUp(
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
                     input_resolution=(
                         patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
@@ -711,7 +708,7 @@ class SwinTransformerSys(nn.Module):
 
         if self.final_upsample == 'expand_first':
             # print('---final upsample expand_first---')
-            self.up = FinalPatchExpand_X4(
+            self.up = FinalPatchExpandX4(
                 input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
             self.output = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
 
@@ -924,7 +921,7 @@ class DualSwinUnet(nn.Module):
                                       patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)), dim_scale=2, norm_layer=norm_layer)
             else:
-                layer_up = BasicLayer_up(
+                layer_up = BasicLayerUp(
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
                     input_resolution=(
                         patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
@@ -948,7 +945,7 @@ class DualSwinUnet(nn.Module):
 
         if self.final_upsample == 'expand_first':
             # print('---final upsample expand_first---')
-            self.up1 = FinalPatchExpand_X4(
+            self.up1 = FinalPatchExpandX4(
                 input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
             self.output1 = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
 
@@ -967,7 +964,7 @@ class DualSwinUnet(nn.Module):
                                       patches_resolution[1] // (2 ** (self.num_layers - 1 - i_layer))),
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)), dim_scale=2, norm_layer=norm_layer)
             else:
-                layer_up = BasicLayer_up(
+                layer_up = BasicLayerUp(
                     dim=int(embed_dim * 2 ** (self.num_layers - 1 - i_layer)),
                     input_resolution=(
                         patches_resolution[0] // (2 ** (self.num_layers - 1 - i_layer)),
@@ -991,7 +988,7 @@ class DualSwinUnet(nn.Module):
 
         if self.final_upsample == 'expand_first':
             # print('---final upsample expand_first---')
-            self.up2 = FinalPatchExpand_X4(
+            self.up2 = FinalPatchExpandX4(
                 input_resolution=(img_size // patch_size, img_size // patch_size), dim_scale=4, dim=embed_dim)
             self.output2 = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
 
@@ -1097,6 +1094,22 @@ class DualSwinUnet(nn.Module):
         return flops
 
 
+# TODO: implement
+class CascadeSwinUnet(nn.Module):
+
+    def __init__(self, in_channels: int = 3, out_channels: int = 1, img_size: int = 224, patch_size: int = 4,
+                 embed_dim: int = 96, depths: list[int] = None, num_heads: list[int] = None, window_size: int = 7,
+                 mlp_ratio: float = 4., qkv_bias: bool = True, qk_scale: float = None, drop_rate: float = 0.1,
+                 drop_path_rate: float = 0.1, ape: bool = False, patch_norm: bool = True, use_checkpoint: bool = False,
+                 depths_decoder: list[int] = None, attn_drop_rate: float = 0., norm_layer: nn.Module = nn.LayerNorm,
+                 final_upsample: str = 'expand_first', **kwargs):
+        super(CascadeSwinUnet, self).__init__()
+
+    def forward(self, x, first_only: bool = False, activation=torch.sigmoid, threshold: float = 0.5,
+                post_processing: list = None):
+        pass
+
+
 if __name__ == '__main__':
     _batch_size = 4
     _in_channels, _out_channels = 3, 1
@@ -1114,6 +1127,3 @@ if __name__ == '__main__':
                 assert prediction.shape == (_batch_size, _out_channels, _height, _width)
         else:
             assert predictions.shape == (_batch_size, _out_channels, _height, _width)
-        print(_model)
-        summary(_model.cuda(), (_in_channels, _height, _width))
-        print()

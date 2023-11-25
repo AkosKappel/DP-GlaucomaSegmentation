@@ -56,21 +56,22 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
     )
 
 
-def train_cascade(od_model, oc_model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
+def train_cascade(base_model, model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                   scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, **kwargs):
-    assert od_model.out_channels == 1 and oc_model.out_channels == 1, \
+    assert model.out_channels == 1 and base_model.out_channels == 1, \
         'The cascade models should have each 1 output channel for cascade training'
     return train(
-        model=oc_model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
+        model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
-        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=od_model, **kwargs,
+        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=base_model, **kwargs,
     )
 
 
 def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, train_loader, val_loader=None,
                scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
                od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0, **kwargs):
-    assert model.out_channels == 1, 'The dual model should have 1 output channel per branch for dual training'
+    assert model.out_channels == 1, \
+        'The dual decoder model should have 1 output channel per branch for dual training'
     return train(
         model=model, criterion=od_criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='dual',
@@ -221,7 +222,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 'model': model,
                 'optimizer': optimizer,
                 'history': history,
-            }, filename=f'{train_mode}-{model_name}-model-epoch{epoch}.pth', checkpoint_dir=checkpoint_dir)
+            }, filepath=f'{checkpoint_dir}/{train_mode}-{model_name}-model-epoch{epoch}.pth')
 
         # Early stopping - stop training if the validation loss does not improve for a few epochs
         if epoch_loss < best_loss:
@@ -236,7 +237,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                     'model': model,
                     'optimizer': optimizer,
                     'history': history,
-                }, filename=f'best-{train_mode}-{model_name}-model.pth', checkpoint_dir=checkpoint_dir)
+                }, filepath=f'{checkpoint_dir}/best-{train_mode}-{model_name}-model.pth')
         else:
             epochs_without_improvement += 1
             if early_stopping_patience and epochs_without_improvement == early_stopping_patience:
@@ -250,8 +251,8 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     return history
 
 
-def initialize_weights(model, mode='fan_in', nonlinearity='relu'):
-    for m in model.modules():
+def initialize_weights(net, mode='fan_in', nonlinearity='relu'):
+    for m in net.modules():
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
             # Use Kaiming initialization for ReLU activation function
             nn.init.kaiming_normal_(m.weight, mode=mode, nonlinearity=nonlinearity)
@@ -262,7 +263,7 @@ def initialize_weights(model, mode='fan_in', nonlinearity='relu'):
             # Initialize weight to 1 and bias to 0
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
-    print('Initialized weights of model:', model.__class__.__name__)
+    print(f'Initialized {net.__class__.__name__} model weights with {mode} method.')
 
 
 def init_model_weights(net, init_type: str = 'kaiming', gain: float = 0.02):
@@ -294,26 +295,22 @@ def update_history(history, metrics, prefix=''):
         history[f'{prefix}_{k}'].append(v)
 
 
-def save_checkpoint(state, filename='model.pth', checkpoint_dir: str = ''):
-    if not checkpoint_dir:
-        checkpoint_dir = '.'
-
+def save_checkpoint(state, filepath: str = 'model.pth'):
     # create save directory if not exists
+    checkpoint_dir = os.path.dirname(filepath)
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
-    filename = os.path.join(checkpoint_dir, filename)
-    print(f'=> Saving checkpoint: {filename}')
-    torch.save(state, filename)
+    # save checkpoint to file
+    print(f'=> Saving checkpoint: {filepath}')
+    torch.save(state, filepath)
 
 
-def load_checkpoint(filename, checkpoint_dir: str = ''):
-    if not checkpoint_dir:
-        checkpoint_dir = '.'
+def load_checkpoint(filepath: str):
+    # check if file exists
+    assert os.path.isfile(filepath), f'Invalid checkpoint file: {filepath}'
 
-    filename = os.path.join(checkpoint_dir, filename)
-    assert os.path.isfile(filename), f'Invalid checkpoint file: {filename}'
-
-    print(f'=> Loading checkpoint: {filename}')
-    checkpoint = torch.load(filename)
+    # load checkpoint from file
+    print(f'=> Loading checkpoint: {filepath}')
+    checkpoint = torch.load(filepath)
     return checkpoint

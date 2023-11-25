@@ -1,21 +1,19 @@
-from collections import defaultdict
 import numpy as np
 import torch
-from tqdm import tqdm
 import wandb
+from collections import defaultdict
+from tqdm import tqdm
 
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
 
-__all__ = ['CascadeTrainer', 'CascadeLogger']
-
 
 class CascadeTrainer:
 
-    def __init__(self, od_model, oc_model, criterion, optimizer, device, scaler=None,
+    def __init__(self, base_model, model, criterion, optimizer, device, scaler=None,
                  od_threshold: float = 0.5, oc_threshold: float = 0.5, inverse_transform=None, activation=None):
-        self.od_model = od_model
-        self.oc_model = oc_model
+        self.base_model = base_model
+        self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.device = device
@@ -27,6 +25,7 @@ class CascadeTrainer:
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
+        self.postprocess = []  # TODO: implement postprocessing functions
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -37,9 +36,13 @@ class CascadeTrainer:
 
         # Apply first model to get optic disc masks which get passed to the second model
         with torch.no_grad():
-            od_outputs = self.od_model(images)
+            od_outputs = self.base_model(images)
             od_probs = self.activation(od_outputs)
             od_preds = (od_probs > self.od_threshold).long()
+
+        # Improve optic disc predictions (e.g. fill holes, keep only the largest object, dilate, etc.)
+        for func in self.postprocess:
+            od_preds = func(od_preds)
 
         # Crop images to optic disc boundaries
         cropped_images = images * od_preds
@@ -49,7 +52,7 @@ class CascadeTrainer:
 
         if self.scaler is None:
             # Forward pass
-            oc_outputs = self.oc_model(cropped_images)
+            oc_outputs = self.model(cropped_images)
             loss = self.criterion(oc_outputs, oc_masks)
 
             # Backward pass
@@ -60,7 +63,7 @@ class CascadeTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                oc_outputs = self.oc_model(cropped_images)
+                oc_outputs = self.model(cropped_images)
                 loss = self.criterion(oc_outputs, oc_masks)
 
             # Backward pass
@@ -93,8 +96,8 @@ class CascadeTrainer:
         return images, masks, preds
 
     def train_one_epoch(self, loader):
-        self.od_model.eval()
-        self.oc_model.train()
+        self.base_model.eval()
+        self.model.train()
 
         mean_metrics = None
         history = defaultdict(list)
@@ -108,8 +111,8 @@ class CascadeTrainer:
         return mean_metrics
 
     def validate_one_epoch(self, loader):
-        self.od_model.eval()
-        self.oc_model.eval()
+        self.base_model.eval()
+        self.model.eval()
 
         mean_metrics = None
         history = defaultdict(list)

@@ -1,13 +1,11 @@
-from collections import defaultdict
 import numpy as np
 import torch
-from tqdm import tqdm
 import wandb
+from collections import defaultdict
+from tqdm import tqdm
 
 from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
 from utils.visualization import plot_results
-
-__all__ = ['DualTrainer', 'DualLogger']
 
 
 class DualTrainer:
