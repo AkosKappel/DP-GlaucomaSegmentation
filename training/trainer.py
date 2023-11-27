@@ -1,9 +1,9 @@
-from collections import defaultdict
-from IPython.display import clear_output
 import os
 import torch
 import torch.nn as nn
 import wandb
+from collections import defaultdict
+from IPython.display import clear_output
 
 from .binary import BinaryTrainer, BinaryLogger
 from .multiclass import MulticlassTrainer, MulticlassLogger
@@ -57,13 +57,15 @@ def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_
 
 
 def train_cascade(base_model, model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
-                  scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, **kwargs):
+                  scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, postprocess=None,
+                  **kwargs):
     assert model.out_channels == 1 and base_model.out_channels == 1, \
         'The cascade models should have each 1 output channel for cascade training'
     return train(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
-        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=base_model, **kwargs,
+        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=base_model, postprocess=postprocess,
+        **kwargs,
     )
 
 
@@ -85,7 +87,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
           save_interval: int = 0, log_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
           clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
           target_ids: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
-          base_cascade_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
+          base_cascade_model=None, postprocess=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
           dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     # model: model to train
     # criterion: loss function
@@ -169,7 +171,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
 
             trainer = CascadeTrainer(
                 base_cascade_model, model, criterion, optimizer, device, scaler,
-                od_threshold, oc_threshold, inverse_transform, activation,
+                od_threshold, oc_threshold, inverse_transform, activation, postprocess,
             )
             log = CascadeLogger(
                 log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
@@ -263,7 +265,7 @@ def initialize_weights(net, mode='fan_in', nonlinearity='relu'):
             # Initialize weight to 1 and bias to 0
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
-    print(f'Initialized {net.__class__.__name__} model weights with {mode} method.')
+    print(f'Initialized {net.__class__.__name__} model weights with mode={mode} and nonlinearity={nonlinearity}')
 
 
 def init_model_weights(net, init_type: str = 'kaiming', gain: float = 0.02):

@@ -11,7 +11,8 @@ from utils.visualization import plot_results
 class CascadeTrainer:
 
     def __init__(self, base_model, model, criterion, optimizer, device, scaler=None,
-                 od_threshold: float = 0.5, oc_threshold: float = 0.5, inverse_transform=None, activation=None):
+                 od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                 inverse_transform=None, activation=None, postprocess=None):
         self.base_model = base_model
         self.model = model
         self.criterion = criterion
@@ -25,7 +26,7 @@ class CascadeTrainer:
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
-        self.postprocess = []  # TODO: implement postprocessing functions
+        self.postprocess = postprocess or []
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -131,7 +132,7 @@ class CascadeLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
-                 base_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5):
+                 base_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, postprocess=None):
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
@@ -143,6 +144,7 @@ class CascadeLogger:
         self.base_model = base_model
         self.od_threshold = od_threshold
         self.oc_threshold = oc_threshold
+        self.postprocess = postprocess or []
 
     def __call__(self, model, loader, optimizer, history, epoch, device, force: bool = False):
         if self.wandb:
@@ -164,6 +166,10 @@ class CascadeLogger:
             od_outputs = self.base_model(images)
             od_probs = torch.sigmoid(od_outputs)
             od_preds = (od_probs > self.od_threshold).long()
+
+            # Refine predictions
+            for func in self.postprocess:
+                od_preds = func(od_preds)
 
             # Apply masks to images
             cropped_images = images * od_preds

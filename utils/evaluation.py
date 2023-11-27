@@ -1,9 +1,9 @@
-from collections import defaultdict
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import torch
+from collections import defaultdict
 from torch.nn import functional as F
 from tqdm import tqdm
 

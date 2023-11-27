@@ -1,17 +1,16 @@
 import cv2 as cv
 import numpy as np
 import pydensecrf.densecrf as dcrf
+import torch
 from pydensecrf.utils import unary_from_softmax
 from scipy.interpolate import splprep, splev
 from skimage.segmentation import active_contour
 
 __all__ = [
     'separate_disc_and_cup_mask',
+    'to_numpy', 'to_tensor', 'unpack', 'pack',
     'erode', 'dilate', 'opening', 'closing',
-    'remove_small_components', 'apply_small_component_removal',
-    'keep_largest_component', 'apply_largest_component_selection',
-    'fill_holes', 'apply_hole_filling',
-    'fit_ellipse', 'apply_ellipse_fitting',
+    'remove_small_components', 'keep_largest_component', 'fill_holes', 'fit_ellipse',
     'dense_crf', 'douglas_peucker', 'smooth_contours', 'snakes',
 ]
 
@@ -23,139 +22,200 @@ def separate_disc_and_cup_mask(mask: np.ndarray) -> (np.ndarray, np.ndarray):
     return od_mask, oc_mask
 
 
-def erode(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+def to_numpy(tensor):
+    return tensor.detach().cpu().numpy().astype(np.uint8)
+
+
+def to_tensor(array):
+    return torch.from_numpy(array)
+
+
+def unpack(array, axis: int = 0):
+    return [array[i] for i in range(array.shape[axis])]
+
+
+def pack(array, axis: int = 0):
+    return np.stack(array, axis=axis)
+
+
+def erode(mask: np.ndarray | list[np.ndarray], kernel_size: int = 3,
+          iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray | list[np.ndarray]:
+    if isinstance(mask, list):
+        return [erode(m, kernel_size, iterations, shape) for m in mask]
     kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
     return cv.erode(mask.astype(np.uint8), kernel, iterations=iterations)
 
 
-def dilate(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+def dilate(mask: np.ndarray | list[np.ndarray], kernel_size: int = 3,
+           iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray | list[np.ndarray]:
+    if isinstance(mask, list):
+        return [dilate(m, kernel_size, iterations, shape) for m in mask]
     kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
     return cv.dilate(mask.astype(np.uint8), kernel, iterations=iterations)
 
 
-def opening(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+def opening(mask: np.ndarray | list[np.ndarray], kernel_size: int = 3,
+            iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray | list[np.ndarray]:
+    if isinstance(mask, list):
+        return [opening(m, kernel_size, iterations, shape) for m in mask]
     kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
     return cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_OPEN, kernel, iterations=iterations)
 
 
-def closing(mask: np.ndarray, kernel_size: int = 3, iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray:
+def closing(mask: np.ndarray | list[np.ndarray], kernel_size: int = 3,
+            iterations: int = 1, shape: int = cv.MORPH_RECT) -> np.ndarray | list[np.ndarray]:
+    if isinstance(mask, list):
+        return [closing(m, kernel_size, iterations, shape) for m in mask]
     kernel = cv.getStructuringElement(shape, (kernel_size, kernel_size))
     return cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_CLOSE, kernel, iterations=iterations)
 
 
-def remove_small_components(binary_mask: np.ndarray, min_size: int | float = 100) -> np.ndarray:
+def remove_small_components(mask: np.ndarray | list[np.ndarray],
+                            min_size: int | float = 0.05, binary: bool = True) -> np.ndarray | list[np.ndarray]:
     # Min size can be given as number of pixels (int) or as a percentage of the total number of pixels (float in (0, 1))
+    def _remove_small_components(binary_mask: np.ndarray):
+        # Find connected components in the binary mask
+        binary_mask = binary_mask.astype(np.uint8)
+        num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
 
-    # Find connected components in the binary mask
-    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
+        # Remove small components
+        sizes = stats[:, cv.CC_STAT_AREA]
+        sizes[0] = 0  # ignore background
 
-    # Remove small components
-    sizes = stats[:, cv.CC_STAT_AREA]
-    sizes[0] = 0  # ignore background
+        small_components = np.where(sizes < int(min_size))[0]
+        small_components_removed_mask = np.ones_like(binary_mask, dtype=np.uint8)
+
+        for component_idx in small_components:
+            small_components_removed_mask[labels == component_idx] = 0
+
+        return small_components_removed_mask
 
     # Calculate the minimum size in pixels if it was specified as a fraction of the total number of pixels
     if isinstance(min_size, float) and 0 < min_size < 1:
-        min_size = min_size * binary_mask.size
+        min_size = min_size * mask.size if isinstance(mask, np.ndarray) else min_size * mask[0].size
 
-    small_components = np.where(sizes < int(min_size))[0]
+    if binary:
+        if isinstance(mask, list):  # batch of binary masks
+            return [_remove_small_components(m) for m in mask]
+        # single binary mask
+        return _remove_small_components(mask)
 
-    small_components_removed_mask = np.ones_like(binary_mask, dtype=np.uint8)
-    for comp_idx in small_components:
-        small_components_removed_mask[labels == comp_idx] = 0
+    # batch of multi-class masks
+    if isinstance(mask, list):
+        return [remove_small_components(m, min_size, binary=False) for m in mask]
 
-    return small_components_removed_mask
-
-
-def apply_small_component_removal(mask: np.ndarray, min_sizes: list[int | float]) -> np.ndarray:
+    # single multi-class mask
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
     # Remove small components from each mask
-    for mask, min_size in zip(masks, min_sizes):
-        result_mask += remove_small_components(mask, min_size)
+    for mask in masks:
+        result_mask += _remove_small_components(mask)
 
     return result_mask
 
 
-def keep_largest_component(binary_mask: np.ndarray) -> np.ndarray:
-    # Find connected components in the binary mask
-    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
+def keep_largest_component(mask: np.ndarray | list[np.ndarray], binary: bool = True) -> np.ndarray | list[np.ndarray]:
+    def _keep_largest_component(binary_mask: np.ndarray):
+        binary_mask = binary_mask.astype(np.uint8)
+        # Find connected components in the binary mask
+        num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(binary_mask)
 
-    # Find the index of the largest connected component (excluding the background component)
-    largest_component_index = np.argmax(stats[1:, cv.CC_STAT_AREA]) + 1
+        # Find the index of the largest connected component (excluding the background component)
+        largest_component_index = np.argmax(stats[1:, cv.CC_STAT_AREA]) + 1
 
-    # Create a new mask with only the largest connected component
-    largest_component_mask = (labels == largest_component_index).astype(np.uint8)
+        # Create a new mask with only the largest connected component
+        largest_component_mask = (labels == largest_component_index).astype(np.uint8)
 
-    return largest_component_mask
+        return largest_component_mask
 
+    if binary:
+        if isinstance(mask, list):
+            return [_keep_largest_component(m) for m in mask]
+        return _keep_largest_component(mask)
 
-def apply_largest_component_selection(mask: np.ndarray) -> np.ndarray:
+    if isinstance(mask, list):
+        return [keep_largest_component(m, binary=False) for m in mask]
+
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
     # Find the largest connected component in each mask and then combine them back into one mask
     for mask in masks:
-        largest_component_mask = keep_largest_component(mask)
-        result_mask += largest_component_mask
+        result_mask += _keep_largest_component(mask)
 
     return result_mask
 
 
-def fill_holes(binary_mask: np.ndarray) -> np.ndarray:
-    # Find all enclosed contours in the binary mask
-    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+def fill_holes(mask: np.ndarray | list[np.ndarray], binary: bool = True) -> np.ndarray | list[np.ndarray]:
+    def _fill_holes(binary_mask: np.ndarray):
+        # Find all enclosed contours in the binary mask
+        binary_mask = binary_mask.astype(np.uint8)
+        contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
-    # Create a blank mask for drawing the areas with filled holes
-    filled_mask = np.zeros_like(binary_mask, dtype=np.uint8)
+        # Create a blank mask for drawing the areas with filled holes
+        filled_mask = np.zeros_like(binary_mask, dtype=np.uint8)
 
-    # Draw the contours on the blank mask with filled interiors
-    for contour in contours:
-        cv.drawContours(filled_mask, [contour], 0, 1, -1)
+        # Draw the contours on the blank mask with filled interiors
+        for contour in contours:
+            cv.drawContours(filled_mask, [contour], 0, 1, -1)
 
-    return filled_mask
+        return filled_mask
 
+    if binary:
+        if isinstance(mask, list):
+            return [_fill_holes(m) for m in mask]
+        return _fill_holes(mask)
 
-def apply_hole_filling(mask: np.ndarray) -> np.ndarray:
+    if isinstance(mask, list):
+        return [fill_holes(m, binary=False) for m in mask]
+
     masks = separate_disc_and_cup_mask(mask)
     result_mask = np.zeros_like(mask, dtype=np.uint8)
 
     for i, mask in enumerate(masks, start=1):
-        # Fill the holes in the mask
-        filled_mask = fill_holes(mask)
+        # Fill the holes in the binary mask
+        filled = _fill_holes(mask)
 
         # Join the filled masks into a single mask
-        result_mask[filled_mask == 1] = i
+        result_mask[filled == 1] = i
 
     return result_mask
 
 
-def fit_ellipse(binary_mask: np.ndarray) -> np.ndarray:
-    # Find the contours of the binary mask (there should be only one)
-    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return binary_mask.copy()
+def fit_ellipse(mask: np.ndarray | list[np.ndarray], binary: bool = True) -> np.ndarray | list[np.ndarray]:
+    def _fit_ellipse(binary_mask: np.ndarray):
+        # Find the contours of the binary mask (there should be only one)
+        contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return binary_mask.copy()
 
-    # Get the largest / only contour (it needs to have at least 5 points to fit an ellipse to it)
-    max_contour = max(contours, key=cv.contourArea)
-    if len(max_contour) < 5:
-        return binary_mask.copy()
+        # Get the largest / only contour (it needs to have at least 5 points to fit an ellipse to it)
+        max_contour = max(contours, key=cv.contourArea)
+        if len(max_contour) < 5:
+            return binary_mask.copy()
 
-    # Fit an ellipse to the largest contour and draw it on a blank mask
-    ellipse = cv.fitEllipse(max_contour)
-    fitted_mask = np.zeros_like(binary_mask)
-    cv.ellipse(fitted_mask, ellipse, 1, -1)
+        # Fit an ellipse to the largest contour and draw it on a blank mask
+        ellipse = cv.fitEllipse(max_contour)
+        fitted_mask = np.zeros_like(binary_mask)
+        cv.ellipse(fitted_mask, ellipse, 1, -1)
 
-    return fitted_mask
+        return fitted_mask
 
+    if binary:
+        if isinstance(mask, list):
+            return [_fit_ellipse(m) for m in mask]
+        return _fit_ellipse(mask)
 
-def apply_ellipse_fitting(mask: np.ndarray) -> np.ndarray:
+    if isinstance(mask, list):
+        return [fit_ellipse(m, binary=False) for m in mask]
+
     masks = separate_disc_and_cup_mask(mask)
-    fitted_mask = np.zeros_like(mask, dtype=np.uint8)
+    result_mask = np.zeros_like(mask, dtype=np.uint8)
 
     # Fit an ellipse to each mask
     for mask in masks:
-        ellipse_mask = fit_ellipse(mask)
+        ellipse_mask = _fit_ellipse(mask)
 
         # TODO: maybe add erosion to the ellipse mask to make it smaller to avoid changing the boundaries too much
 
@@ -163,9 +223,9 @@ def apply_ellipse_fitting(mask: np.ndarray) -> np.ndarray:
         ellipse_mask = np.logical_or(ellipse_mask, mask)
 
         # Combine the masks back into one
-        fitted_mask += ellipse_mask.astype(np.uint8)
+        result_mask += ellipse_mask.astype(np.uint8)
 
-    return fitted_mask
+    return result_mask
 
 
 def dense_crf(image, probab, n_iterations: int = 5, gaussian_kwargs: dict = None, bilateral_kwargs: dict = None):
