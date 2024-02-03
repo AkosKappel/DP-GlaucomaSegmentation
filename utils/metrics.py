@@ -1,11 +1,43 @@
 import numpy as np
 import torch
+from scipy.ndimage import rotate
 
 __all__ = [
+    'calculate_diameter', 'calculate_vCDR', 'calculate_hCDR',
     'calculate_metrics', 'get_metrics', 'update_metrics', 'get_extreme_examples',
     'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_and_worst_OD_examples',
     'get_best_OC_examples', 'get_worst_OC_examples', 'get_best_and_worst_OC_examples',
 ]
+
+
+def calculate_diameter(image: np.ndarray, label: int | list[int], angle: int = 0) -> int:
+    image = np.array(image)
+    label = np.array(label) if isinstance(label, (list, np.ndarray)) else np.array([label])
+
+    # Rotate the image (angle = 0 is vertical diameter, angle = 90 is horizontal diameter)
+    rotated_image = rotate(image, angle, reshape=True, order=0, mode='constant', cval=0)
+
+    object_mask = np.isin(rotated_image, label)
+    if not np.any(object_mask):
+        return 0
+
+    object_row_indices = np.where(np.any(object_mask, axis=1))[0]
+
+    if object_row_indices.size == 0:
+        return 0
+    return object_row_indices[-1] - object_row_indices[0] + 1
+
+
+def calculate_vCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> float:
+    disc_diameter = calculate_diameter(mask, [disc_label], angle=0)
+    cup_diameter = calculate_diameter(mask, [cup_label], angle=0)
+    return cup_diameter / disc_diameter
+
+
+def calculate_hCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> float:
+    disc_diameter = calculate_diameter(mask, [disc_label], angle=90)
+    cup_diameter = calculate_diameter(mask, [cup_label], angle=90)
+    return cup_diameter / disc_diameter
 
 
 def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) -> dict[str, float]:
@@ -75,7 +107,7 @@ def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray
 
     # Get metrics separately for OD and OC, treating it as binary segmentation
     metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in labels else {}
-    metrics_od_ring = calculate_metrics(true_flat, pred_flat, [1]) if [1] in labels else {}
+    metrics_nrr = calculate_metrics(true_flat, pred_flat, [1]) if [1] in labels else {}
     metrics_od = calculate_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in labels else {}
     metrics_oc = calculate_metrics(true_flat, pred_flat, [2]) if [2] in labels else {}
 
@@ -84,7 +116,7 @@ def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray
         # background
         **{k + '_BG': v for k, v in metrics_bg.items()},
         # only the outer ring of optic disc is considered (not the overlap with optic cup)
-        **{k + '_OD_ring': v for k, v in metrics_od_ring.items()},
+        **{k + '_NRR': v for k, v in metrics_nrr.items()},
         # entire optic disc is used for evaluation (including the inner overlap with optic cup)
         **{k + '_OD': v for k, v in metrics_od.items()},
         # optic cup
