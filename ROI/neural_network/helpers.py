@@ -104,23 +104,30 @@ def generate_centernet_dataset(src_images_dir: str, src_masks_dir: str, dst_imag
         cv.imwrite(str(dst_masks_dir / mask_name), mask)
 
 
-def generate_ground_truth_bbox_csv(images_dir: str, masks_dir: str, csv_file: str, margin: int = 0):
-    images_dir = Path(images_dir)
-    masks_dir = Path(masks_dir)
+def generate_ground_truth_bbox_csv(images_dir: str | list[str], masks_dir: str | list[str],
+                                   csv_file: str, margin: int = 0):
+    if isinstance(images_dir, str):
+        images_dir = [images_dir]
+    if isinstance(masks_dir, str):
+        masks_dir = [masks_dir]
+
+    images_dir = [Path(d) for d in images_dir]
+    masks_dir = [Path(d) for d in masks_dir]
     csv_file = Path(csv_file)
 
-    assert images_dir.exists()
-    assert masks_dir.exists()
+    for d in images_dir + masks_dir:
+        assert d.exists(), f'Directory {d} not found'
 
-    images = sorted([f for f in os.listdir(images_dir) if not f.startswith('.')])
-    masks = sorted([f for f in os.listdir(masks_dir) if not f.startswith('.')])
+    image_paths = []
+    for d in images_dir:
+        image_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
+    mask_paths = []
+    for d in masks_dir:
+        mask_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
 
     df = pd.DataFrame()
     title = f'Generating csv file with bounding boxes'
-    for i, (img_name, mask_name) in enumerate(tqdm(zip(images, masks), total=len(images), desc=title)):
-        image_path = images_dir / img_name
-        mask_path = masks_dir / mask_name
-
+    for i, (image_path, mask_path) in enumerate(tqdm(zip(image_paths, mask_paths), total=len(image_paths), desc=title)):
         # image = cv.imread(str(image_path))
         mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
 
@@ -528,16 +535,20 @@ def calculate_metrics(pred_heatmaps, pred_regressions, true_bboxes, input_size, 
     return results
 
 
-def pad_to_square(img, mask, value: int = 0):
+def pad_to_square(img, mask=None, value: int = 0):
     h, w, _ = img.shape
     if h > w:
         pad = (h - w) // 2
         img = cv.copyMakeBorder(img, 0, 0, pad, pad, cv.BORDER_CONSTANT, value=value)
-        mask = cv.copyMakeBorder(mask, 0, 0, pad, pad, cv.BORDER_CONSTANT, value=value)
+        if mask is not None:
+            mask = cv.copyMakeBorder(mask, 0, 0, pad, pad, cv.BORDER_CONSTANT, value=value)
     elif w > h:
         pad = (w - h) // 2
         img = cv.copyMakeBorder(img, pad, pad, 0, 0, cv.BORDER_CONSTANT, value=value)
-        mask = cv.copyMakeBorder(mask, pad, pad, 0, 0, cv.BORDER_CONSTANT, value=value)
+        if mask is not None:
+            mask = cv.copyMakeBorder(mask, pad, pad, 0, 0, cv.BORDER_CONSTANT, value=value)
+    if mask is None:
+        return img
     return img, mask
 
 

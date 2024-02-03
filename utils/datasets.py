@@ -1,5 +1,6 @@
 import cv2 as cv
 import numpy as np
+import pandas as pd
 import torch
 import os
 import scipy.io
@@ -34,23 +35,19 @@ ROI_DRISHTI_STDS = ()
 
 class EyeFundusDataset(Dataset):
 
-    def __init__(self, image_dir: str, mask_dir: str, image_names: list[str], mask_names: list[str], transform=None):
-        self.image_dir = image_dir
-        self.mask_dir = mask_dir
-        self.image_names = image_names
-        self.mask_names = mask_names
+    def __init__(self, images: list[str], masks: list[str], transform=None):
+        self.images = images
+        self.masks = masks
         self.transform = transform
 
     def __len__(self):
-        return len(self.image_names)
+        return len(self.images)
 
     def __getitem__(self, idx):
-        image_name = self.image_names[idx]
-        image_path = os.path.join(self.image_dir, image_name)
+        image_path = self.images[idx]
         image = cv.cvtColor(cv.imread(image_path), cv.COLOR_BGR2RGB)
 
-        mask_name = self.mask_names[idx]
-        mask_path = os.path.join(self.mask_dir, mask_name)
+        mask_path = self.masks[idx]
         mask = cv.imread(mask_path, cv.IMREAD_GRAYSCALE)
 
         if self.transform:
@@ -61,45 +58,55 @@ class EyeFundusDataset(Dataset):
         return image, mask
 
 
-def load_dataset(image_dir: str, mask_dir: str, image_names: list[str] = None, mask_names: list[str] = None,
+def load_dataset(image_dir: str | list[str], mask_dir: str | list[str],
+                 image_paths: list[str] = None, mask_names: list[str] = None,
                  train_size: float = 0.8, val_size: float = 0.1, test_size: float = 0.1,
                  train_transform=None, val_transform=None, test_transform=None,
                  batch_size: int = 4, pin_memory: bool = False, num_workers: int = 1,
                  return_datasets: bool = False, return_loaders: bool = True, random_state: int = 4118):
-    assert train_size + val_size + test_size == 1, 'The sum of train_size, val_size, and test_size must be 1'
+    assert train_size + val_size + test_size == 1, 'The sum of train, val, and test size must be 1'
 
-    # Get the names of all images in the image directory
-    if image_names is None:
-        image_names = sorted([f for f in os.listdir(image_dir) if not f.startswith('.')])
+    if isinstance(image_dir, str):
+        image_dir = [image_dir]
+    if isinstance(mask_dir, str):
+        mask_dir = [mask_dir]
+
+    # Get the paths to all the images and masks in the provided directories
+    if image_paths is None:
+        image_paths = []
+        for d in image_dir:
+            image_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
     if mask_names is None:
-        mask_names = sorted([f for f in os.listdir(mask_dir) if not f.startswith('.')])
+        mask_names = []
+        for d in mask_dir:
+            mask_names.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
 
     # Calculate the validation size as a percentage of the training size
     val_size /= train_size + val_size
 
     # Split the data into train, validation, and test sets
-    indices = np.arange(len(image_names))
+    indices = np.arange(len(image_paths))
     train_indices, test_indices = train_test_split(indices, test_size=test_size, random_state=random_state)
     train_indices, val_indices = train_test_split(train_indices, test_size=val_size, random_state=random_state)
 
     # Get the file names in each set
-    train_image_names = [image_names[i] for i in train_indices]
-    val_image_names = [image_names[i] for i in val_indices]
-    test_image_names = [image_names[i] for i in test_indices]
+    train_image_paths = [image_paths[i] for i in train_indices]
+    val_image_paths = [image_paths[i] for i in val_indices]
+    test_image_paths = [image_paths[i] for i in test_indices]
 
-    train_mask_names = [mask_names[i] for i in train_indices]
-    val_mask_names = [mask_names[i] for i in val_indices]
-    test_mask_names = [mask_names[i] for i in test_indices]
+    train_mask_paths = [mask_names[i] for i in train_indices]
+    val_mask_paths = [mask_names[i] for i in val_indices]
+    test_mask_paths = [mask_names[i] for i in test_indices]
 
     # Create the datasets
-    train_ds = EyeFundusDataset(image_dir, mask_dir, train_image_names, train_mask_names, transform=train_transform)
-    val_ds = EyeFundusDataset(image_dir, mask_dir, val_image_names, val_mask_names, transform=val_transform)
-    test_ds = EyeFundusDataset(image_dir, mask_dir, test_image_names, test_mask_names, transform=test_transform)
+    train_ds = EyeFundusDataset(train_image_paths, train_mask_paths, transform=train_transform)
+    val_ds = EyeFundusDataset(val_image_paths, val_mask_paths, transform=val_transform)
+    test_ds = EyeFundusDataset(test_image_paths, test_mask_paths, transform=test_transform)
 
     print(f'''Loading dataset:
-    Train size: {len(train_ds)} ({len(train_ds) / len(image_names) * 100:.2f}%)
-    Validation size: {len(val_ds)} ({len(val_ds) / len(image_names) * 100:.2f}%)
-    Test size: {len(test_ds)} ({len(test_ds) / len(image_names) * 100:.2f}%)
+    Train size: {len(train_ds)} ({len(train_ds) / len(image_paths) * 100:.2f}%)
+    Validation size: {len(val_ds)} ({len(val_ds) / len(image_paths) * 100:.2f}%)
+    Test size: {len(test_ds)} ({len(test_ds) / len(image_paths) * 100:.2f}%)
 
     Image shape: {val_ds[0][0].numpy().shape}
     Mask shape: {val_ds[0][1].numpy().shape}
@@ -134,7 +141,7 @@ def softmap_to_binary_mask(softmap_mask, threshold: float = 0.5):
     return binary_mask
 
 
-def prepare_origa_dataset(base_dir: str | Path, test_size: float = 0.1,
+def prepare_origa_dataset(base_dir: str | Path, test_size: float = None,
                           random_state: int = 411, debug: bool = False):
     def prepare_dataset(src_images_dir, src_masks_dir,
                         dst_images_dir, dst_masks_dir,
@@ -165,6 +172,7 @@ def prepare_origa_dataset(base_dir: str | Path, test_size: float = 0.1,
             mask = mat['mask']
 
             if img.shape[:2] != mask.shape:
+                print(f'Resizing mask {mask_name} with shape {mask.shape} to image shape {img.shape}')
                 mask = cv.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv.INTER_AREA)
 
             img, mask = preprocess_centernet_input(img, mask, otsu_crop=True)
@@ -185,11 +193,24 @@ def prepare_origa_dataset(base_dir: str | Path, test_size: float = 0.1,
 
     images_dir = base_dir / 'Images'
     gt_dir = base_dir / 'Semi-automatic-annotations-done-by-doctors-eg-ground-truth'
+    labels = pd.read_excel(base_dir / 'labels.xlsx')
 
     img_file_names = sorted(os.listdir(images_dir))
     mask_file_names = sorted([f for f in os.listdir(gt_dir) if Path(f).suffix == '.mat'])
 
-    if test_size == 0:
+    if test_size is None:  # Default split to ORIGA-A and ORIGA-B subsets
+        def get_name(x):
+            return x.strip().replace("'", '').replace('"', '').split('.')[0]
+
+        set_a = set(map(get_name, labels[labels['set'] == 'A']['filename'].values))
+        set_b = set(map(get_name, labels[labels['set'] == 'B']['filename'].values))
+
+        train_img_names = [f for f in img_file_names if get_name(f) in set_a]
+        train_mask_names = [f for f in mask_file_names if get_name(f) in set_a]
+
+        test_img_names = [f for f in img_file_names if get_name(f) in set_b]
+        test_mask_names = [f for f in mask_file_names if get_name(f) in set_b]
+    elif test_size == 0:
         train_img_names, test_img_names, train_mask_names, test_mask_names = img_file_names, [], mask_file_names, []
     elif test_size == 1:
         train_img_names, test_img_names, train_mask_names, test_mask_names = [], img_file_names, [], mask_file_names
@@ -209,7 +230,7 @@ def prepare_origa_dataset(base_dir: str | Path, test_size: float = 0.1,
                     test_img_names, test_mask_names, 'Preparing ORIGA test dataset')
 
 
-def prepare_drishti_dataset(base_dir: str | Path, test_size: float = 0.1,
+def prepare_drishti_dataset(base_dir: str | Path, test_size: float = None,
                             random_state: int = 411, debug: bool = False):
     def prepare_dataset(src_images_dir, src_masks_dir,
                         dst_images_dir, dst_masks_dir,
@@ -266,7 +287,16 @@ def prepare_drishti_dataset(base_dir: str | Path, test_size: float = 0.1,
     img_file_names = sorted(os.listdir(images_dir))
     mask_file_names = sorted([f for f in os.listdir(gt_dir)])
 
-    if test_size == 0:
+    if test_size is None:  # Default split to Drishti-GS1 and Drishti-GS2 subsets
+        set_a = set(os.listdir(base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Training/Images'))
+        set_b = set(os.listdir(base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Test/Images'))
+
+        train_img_names = [f for f in img_file_names if f in set_a]
+        train_mask_names = [f for f in mask_file_names if f in set_a]
+
+        test_img_names = [f for f in img_file_names if f in set_b]
+        test_mask_names = [f for f in mask_file_names if f in set_b]
+    elif test_size == 0:
         train_img_names, test_img_names, train_mask_names, test_mask_names = img_file_names, [], mask_file_names, []
     elif test_size == 1:
         train_img_names, test_img_names, train_mask_names, test_mask_names = [], img_file_names, [], mask_file_names
