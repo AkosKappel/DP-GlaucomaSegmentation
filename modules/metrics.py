@@ -91,6 +91,10 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
         'dice': dice,  # F1 score
         'iou': iou,  # Jaccard index
         'balance_accuracy': balance_accuracy,
+        'tp': tp,
+        'tn': tn,
+        'fp': fp,
+        'fn': fn,
     }
 
 
