@@ -7,7 +7,7 @@ from collections import defaultdict
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from utils.metrics import update_metrics
+from modules.metrics import update_metrics
 
 __all__ = [
     'predict', 'evaluate', 'tta_evaluate', 'morph_evaluate', 'save_predictions_as_images',

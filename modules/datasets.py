@@ -14,7 +14,7 @@ from ROI import preprocess_centernet_input
 __all__ = [
     'ORIGA_MEANS', 'ORIGA_STDS', 'ROI_ORIGA_MEANS', 'ROI_ORIGA_STDS',
     'DRISHTI_MEANS', 'DRISHTI_STDS', 'ROI_DRISHTI_MEANS', 'ROI_DRISHTI_STDS',
-    'EyeFundusDataset', 'load_dataset', 'softmap_to_binary_mask',
+    'EyeFundusDataset', 'load_dataset', 'load_files_from_dir', 'softmap_to_binary_mask',
     'prepare_origa_dataset', 'prepare_drishti_dataset', 'prepare_rimone_dataset',
     'get_mean_and_standard_deviation_from_files', 'get_mean_and_standard_deviation_from_dataloader',
 ]
@@ -58,79 +58,35 @@ class EyeFundusDataset(Dataset):
         return image, mask
 
 
-def load_dataset(image_dir: str | list[str], mask_dir: str | list[str],
-                 image_paths: list[str] = None, mask_names: list[str] = None,
-                 train_size: float = 0.8, val_size: float = 0.1, test_size: float = 0.1,
-                 train_transform=None, val_transform=None, test_transform=None,
-                 batch_size: int = 4, pin_memory: bool = False, num_workers: int = 1,
-                 return_datasets: bool = False, return_loaders: bool = True, random_state: int = 4118):
-    assert train_size + val_size + test_size == 1, 'The sum of train, val, and test size must be 1'
+def load_files_from_dir(directory: str | list[str] | None):
+    if directory is None:
+        return []
+    if isinstance(directory, str):
+        directory = [directory]
+    files = []
+    for d in directory:
+        if not os.path.exists(d):
+            continue
+        elif os.path.isfile(d):
+            files.append(d)
+        elif os.path.isdir(d):
+            new_files = [f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]
+            files.extend(sorted(new_files))
+    return files
 
-    if isinstance(image_dir, str):
-        image_dir = [image_dir]
-    if isinstance(mask_dir, str):
-        mask_dir = [mask_dir]
 
+# Images can be a single directory, a list of directories or a list of files
+def load_dataset(images: str | list[str], masks: str | list[str], transform=None, batch_size: int = 4,
+                 pin_memory: bool = False, num_workers: int = 1, shuffle: bool = False, return_loader: bool = True):
     # Get the paths to all the images and masks in the provided directories
-    if image_paths is None:
-        image_paths = []
-        for d in image_dir:
-            image_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
-    if mask_names is None:
-        mask_names = []
-        for d in mask_dir:
-            mask_names.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
+    image_paths = load_files_from_dir(images)
+    mask_paths = load_files_from_dir(masks)
 
-    # Calculate the validation size as a percentage of the training size
-    val_size /= train_size + val_size
-
-    # Split the data into train, validation, and test sets
-    indices = np.arange(len(image_paths))
-    train_indices, test_indices = train_test_split(indices, test_size=test_size, random_state=random_state)
-    train_indices, val_indices = train_test_split(train_indices, test_size=val_size, random_state=random_state)
-
-    # Get the file names in each set
-    train_image_paths = [image_paths[i] for i in train_indices]
-    val_image_paths = [image_paths[i] for i in val_indices]
-    test_image_paths = [image_paths[i] for i in test_indices]
-
-    train_mask_paths = [mask_names[i] for i in train_indices]
-    val_mask_paths = [mask_names[i] for i in val_indices]
-    test_mask_paths = [mask_names[i] for i in test_indices]
-
-    # Create the datasets
-    train_ds = EyeFundusDataset(train_image_paths, train_mask_paths, transform=train_transform)
-    val_ds = EyeFundusDataset(val_image_paths, val_mask_paths, transform=val_transform)
-    test_ds = EyeFundusDataset(test_image_paths, test_mask_paths, transform=test_transform)
-
-    print(f'''Loading dataset:
-    Train size: {len(train_ds)} ({len(train_ds) / len(image_paths) * 100:.2f}%)
-    Validation size: {len(val_ds)} ({len(val_ds) / len(image_paths) * 100:.2f}%)
-    Test size: {len(test_ds)} ({len(test_ds) / len(image_paths) * 100:.2f}%)
-
-    Image shape: {val_ds[0][0].numpy().shape}
-    Mask shape: {val_ds[0][1].numpy().shape}
-    Batch size: {batch_size}''')
-
-    if return_datasets:
-        return train_ds, val_ds, test_ds
-
-    # Create data loaders
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin_memory)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=num_workers, pin_memory=pin_memory)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=num_workers, pin_memory=pin_memory)
-
-    print(f'''
-    Train loader length: {len(train_loader)}
-    Validation loader length: {len(val_loader)}
-    Test loader length: {len(test_loader)}''')
-
-    if return_loaders:
-        return train_loader, val_loader, test_loader
-    return train_ds, val_ds, test_ds, train_loader, val_loader, test_loader
+    # Create the dataset and data loader
+    dataset = EyeFundusDataset(image_paths, mask_paths, transform=transform)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=pin_memory)
+    print(f'Loaded dataset with {len(dataset)} samples in {len(loader)} batches.')
+    return loader if return_loader else dataset
 
 
 # Binarize softmap maps using a threshold

@@ -472,39 +472,3 @@ def boundary_transform(src_dir: Path, dst_dir: Path, kernel_size: int = 5):
         num += 1
 
     print(f'Boundary transform applied to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-if __name__ == '__main__':
-    cropped_images_dir = Path('../data/ORIGA/images_Cropped')
-    cropped_masks_dir = Path('../data/ORIGA/masks_Cropped')
-
-    disc_masks_dir = Path('../data/preprocessed/ORIGA/disc')
-    cup_masks_dir = Path('../data/preprocessed/ORIGA/cup')
-
-    # Images
-    extract_optic_disc(cropped_masks_dir, disc_masks_dir)
-    extract_optic_cup(cropped_masks_dir, cup_masks_dir)
-
-    clahe(cropped_images_dir, Path('../data/preprocessed/ORIGA/clahe-grey'))
-    clahe(cropped_images_dir, Path('../data/preprocessed/ORIGA/clahe-red'), mode='red')
-    clahe(cropped_images_dir, Path('../data/preprocessed/ORIGA/clahe-green'), mode='green')
-    clahe(cropped_images_dir, Path('../data/preprocessed/ORIGA/clahe-blue'), mode='blue')
-
-    histogram_equalization(cropped_images_dir, Path('../data/preprocessed/ORIGA/hist-eq-grey'))
-    histogram_equalization(cropped_images_dir, Path('../data/preprocessed/ORIGA/hist-eq-red'), mode='red')
-    histogram_equalization(cropped_images_dir, Path('../data/preprocessed/ORIGA/hist-eq-green'), mode='green')
-    histogram_equalization(cropped_images_dir, Path('../data/preprocessed/ORIGA/hist-eq-blue'), mode='blue')
-
-    split_rgb_channels(cropped_images_dir, Path('../data/preprocessed/ORIGA/'))
-    to_greyscale(cropped_images_dir, Path('../data/preprocessed/ORIGA/greyscale'))
-
-    brightness_contrast(cropped_images_dir, Path('../data/preprocessed/ORIGA/brightness-contrast'))
-    sharpen(cropped_images_dir, Path('../data/preprocessed/ORIGA/sharpened'))
-    blur(cropped_images_dir, Path('../data/preprocessed/ORIGA/blurred'))
-
-    # Masks
-    distance_transform(disc_masks_dir, Path('../data/preprocessed/ORIGA/dist-transform-disc'))
-    distance_transform(cup_masks_dir, Path('../data/preprocessed/ORIGA/dist-transform-cup'))
-
-    boundary_transform(disc_masks_dir, Path('../data/preprocessed/ORIGA/boundary-transform-disc'))
-    boundary_transform(cup_masks_dir, Path('../data/preprocessed/ORIGA/boundary-transform-cup'))

@@ -1,8 +1,9 @@
 import os
+from collections import defaultdict
+
 import torch
 import torch.nn as nn
 import wandb
-from collections import defaultdict
 from IPython.display import clear_output
 
 from .binary import BinaryTrainer, BinaryLogger

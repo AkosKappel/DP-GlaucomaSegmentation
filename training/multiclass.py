@@ -1,11 +1,12 @@
+from collections import defaultdict
+
 import numpy as np
 import torch
 import wandb
-from collections import defaultdict
 from tqdm import tqdm
 
-from utils.metrics import update_metrics, get_best_and_worst_OD_examples, get_best_and_worst_OC_examples
-from utils.visualization import plot_results
+from modules.metrics import get_best_and_worst_OC_examples, get_best_and_worst_OD_examples, update_metrics
+from modules.visualization import plot_results
 
 
 class MulticlassTrainer:

@@ -74,34 +74,43 @@ def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bo
     return image
 
 
-def generate_centernet_dataset(src_images_dir: str, src_masks_dir: str, dst_images_dir: str, dst_masks_dir: str,
+def generate_centernet_dataset(src_images_dir: str, dst_images_dir: str,
+                               src_masks_dir: str = None, dst_masks_dir: str = None,
                                otsu_crop: bool = True, crop_margin: int = 0, pad_margin: int = 0):
     src_images_dir = Path(src_images_dir)
-    src_masks_dir = Path(src_masks_dir)
     dst_images_dir = Path(dst_images_dir)
-    dst_masks_dir = Path(dst_masks_dir)
-
     assert src_images_dir.exists()
-    assert src_masks_dir.exists()
-
     dst_images_dir.mkdir(exist_ok=True, parents=True)
-    dst_masks_dir.mkdir(exist_ok=True, parents=True)
+
+    if src_masks_dir:
+        src_masks_dir = Path(src_masks_dir)
+        assert src_masks_dir.exists()
+    if dst_masks_dir:
+        dst_masks_dir = Path(dst_masks_dir)
+        dst_masks_dir.mkdir(exist_ok=True, parents=True)
 
     images = sorted([f for f in os.listdir(src_images_dir) if not f.startswith('.')])
-    masks = sorted([f for f in os.listdir(src_masks_dir) if not f.startswith('.')])
+    masks = None
+    if src_masks_dir:
+        masks = sorted([f for f in os.listdir(src_masks_dir) if not f.startswith('.')])
 
-    title = f'Generating CenterNet dataset'
-    for image_name, mask_name in tqdm(zip(images, masks), total=len(images), desc=title):
+    for i, image_name in enumerate(tqdm(images, desc='Generating CenterNet dataset')):
         image_path = src_images_dir / image_name
-        mask_path = src_masks_dir / mask_name
-
         image = cv.imread(str(image_path))
-        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
+
+        if masks is not None:
+            mask_name = masks[i]
+            mask_path = src_masks_dir / mask_name
+            mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
+        else:
+            mask_name = None
+            mask = None
 
         image, mask = preprocess_centernet_input(image, mask, otsu_crop, crop_margin, pad_margin)
 
         cv.imwrite(str(dst_images_dir / image_name), image)
-        cv.imwrite(str(dst_masks_dir / mask_name), mask)
+        if mask is not None:
+            cv.imwrite(str(dst_masks_dir / mask_name), mask)
 
 
 def generate_ground_truth_bbox_csv(images_dir: str | list[str], masks_dir: str | list[str],
@@ -174,7 +183,8 @@ def generate_ground_truth_bbox_csv(images_dir: str | list[str], masks_dir: str |
 
 
 @torch.no_grad()
-def generate_roi_dataset(model, images: list[str], masks: list[str], dst_images_dir: str, dst_masks_dir: str, transform,
+def generate_roi_dataset(model, images: list[str], masks: list[str] | None,
+                         dst_images_dir: str, dst_masks_dir: str | None, transform,
                          input_size: int, device=None, small_margin: int = 16, large_margin: int = 0,
                          threshold: float = 0.6, roi_size: int = 512, interpolation: int = cv.INTER_AREA):
     dst_images_dir = Path(dst_images_dir)
