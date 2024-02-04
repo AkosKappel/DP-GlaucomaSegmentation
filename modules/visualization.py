@@ -170,20 +170,29 @@ def get_contour_images(imgs, masks, preds, **kwargs):
     return [get_contour_image(img, mask, pred, **kwargs) for img, mask, pred in zip(imgs, masks, preds)]
 
 
-def get_contour_image(img, mask, pred, class_ids: list[int] = None):
+def get_contour_image(img, mask=None, pred=None, class_ids: list[int] = None, colors: list[tuple] = None):
     contour_mask = img.copy()
+
+    # resize image to match mask size
+    other = mask if mask is not None else pred
+    if other is not None and img.shape[:2] != other.shape[:2]:
+        contour_mask = cv.resize(contour_mask, (other.shape[1], other.shape[0]), interpolation=cv.INTER_NEAREST)
 
     if class_ids is None:
         class_ids = [1, 2]
 
-    for class_id in class_ids:
-        class_mask = np.where(mask >= class_id, 1, 0).astype(np.uint8)
-        contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        cv.drawContours(contour_mask, contours, -1, true_color, thickness=1)
+    for i, class_id in enumerate(class_ids):
+        color = colors[i] if colors is not None and i < len(colors) else true_color
 
-        class_mask = np.where(pred >= class_id, 1, 0).astype(np.uint8)
-        contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        cv.drawContours(contour_mask, contours, -1, predicted_color, thickness=1)
+        if mask is not None:
+            class_mask = np.where(mask >= class_id, 1, 0).astype(np.uint8)
+            contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+            cv.drawContours(contour_mask, contours, -1, color, thickness=1)
+
+        if pred is not None:
+            class_mask = np.where(pred >= class_id, 1, 0).astype(np.uint8)
+            contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+            cv.drawContours(contour_mask, contours, -1, predicted_color, thickness=1)
 
     return get_input_image(contour_mask)
 

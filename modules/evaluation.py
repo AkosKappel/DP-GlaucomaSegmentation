@@ -14,14 +14,14 @@ __all__ = [
 ]
 
 
-def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, model0=None, criterion=None):
+def predict(mode: str, model, images, masks = None, thresh: float = 0.5, labels=None, model0=None, criterion=None):
     preds = loss = od_loss = oc_loss = None
 
     # Multi-class segmentation
     if mode == 'multiclass':
         outputs = model(images)
 
-        if criterion is not None:
+        if criterion is not None and masks is not None:
             loss = criterion(outputs, masks)
 
         probs = F.softmax(outputs, dim=1)
@@ -31,7 +31,7 @@ def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, m
     elif mode == 'multilabel':
         outputs = model(images)
 
-        if criterion is not None:
+        if criterion is not None and masks is not None:
             masks = (
                 (masks == 0).long(),  # background
                 (masks == 1).long() + (masks == 2).long(),  # optic disc
@@ -51,7 +51,7 @@ def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, m
     elif mode == 'binary':
         outputs = model(images)
 
-        if criterion is not None:
+        if criterion is not None and masks is not None:
             masks = torch.where(torch.isin(masks, labels), 1, 0)
             loss = criterion(outputs, masks)
 
@@ -70,7 +70,7 @@ def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, m
         oc_probs = torch.sigmoid(oc_outputs)
         oc_preds = (oc_probs > thresh).long()
 
-        if criterion is not None:
+        if criterion is not None and masks is not None:
             od_masks = (masks == 1).long() + (masks == 2).long()
             oc_masks = (masks == 2).long()
 
@@ -90,7 +90,7 @@ def predict(mode: str, model, images, masks, thresh: float = 0.5, labels=None, m
         od_preds = (od_probs > thresh).long()
         oc_preds = (oc_probs > thresh).long()
 
-        if criterion is not None:
+        if criterion is not None and masks is not None:
             od_masks = (masks == 1).long() + (masks == 2).long()
             oc_masks = (masks == 2).long()
 
