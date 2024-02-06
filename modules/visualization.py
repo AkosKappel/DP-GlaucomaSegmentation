@@ -39,7 +39,7 @@ def plot_history(h, figsize=(14, 8)):
         ax[i].plot(h[f'train_{metric}'], label=f'train')
         ax[i].plot(h[f'val_{metric}'], label=f'val')
         ax[i].set_title(metric[0].upper() + metric[1:].replace('_', ' '))
-        if metric != 'loss':
+        if all([m not in metric for m in ('loss', 'tp', 'tn', 'fp', 'fn')]):
             ax[i].set_ylim(top=1)
         ax[i].legend()
 

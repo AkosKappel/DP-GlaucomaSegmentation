@@ -510,13 +510,15 @@ class CrossEntropyLoss(nn.Module):
 
 class SensitivitySpecificityLoss(nn.Module):
 
-    def __init__(self, num_classes: int, class_weights: list[float] = None):
+    def __init__(self, num_classes: int, class_weights: list[float] = None, alpha: float = 1.0, beta: float = 1.0):
         super(SensitivitySpecificityLoss, self).__init__()
 
         assert num_classes > 0, 'Number of classes must be greater than zero'
 
         self.num_classes = num_classes
         self.class_weights = torch.tensor(class_weights) if class_weights is not None else None
+        self.alpha = alpha
+        self.beta = beta
 
     def forward(self, logits, target):
         probs = logits_to_probs(logits, self.num_classes)
@@ -530,7 +532,7 @@ class SensitivitySpecificityLoss(nn.Module):
         sensitivity = true_positives / (true_positives + false_negatives)
         specificity = true_negatives / (true_negatives + false_positives)
 
-        loss = (1 - sensitivity).mean(dim=0) + (1 - specificity).mean(dim=0)  # (num_classes,)
+        loss = self.alpha * (1 - sensitivity).mean(dim=0) + self.beta * (1 - specificity).mean(dim=0)  # (num_classes,)
 
         if self.class_weights is not None:
             self.class_weights = self.class_weights.to(logits.device)
