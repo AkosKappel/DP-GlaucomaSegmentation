@@ -8,7 +8,8 @@ __all__ = [
     'DiceLoss', 'GeneralizedDice', 'IoULoss',
     'FocalLoss', 'TverskyLoss', 'FocalTverskyLoss',
     'BoundaryLoss', 'HausdorffLoss', 'EdgeLoss',
-    'CrossEntropyLoss', 'SensitivitySpecificityLoss', 'ComboLoss',
+    'CrossEntropyLoss', 'SensitivitySpecificityLoss',
+    'ComboLoss', 'CompositeLoss',
 ]
 
 
@@ -659,3 +660,22 @@ class ComboLoss(nn.Module):
         combo_loss = self.alpha * dice_loss + (1 - self.alpha) * cross_entropy_loss
 
         return combo_loss
+
+
+class CompositeLoss(nn.Module):
+    def __init__(self, loss_functions: list, weights: list[float] = None):
+        super(CompositeLoss, self).__init__()
+
+        if weights is None:
+            weights = [1] * len(loss_functions)
+
+        assert len(loss_functions) == len(weights), 'Number of loss functions must be equal to number of weights'
+
+        self.loss_functions = loss_functions
+        self.weights = weights
+
+    def forward(self, logits, targets):
+        loss = 0
+        for i, loss_function in enumerate(self.loss_functions):
+            loss += self.weights[i] * loss_function(logits, targets)
+        return loss
