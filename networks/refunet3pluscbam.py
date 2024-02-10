@@ -65,7 +65,6 @@ class CBAM(nn.Module):
 
 
 class SingleConv(nn.Module):
-
     def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.2):
         super(SingleConv, self).__init__()
 
@@ -78,7 +77,6 @@ class SingleConv(nn.Module):
 
 
 class DoubleConv(nn.Module):
-
     def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
         super(DoubleConv, self).__init__()
 
@@ -111,7 +109,6 @@ class ConvCBAM(nn.Module):
 
 
 class Encoder(nn.Module):
-
     def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
 
@@ -165,7 +162,6 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-
     def __init__(self, features: list[int], out_channels: int, concat_channels: int, dropout: float = 0.2):
         super(Decoder, self).__init__()
         # concat_features = number of channels per skip connection that will be concatenated
@@ -233,7 +229,6 @@ class Decoder(nn.Module):
 
 
 class RefUnet3PlusCBAM(nn.Module):
-
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  multi_scale_input: bool = False, dropout: float = 0.2):
         super(RefUnet3PlusCBAM, self).__init__()
@@ -254,7 +249,6 @@ class RefUnet3PlusCBAM(nn.Module):
 
 # Dual Network: model with two decoder branches
 class DualRefUnet3PlusCBAM(nn.Module):
-
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  multi_scale_input: bool = False, dropout: float = 0.2):
         super(DualRefUnet3PlusCBAM, self).__init__()
@@ -275,42 +269,6 @@ class DualRefUnet3PlusCBAM(nn.Module):
         return x1, x2
 
 
-# Cascade Network: two models in series
-class CascadeRefUnet3PlusCBAM(nn.Module):
-
-    def __init__(self, first_model, second_model,
-                 activation=torch.sigmoid, threshold: float = 0.5, post_processing_functions: list = None):
-        super(CascadeRefUnet3PlusCBAM, self).__init__()
-
-        self.model1 = torch.load(first_model) if isinstance(first_model, str) else first_model
-        self.model2 = torch.load(second_model) if isinstance(second_model, str) else second_model
-
-        # Parameters inbetween models
-        self.activation = activation
-        self.threshold = threshold
-        self.post_processing = post_processing_functions or []
-
-    def forward(self, x):
-        # First encoder-decoder model
-        self.model1.eval()
-        with torch.no_grad():
-            x1 = self.model1(x)
-            # Create binary mask from first model's output
-            cascade_mask = (self.activation(x1) > self.threshold).long()
-
-        # Post-processing to improve mask quality
-        for func in self.post_processing:
-            cascade_mask = func(cascade_mask)
-
-        # Apply output mask from first model to input image
-        x = x * cascade_mask
-
-        # Second encoder-decoder model
-        x2 = self.model2(x)
-
-        return x1, x2
-
-
 if __name__ == '__main__':
     _batch_size = 4
     _in_channels, _out_channels = 3, 1
@@ -325,10 +283,5 @@ if __name__ == '__main__':
 
     _dual_model = DualRefUnet3PlusCBAM(_in_channels, _out_channels, _layers)
     _predictions1, _predictions2 = _dual_model(_random_data)
-    assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
-    assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)
-
-    _cascade_model = CascadeRefUnet3PlusCBAM(_model, RefUnet3PlusCBAM(_in_channels, _out_channels, _layers))
-    _predictions1, _predictions2 = _cascade_model(_random_data)
     assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
     assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)

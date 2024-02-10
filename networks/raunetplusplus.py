@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 
 class SingleConv(nn.Module):
-
     def __init__(self, in_channels: int, out_channels: int):
         super(SingleConv, self).__init__()
         self.conv = nn.Sequential(
@@ -18,7 +17,6 @@ class SingleConv(nn.Module):
 
 
 class DoubleConv(nn.Module):
-
     def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
         super(DoubleConv, self).__init__()
 
@@ -91,7 +89,6 @@ class AttentionGate(nn.Module):
 
 
 class DecoderUnit(nn.Module):
-
     def __init__(self, in_channels: int, up_channels: int, n_skip_connections: int, out_channels: int, dropout: float):
         super(DecoderUnit, self).__init__()
 
@@ -109,7 +106,6 @@ class DecoderUnit(nn.Module):
 
 
 class OutConv(nn.Module):
-
     def __init__(self, in_channels: int, out_channels: int):
         super(OutConv, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, dilation=1, bias=True)
@@ -119,7 +115,6 @@ class OutConv(nn.Module):
 
 
 class Encoder(nn.Module):
-
     def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
         super(Encoder, self).__init__()
 
@@ -170,7 +165,6 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-
     def __init__(self, features: list[int], out_channels: int, deep_supervision: bool = False, dropout: float = 0.2):
         super(Decoder, self).__init__()
         self.deep_supervision = deep_supervision
@@ -240,7 +234,6 @@ class Decoder(nn.Module):
 
 
 class RAUnetPlusPlus(nn.Module):
-
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  multi_scale_input: bool = False, deep_supervision: bool = False, dropout: float = 0.2):
         super(RAUnetPlusPlus, self).__init__()
@@ -261,7 +254,6 @@ class RAUnetPlusPlus(nn.Module):
 
 # Dual-decoder branch network
 class DualRAUnetPlusPlus(nn.Module):
-
     def __init__(self, in_channels: int = 3, out_channels: int = 1, features: list[int] = None,
                  multi_scale_input: bool = False, deep_supervision: bool = False, dropout: float = 0.2):
         super(DualRAUnetPlusPlus, self).__init__()
@@ -282,42 +274,6 @@ class DualRAUnetPlusPlus(nn.Module):
         return x1, x2
 
 
-# Cascade network with two models
-class CascadeRAUnetPlusPlus(nn.Module):
-
-    def __init__(self, first_model, second_model,
-                 activation=torch.sigmoid, threshold: float = 0.5, post_processing_functions: list = None):
-        super(CascadeRAUnetPlusPlus, self).__init__()
-
-        self.model1 = torch.load(first_model) if isinstance(first_model, str) else first_model
-        self.model2 = torch.load(second_model) if isinstance(second_model, str) else second_model
-
-        # Parameters inbetween models
-        self.activation = activation
-        self.threshold = threshold
-        self.post_processing = post_processing_functions or []
-
-    def forward(self, x):
-        # First encoder-decoder model
-        self.model1.eval()
-        with torch.no_grad():
-            x1 = self.model1(x)
-            # Create binary mask from first model's output
-            cascade_mask = (self.activation(x1) > self.threshold).long()
-
-        # Post-processing to improve mask quality
-        for func in self.post_processing:
-            cascade_mask = func(cascade_mask)
-
-        # Apply output mask from first model to input image
-        x = x * cascade_mask
-
-        # Second encoder-decoder model
-        x2 = self.model2(x)
-
-        return x1, x2
-
-
 if __name__ == '__main__':
     _batch_size = 4
     _in_channels, _out_channels = 3, 1
@@ -332,10 +288,5 @@ if __name__ == '__main__':
 
     _dual_model = DualRAUnetPlusPlus(_in_channels, _out_channels, _layers)
     _predictions1, _predictions2 = _dual_model(_random_data)
-    assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
-    assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)
-
-    _cascade_model = CascadeRAUnetPlusPlus(_model, RAUnetPlusPlus(_in_channels, _out_channels, _layers))
-    _predictions1, _predictions2 = _cascade_model(_random_data)
     assert _predictions1.shape == (_batch_size, _out_channels, _height, _width)
     assert _predictions2.shape == (_batch_size, _out_channels, _height, _width)
