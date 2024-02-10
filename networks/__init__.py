@@ -5,4 +5,4 @@ from .raunetplusplus import RAUnetPlusPlus, DualRAUnetPlusPlus, CascadeRAUnetPlu
 from .refunet3pluscbam import RefUnet3PlusCBAM, DualRefUnet3PlusCBAM, CascadeRefUnet3PlusCBAM
 
 # Shifted Window Vision Transformer U-Net variants
-from .swinunet import SwinUnet, DualSwinUnet, CascadeSwinUnet
+from .swinunet import SwinUnet, DualSwinUnet
