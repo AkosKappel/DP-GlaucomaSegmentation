@@ -26,24 +26,27 @@ def show_model_view(model, input_size, name='model', fmt='png'):
     graph.view()
 
 
-def plot_history(h, figsize=(14, 8)):
-    if h is None:
+def plot_history(hist, figsize=(14, 8), n_cols: int = 4):
+    if hist is None:
         return
-    used_metrics = sorted([m[6:] for m in h.keys() if m.startswith('train_')])
+    used_metrics = sorted([m[6:] for m in hist.keys() if m.startswith('train_')])
+    n_metrics = len(used_metrics)
 
-    n = len(used_metrics)
-    _, ax = plt.subplots(n // 4 + 1, 4, figsize=figsize)
+    n_rows = n_metrics // n_cols + int(n_metrics % n_cols > 0)
+    _, ax = plt.subplots(n_rows, n_cols, figsize=figsize)
     ax = ax.ravel()
 
     for i, metric in enumerate(used_metrics):
-        ax[i].plot(h[f'train_{metric}'], label=f'train')
-        ax[i].plot(h[f'val_{metric}'], label=f'val')
+        if f'train_{metric}' in hist:
+            ax[i].plot(hist[f'train_{metric}'], label=f'train')
+        if f'val_{metric}' in hist:
+            ax[i].plot(hist[f'val_{metric}'], label=f'val')
         ax[i].set_title(metric[0].upper() + metric[1:].replace('_', ' '))
         if all([m not in metric for m in ('loss', 'tp', 'tn', 'fp', 'fn')]):
             ax[i].set_ylim(top=1)
         ax[i].legend()
 
-    for ax in ax[len(used_metrics):]:
+    for ax in ax[n_metrics:]:
         ax.axis('off')
 
     plt.tight_layout()

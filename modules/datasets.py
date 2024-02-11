@@ -34,21 +34,22 @@ ROI_DRISHTI_STDS = ()
 
 
 class EyeFundusDataset(Dataset):
-
-    def __init__(self, images: list[str], masks: list[str], transform=None):
-        self.images = images
-        self.masks = masks
+    def __init__(self, image_paths: list[str], mask_paths: list[str] = None, transform=None):
+        self.image_paths = image_paths
+        self.mask_paths = mask_paths
         self.transform = transform
 
     def __len__(self):
-        return len(self.images)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        image_path = self.images[idx]
+        image_path = self.image_paths[idx]
         image = cv.cvtColor(cv.imread(image_path), cv.COLOR_BGR2RGB)
 
-        mask_path = self.masks[idx]
-        mask = cv.imread(mask_path, cv.IMREAD_GRAYSCALE)
+        mask = None
+        if self.mask_paths is not None:
+            mask_path = self.mask_paths[idx]
+            mask = cv.imread(mask_path, cv.IMREAD_GRAYSCALE)
 
         if self.transform:
             augmented = self.transform(image=image, mask=mask)

@@ -119,7 +119,7 @@ def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray
     return {
         # background
         **{k + '_BG': v for k, v in metrics_bg.items()},
-        # only the outer ring of optic disc is considered (not the overlap with optic cup)
+        # only the neuro-retinal rim is used for evaluation (excluding the overlap with optic cup)
         **{k + '_NRR': v for k, v in metrics_nrr.items()},
         # entire optic disc is used for evaluation (including the inner overlap with optic cup)
         **{k + '_OD': v for k, v in metrics_od.items()},
