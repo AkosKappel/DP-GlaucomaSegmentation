@@ -63,33 +63,33 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
 
     # Calculate individual metrics
     accuracy = safe_division(tp + tn, tp + tn + fp + fn)
-    precision = safe_division(tp, tp + fp)
-    sensitivity = safe_division(tp, tp + fn)
-    specificity = safe_division(tn, tn + fp)
-    dice = safe_division(2 * tp, 2 * tp + fp + fn)
-    iou = safe_division(tp, tp + fp + fn)
+    precision = safe_division(tp, tp + fp)  # PPV (Positive Predictive Value)
+    # npv = safe_division(tn, tn + fn)  # NPV (Negative Predictive Value)
+    sensitivity = safe_division(tp, tp + fn)  # TPR (True Positive Rate), Recall, Hit-rate
+    specificity = safe_division(tn, tn + fp)  # TNR (True Negative Rate), Selectivity
+    # fpr = safe_division(fp, fp + tn)  # FPR (False Positive Rate), Fall-out
+    # fnr = safe_division(fn, tp + fn)  # FNR (False Negative Rate), Miss Rate
+    dice = safe_division(2 * tp, 2 * tp + fp + fn)  # F1 score
+    iou = safe_division(tp, tp + fp + fn)  # Jaccard index
     balance_accuracy = safe_division(sensitivity + specificity, 2)
+    # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
     # informedness = specificity + sensitivity - 1
     # prevalence = safe_division(tp + fn, tp + tn + fp + fn)
-    # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
-    # npv = safe_division(tn, tn + fn)  # Negative Predictive Value
-    # fpr = safe_division(fp, fp + tn)  # False Positive Rate
-    # fnr = safe_division(fn, tp + fn)  # False Negative Rate
     # fdr = safe_division(fp, tp + fp)  # False Discovery Rate
     # _for = 1 - safe_division(tn, tn + fn)  # False Omission Rate
-    # lr_pos = safe_division(sensitivity, fpr)  # Positive Likelihood Ratio
-    # lr_neg = safe_division(fnr, specificity)  # Negative Likelihood Ratio
-    # dor = safe_division(lr_pos, lr_neg)  # Diagnostic Odds Ratio
+    # lr_pos = safe_division(sensitivity, fpr)  # PLR (Positive Likelihood Ratio)
+    # lr_neg = safe_division(fnr, specificity)  # NLR (Negative Likelihood Ratio)
+    # dor = safe_division(lr_pos, lr_neg)  # DOR (Diagnostic Odds Ratio)
     # voe = 1 - iou  # Volume Overlap Error
     # rvd = safe_division(fp - fn, tp + fn)  # Relative Volume Difference
 
     return {
         'accuracy': accuracy,
-        'precision': precision,  # PPV (Positive Predictive Value)
-        'sensitivity': sensitivity,  # Recall, Hit-rate, TPR (True Positive Rate)
-        'specificity': specificity,  # Selectivity, TNR (True Negative Rate)
-        'dice': dice,  # F1 score
-        'iou': iou,  # Jaccard index
+        'precision': precision,
+        'sensitivity': sensitivity,
+        'specificity': specificity,
+        'dice': dice,
+        'iou': iou,
         'balance_accuracy': balance_accuracy,
         'tp': tp,
         'tn': tn,
