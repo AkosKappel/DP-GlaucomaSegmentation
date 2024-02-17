@@ -87,7 +87,9 @@ def get_input_images(imgs):
 
 def get_input_image(img):
     if img.max() > 1:
-        img = img / 255
+        img /= 255
+    img -= img.min()
+    img /= img.max()
     return img
 
 

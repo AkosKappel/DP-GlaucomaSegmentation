@@ -4,10 +4,9 @@ from pathlib import Path
 
 __all__ = [
     'extract_optic_disc', 'extract_optic_cup',
-    'calculate_rgb_cumsum', 'source_to_target_correction',
-    'get_bounding_box', 'otsu', 'clahe', 'histogram_equalization',
-    'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpen', 'blur',
-    'split_train_val_test', 'distance_transform', 'boundary_transform',
+    'otsu', 'clahe', 'histogram_equalization',
+    'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpening',
+    'distance_transform', 'boundary_transform',
 ]
 
 
@@ -51,61 +50,11 @@ def extract_optic_cup(src_dir: Path, dst_dir: Path, value: int = 1):
     print(f'Extracted optic cup from {num} images from {src_dir} and saved to {dst_dir}')
 
 
-def calculate_rgb_cumsum(image):
-    r_hist = cv.calcHist([image], [0], None, [256], [0, 256])
-    g_hist = cv.calcHist([image], [1], None, [256], [0, 256])
-    b_hist = cv.calcHist([image], [2], None, [256], [0, 256])
-
-    r_cdf = r_hist.cumsum()
-    g_cdf = g_hist.cumsum()
-    c_blue = b_hist.cumsum()
-
-    # normalize to [0, 1]
-    r_cdf /= r_cdf[-1]
-    g_cdf /= g_cdf[-1]
-    c_blue /= c_blue[-1]
-
-    return r_cdf, g_cdf, c_blue
-
-
-def source_to_target_correction(source, target):
-    cdf_source_red, cdf_source_green, cdf_source_blue = calculate_rgb_cumsum(source)
-    cdf_target_red, cdf_target_green, cdf_target_blue = calculate_rgb_cumsum(target)
-
-    # interpolate CDFs
-    red_lookup = np.interp(cdf_source_red, cdf_target_red, np.arange(256))
-    green_lookup = np.interp(cdf_source_green, cdf_target_green, np.arange(256))
-    blue_lookup = np.interp(cdf_source_blue, cdf_target_blue, np.arange(256))
-
-    # apply the lookup tables to the source image
-    corrected = source.copy()
-    corrected[..., 0] = red_lookup[source[..., 0]].reshape(source.shape[:2])
-    corrected[..., 1] = green_lookup[source[..., 1]].reshape(source.shape[:2])
-    corrected[..., 2] = blue_lookup[source[..., 2]].reshape(source.shape[:2])
-
-    return corrected
-
-
-def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
-    # Find the contours of the binary mask (there should be only one)
-    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return 0, 0, 0, 0
-
-    # Get the largest / only contour
-    max_contour = max(contours, key=cv.contourArea)
-
-    # Get the bounding box of the contour
-    x, y, w, h = cv.boundingRect(max_contour)
-
-    return x, y, w, h
-
-
-def otsu(gray, ignore_value=None):
-    pixel_number = gray.shape[0] * gray.shape[1]
+def otsu(gray_image, ignore_value=None):
+    pixel_number = gray_image.shape[0] * gray_image.shape[1]
     mean_weight = 1.0 / pixel_number
 
-    his, bins = np.histogram(gray, np.arange(0, 257))
+    his, bins = np.histogram(gray_image, np.arange(0, 257))
     intensity_arr = np.arange(256)
 
     final_thresh = -1
@@ -134,9 +83,9 @@ def otsu(gray, ignore_value=None):
             final_thresh = t
             final_value = value
 
-    final_img = gray.copy()
-    final_img[gray > final_thresh] = 255
-    final_img[gray < final_thresh] = 0
+    final_img = gray_image.copy()
+    final_img[gray_image > final_thresh] = 255
+    final_img[gray_image < final_thresh] = 0
     return final_thresh - 1, final_img
 
 
@@ -274,18 +223,12 @@ def brightness_contrast(src_dir: Path, dst_dir: Path, alpha: float = 1.0, beta: 
     print(f'Applied brightness/contrast to {num} images from {src_dir} and saved to {dst_dir}')
 
 
-def sharpen(src_dir: Path, dst_dir: Path, kernel_size: int = 5, sigma: float = 1.0, amount: float = 1.0,
-            threshold: float = 0):
+def sharpening(src_dir: Path, dst_dir: Path, kernel_size: int = 5, sigma: float = 1.0, amount: float = 1.0,
+               threshold: float = 0):
     assert src_dir.exists(), f'{src_dir} not found'
     assert src_dir.is_dir(), f'{src_dir} is not a directory'
 
     dst_dir.mkdir(parents=True, exist_ok=True)
-
-    kernel = np.array([
-        [-1, -1, -1],
-        [-1, 9, -1],
-        [-1, -1, -1],
-    ])
 
     num = 0
     for img_path in src_dir.iterdir():
@@ -308,85 +251,6 @@ def sharpen(src_dir: Path, dst_dir: Path, kernel_size: int = 5, sigma: float = 1
         cv.imwrite(str(dst_dir / img_path.name), sharpened)
 
     print(f'Applied sharpening to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def blur(src_dir: Path, dst_dir: Path, kernel_size: int = 5, sigma: float = 1.0):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-        blurred = cv.GaussianBlur(img, (kernel_size, kernel_size), sigma)
-        cv.imwrite(str(dst_dir / img_path.name), blurred)
-        num += 1
-
-    print(f'Applied Gaussian blur to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def split_train_val_test(img_src_dir: Path, img_dst_dir: Path, mask_src_dir: Path, mask_dst_dir: Path,
-                         train: float = 0.8, val: float = 0.1, test: float = 0.1, seed: int = 4118,
-                         train_name: str = 'train', val_name: str = 'val', test_name: str = 'test'):
-    assert img_src_dir.exists(), f'{img_src_dir} not found'
-    assert img_src_dir.is_dir(), f'{img_src_dir} is not a directory'
-    assert mask_src_dir.exists(), f'{mask_src_dir} not found'
-    assert mask_src_dir.is_dir(), f'{mask_src_dir} is not a directory'
-
-    img_train_dir = img_dst_dir / train_name
-    img_val_dir = img_dst_dir / val_name
-    img_test_dir = img_dst_dir / test_name
-
-    mask_train_dir = mask_dst_dir / train_name
-    mask_val_dir = mask_dst_dir / val_name
-    mask_test_dir = mask_dst_dir / test_name
-
-    img_train_dir.mkdir(parents=True, exist_ok=True)
-    img_val_dir.mkdir(parents=True, exist_ok=True)
-    img_test_dir.mkdir(parents=True, exist_ok=True)
-
-    mask_train_dir.mkdir(parents=True, exist_ok=True)
-    mask_val_dir.mkdir(parents=True, exist_ok=True)
-    mask_test_dir.mkdir(parents=True, exist_ok=True)
-
-    files = list(img_src_dir.iterdir())
-    np.random.seed(seed)
-    np.random.shuffle(files)
-
-    train_num = 0
-    val_num = 0
-    test_num = 0
-    num = 0
-    for file in files:
-        if not file.is_file():
-            continue
-
-        if num < train:
-            img_dir = img_train_dir
-            mask_dir = mask_train_dir
-            train_num += 1
-        elif num < train + val:
-            img_dir = img_val_dir
-            mask_dir = mask_val_dir
-            val_num += 1
-        else:
-            img_dir = img_test_dir
-            mask_dir = mask_test_dir
-            test_num += 1
-
-        img = cv.imread(str(file), cv.IMREAD_COLOR)
-        mask = cv.imread(str(file), cv.IMREAD_GRAYSCALE)
-
-        cv.imwrite(str(img_dir / file.name), img)
-        cv.imwrite(str(mask_dir / file.name), mask)
-        num += 1
-
-    print(f'Split {num} images from {img_src_dir} into train ({train}), val ({val}), test ({test}) sets and saved to '
-          f'{img_dst_dir / "train"}, {img_dst_dir / "val"}, {img_dst_dir / "test"}')
 
 
 def distance_transform(src_dir: Path, dst_dir: Path, mode: str = 'L2', normalize: bool = True, invert: bool = False,
