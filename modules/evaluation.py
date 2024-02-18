@@ -1,155 +1,39 @@
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import torch
 from collections import defaultdict
 from torch.nn import functional as F
 from tqdm import tqdm
 
 from modules.metrics import update_metrics
+from modules.inference import predict
 
-__all__ = [
-    'predict', 'evaluate', 'tta_evaluate', 'morph_evaluate', 'save_predictions_as_images',
-]
-
-
-def predict(mode: str, model, images, masks = None, thresh: float = 0.5, labels=None, model0=None, criterion=None):
-    preds = loss = od_loss = oc_loss = None
-
-    # Multi-class segmentation
-    if mode == 'multiclass':
-        outputs = model(images)
-
-        if criterion is not None and masks is not None:
-            loss = criterion(outputs, masks)
-
-        probs = F.softmax(outputs, dim=1)
-        preds = torch.argmax(probs, dim=1)
-
-    # Multi-label segmentation
-    elif mode == 'multilabel':
-        outputs = model(images)
-
-        if criterion is not None and masks is not None:
-            masks = (
-                (masks == 0).long(),  # background
-                (masks == 1).long() + (masks == 2).long(),  # optic disc
-                (masks == 2).long(),  # optic cup
-            )
-
-            loss = 0
-            for i in range(outputs.shape[1]):
-                loss += criterion(outputs[:, i:i + 1, :, :], masks[i])
-
-        probs = torch.sigmoid(outputs)
-        preds = torch.zeros_like(masks[0])
-        for i in range(1, probs.shape[1]):
-            preds += (probs[:, i] > thresh).long()
-
-    # Binary segmentation
-    elif mode == 'binary':
-        outputs = model(images)
-
-        if criterion is not None and masks is not None:
-            masks = torch.where(torch.isin(masks, labels), 1, 0)
-            loss = criterion(outputs, masks)
-
-        probs = torch.sigmoid(outputs)
-        preds = (probs > thresh).squeeze(1).long()
-
-    # Cascade architecture
-    elif mode == 'cascade':
-        od_outputs = model0(images)
-        od_probs = torch.sigmoid(od_outputs)
-        od_preds = (od_probs > thresh).long()
-
-        images = images * od_preds
-
-        oc_outputs = model(images)
-        oc_probs = torch.sigmoid(oc_outputs)
-        oc_preds = (oc_probs > thresh).long()
-
-        if criterion is not None and masks is not None:
-            od_masks = (masks == 1).long() + (masks == 2).long()
-            oc_masks = (masks == 2).long()
-
-            od_loss = criterion(od_outputs, od_masks)
-            oc_loss = criterion(oc_outputs, oc_masks)
-            loss = od_loss + oc_loss
-
-        preds = torch.zeros_like(oc_preds)
-        preds[od_preds == 1] = 1
-        preds[oc_preds == 1] = 2
-
-    # Dual architecture
-    elif mode == 'dual':
-        od_outputs, oc_outputs = model(images)
-        od_probs = torch.sigmoid(od_outputs)
-        oc_probs = torch.sigmoid(oc_outputs)
-        od_preds = (od_probs > thresh).long()
-        oc_preds = (oc_probs > thresh).long()
-
-        if criterion is not None and masks is not None:
-            od_masks = (masks == 1).long() + (masks == 2).long()
-            oc_masks = (masks == 2).long()
-
-            od_loss = criterion(od_outputs, od_masks)
-            oc_loss = criterion(oc_outputs, oc_masks)
-            loss = od_loss + oc_loss
-
-        preds = torch.zeros_like(oc_preds)
-        preds[od_preds == 1] = 1
-        preds[oc_preds == 1] = 2
-
-    return preds, loss, od_loss, oc_loss
+__all__ = ['evaluate', 'tta_evaluate', 'morph_evaluate']
 
 
-def evaluate(mode: str, model, loader, criterion, device, thresh: float = 0.5, class_ids: list = None, model0=None,
-             inverse_transform=None):
+def evaluate(mode: str, model, loader, device, criterion=None,
+             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
+             binary_labels: list[int] = None, base_model=None, inverse_transform=None):
     assert mode in ('binary', 'multiclass', 'multilabel', 'cascade', 'dual')
-
-    if class_ids is None:
-        class_ids = [[1, 2]]
-    elif isinstance(class_ids, int):
-        class_ids = [[class_ids]]
-    elif isinstance(class_ids[0], int):
-        class_ids = [class_ids]
-
-    if mode in ('multiclass', 'multilabel', 'cascade', 'dual'):
-        class_ids = [[1, 2], [2]]
-        labels = None
-    else:
-        labels = torch.tensor(class_ids).to(device)
-
-    model.eval()
-    model = model.to(device)
-    criterion = criterion.to(device)
-    if model0 is not None:
-        model0.eval()
-        model0 = model0.to(device)
 
     mean_metrics = None
     history = defaultdict(list)
-    loop = tqdm(loader, total=len(loader), leave=True, desc='Evaluating')
+    loop = tqdm(loader, desc='Evaluating')
 
     with torch.no_grad():
         for batch_idx, (images, masks) in enumerate(loop):
-            images = images.float().to(device)
-            masks = masks.long().to(device)
-
-            preds, loss, od_loss, oc_loss = predict(mode, model, images, masks, thresh, labels, model0, criterion)
+            preds, _, loss = predict(
+                mode, model, images, masks, device, thresh, od_thresh, oc_thresh, criterion, binary_labels, base_model
+            )
             if inverse_transform is not None:
                 images, masks, preds = inverse_transform(images, masks, preds)
 
-            update_metrics(masks, preds, history, class_ids)
-            history['loss'].append(loss.item())
-            if od_loss is not None:
-                history['loss_OD'].append(od_loss.item())
-            if oc_loss is not None:
-                history['loss_OC'].append(oc_loss.item())
+            update_metrics(masks, preds, history, [binary_labels] if mode == 'binary' else [[1, 2], [2]])
+            if loss is not None:
+                history['loss'].append(loss.item())
 
-            # show mean metrics after every batch
+            # show updated average metrics
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
             loop.set_postfix(**mean_metrics)
 
@@ -316,56 +200,3 @@ def morph_evaluate(model, device, loader, show_example=False, iterations=1, kern
             loop.set_postfix(**mean_metrics)
 
     return mean_metrics
-
-
-def save_predictions_as_images(mode: str, model, loader, device, thresh: float = 0.5, class_ids: list = None,
-                               model0=None, path: str = 'predictions'):
-    assert mode in ('binary', 'multiclass', 'cascade', 'dual')
-
-    if class_ids is None:
-        class_ids = [[1, 2]]
-    elif isinstance(class_ids, int):
-        class_ids = [[class_ids]]
-    elif isinstance(class_ids[0], int):
-        class_ids = [class_ids]
-    labels = None if mode in ('multiclass', 'cascade', 'dual') else torch.tensor(class_ids).to(device)
-
-    model.eval()
-    model = model.to(device)
-    if model0 is not None:
-        model0.eval()
-        model0 = model0.to(device)
-
-    os.makedirs(path, exist_ok=True)
-    img_num = 1
-
-    with torch.no_grad():
-        for images, masks in tqdm(loader, total=len(loader), leave=True, desc='Saving predictions'):
-            images = images.float().to(device)
-            masks = masks.long().to(device)
-
-            preds, *_ = predict(mode, model, images, masks, thresh, labels, model0)
-
-            images = images.detach().cpu().numpy()
-            masks = masks.detach().cpu().numpy()
-            preds = preds.detach().cpu().numpy().astype(np.uint8)
-
-            for image, mask, pred in zip(images, masks, preds):
-                image = image.transpose(1, 2, 0)
-
-                mask[mask == 1] = 128
-                mask[mask == 2] = 255
-
-                pred[pred == 1] = 128
-                pred[pred == 2] = 255
-
-                mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-                pred = np.repeat(pred[:, :, np.newaxis], 3, axis=2)
-
-                image = image.astype(np.uint8)
-                mask = mask.astype(np.uint8)
-                pred = pred.astype(np.uint8)
-
-                side_by_side = np.concatenate((image, mask, pred), axis=1)
-                plt.imsave(f'{path}/{img_num}.png', side_by_side)
-                img_num += 1

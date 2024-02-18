@@ -90,40 +90,49 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
           target_ids: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
           base_cascade_model=None, postprocess=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
           dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
-    # model: model to train
-    # criterion: loss function
-    # optimizer: optimizer for gradient descent
-    # epochs: number of epochs to train
-    # device: 'cuda' or 'cpu'
-    # train_loader: data loader with training set
-    # val_loader: data loader with validation set
-    # scheduler: learning rate scheduler (Optional)
-    # scaler: scaler for mixed precision training (Optional)
-    # train_mode: type of training ('multiclass', 'binary', 'cascade', 'dual')
-    # early_stopping_patience: number of epochs to wait before training is stopped if the loss does not improve (0 or None to disable)
-    # save_best_model: save the model with the best validation loss (True or False)
-    # save_interval: save the model every few epochs (0 or None to disable)
-    # log_interval: log tracked metrics and created plots every few epochs (0 or None to disable)
-    # log_to_wandb: log progress to Weights & Biases (True or False)
-    # show_plots: show examples from validation set (True or False)
-    # clear_interval: clear text from cell output after every couple epoch (0 or None to disable)
-    # checkpoint_dir: directory to save checkpoints (default: current directory, None to disable)
-    # log_dir: directory to save logs (default: current directory, None to disable)
-    # plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
-    # target_ids: defines which labels are considered as positives for binary segmentation (default: [1, 2])
-    # threshold: threshold for predicted probabilities in binary training (default: 0.5)
-    # inverse_transform: function to convert images, masks and predictions to original format (default: None)
-    # activation: activation function for the last layer of a binary branch (default: None)
-    # base_cascade_model: pre-trained model for optic disc segmentation for cascade architecture
-    # od_threshold: decides whether a predicted optic disc probability is considered as a positive sample (default: 0.5)
-    # oc_threshold: decides whether a predicted optic cup probability is considered as a positive sample (default: 0.5)
-    # dual_branch_criterion: loss function for the second branch in dual branch training
-    # od_loss_weight: weight for optic disc loss (default: 1.0)
-    # oc_loss_weight: weight for optic cup loss (default: 1.0)
-    # returns: history of training and validation metrics as a dictionary of lists
+    """
+    Train a model with a given criterion and optimizer for a specified number of epochs in a selected training mode.
 
-    assert train_mode in ('multiclass', 'multilabel', 'binary', 'cascade', 'dual'), \
-        'Invalid training mode. Must be one of: multiclass, multilabel, binary, cascade, dual'
+    Args:
+    - model: model to train
+    - criterion: loss function
+    - optimizer: optimizer for gradient descent
+    - epochs: number of epochs to train
+    - device: 'cuda' or 'cpu'
+    - train_loader: data loader with training set
+    - val_loader: data loader with validation set (Optional)
+    - scheduler: learning rate scheduler (Optional)
+    - scaler: scaler for mixed precision training (Optional)
+    - train_mode: type of training ('multiclass', 'multilabel', 'binary', 'cascade', 'dual')
+    - early_stopping_patience: number of epochs to wait before training is stopped if the loss does not improve (0 or None to disable)
+    - save_best_model: save the model with the best validation loss (True or False)
+    - save_interval: save the model every few epochs (0 or None to disable)
+    - log_interval: log tracked metrics and created plots every few epochs (0 or None to disable)
+    - log_to_wandb: log progress to Weights & Biases (True or False)
+    - show_plots: show examples from validation set (True or False)
+    - clear_interval: clear text from cell output after every couple epoch (0 or None to disable)
+    - checkpoint_dir: directory to save checkpoints (default: current directory, None to disable)
+    - log_dir: directory to save logs (default: current directory, None to disable)
+    - plot_examples: type of plots to create ('all', 'none', 'best', 'worst', 'extreme', 'OD', 'OC')
+    - target_ids: defines which labels are considered as positives for binary segmentation (default: [1, 2])
+    - threshold: threshold for predicted probabilities in binary training (default: 0.5)
+    - inverse_transform: function to convert images, masks and predictions to original format (default: None)
+    - activation: activation function for the last layer of a binary branch (default: None for sigmoid)
+    - base_cascade_model: pre-trained model for optic disc segmentation for cascade architecture
+    - od_threshold: decides whether a predicted optic disc probability is considered as a positive sample (default: 0.5)
+    - oc_threshold: decides whether a predicted optic cup probability is considered as a positive sample (default: 0.5)
+    - dual_branch_criterion: loss function for the second branch in dual branch training (Optional)
+    - od_loss_weight: weight for optic disc loss (default: 1.0)
+    - oc_loss_weight: weight for optic cup loss (default: 1.0)
+
+    Returns:
+    - history: history of training and validation metrics as a dictionary of lists
+               e.g. {'train_loss': [0.1, 0.05, ...], ..., 'val_dice': [0.9, 0.92, ...]}
+    """
+    train_mode = train_mode.lower()
+    valid_training_modes = ('multiclass', 'multilabel', 'binary', 'cascade', 'dual')
+    assert train_mode in valid_training_modes, \
+        f'Invalid training mode {train_mode!r}. Must be one of: {", ".join(valid_training_modes)}'
 
     history = defaultdict(list)
     best_loss = float('inf')
@@ -140,55 +149,54 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         wandb.watch(model, criterion)
 
     # Initialize objects for selected training mode
-    match train_mode:
-        case 'multiclass':
-            trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
-            log = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
-        case 'multilabel':
-            trainer = MultilabelTrainer(
-                model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
-            )
-            log = MultilabelLogger(
-                log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
-            )
-        case 'binary':
-            if target_ids is None:
-                target_ids = [1, 2]
-            target_ids = torch.tensor(target_ids, device=device)
+    if train_mode == 'multiclass':
+        trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
+        log = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+    elif train_mode == 'multilabel':
+        trainer = MultilabelTrainer(
+            model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
+        )
+        log = MultilabelLogger(
+            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
+        )
+    elif train_mode == 'binary':
+        if target_ids is None:
+            target_ids = [1, 2]
+        target_ids = torch.tensor(target_ids, device=device)
 
-            trainer = BinaryTrainer(
-                model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
-            )
-            log = BinaryLogger(
-                log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-                target_ids=target_ids, threshold=threshold,
-            )
-        case 'cascade':
-            # Prepare and freeze the pre-trained model
-            base_cascade_model.eval()
-            for param in base_cascade_model.parameters():
-                param.requires_grad = False
-            base_cascade_model = base_cascade_model.to(device)
+        trainer = BinaryTrainer(
+            model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
+        )
+        log = BinaryLogger(
+            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
+            target_ids=target_ids, threshold=threshold,
+        )
+    elif train_mode == 'cascade':
+        # Prepare and freeze the pre-trained model
+        base_cascade_model.eval()
+        for param in base_cascade_model.parameters():
+            param.requires_grad = False
+        base_cascade_model = base_cascade_model.to(device)
 
-            trainer = CascadeTrainer(
-                base_cascade_model, model, criterion, optimizer, device, scaler,
-                od_threshold, oc_threshold, inverse_transform, activation, postprocess,
-            )
-            log = CascadeLogger(
-                log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-                base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
-            )
-        case 'dual':
-            trainer = DualTrainer(
-                model, criterion, dual_branch_criterion, optimizer, device, scaler,
-                od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
-            )
-            log = DualLogger(
-                log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-                od_threshold=od_threshold, oc_threshold=oc_threshold,
-            )
-        case _:
-            raise ValueError(f'Invalid training mode: {train_mode}')
+        trainer = CascadeTrainer(
+            base_cascade_model, model, criterion, optimizer, device, scaler,
+            od_threshold, oc_threshold, inverse_transform, activation, postprocess,
+        )
+        log = CascadeLogger(
+            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
+            base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
+        )
+    elif train_mode == 'dual':
+        trainer = DualTrainer(
+            model, criterion, dual_branch_criterion, optimizer, device, scaler,
+            od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
+        )
+        log = DualLogger(
+            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
+            od_threshold=od_threshold, oc_threshold=oc_threshold,
+        )
+    else:
+        raise ValueError(f'Invalid training mode: {train_mode}')
 
     # Run training & validation for N epochs
     for epoch in range(1, epochs + 1):
@@ -223,6 +231,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
             save_checkpoint({
                 'epoch': epoch,
                 'model': model,
+                'state_dict': model.state_dict(),
                 'optimizer': optimizer,
                 'history': history,
             }, filepath=f'{checkpoint_dir}/{train_mode}-{model_name}-model-epoch{epoch}.pth')
@@ -238,6 +247,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
                 save_checkpoint({
                     'epoch': epoch,
                     'model': model,
+                    'state_dict': model.state_dict(),
                     'optimizer': optimizer,
                     'history': history,
                 }, filepath=f'{checkpoint_dir}/best-{train_mode}-{model_name}-model.pth')

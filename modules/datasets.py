@@ -12,27 +12,26 @@ from tqdm import tqdm
 from ROI import preprocess_centernet_input
 
 __all__ = [
-    'ORIGA_MEANS', 'ORIGA_STDS', 'ROI_ORIGA_MEANS', 'ROI_ORIGA_STDS',
-    'DRISHTI_MEANS', 'DRISHTI_STDS', 'ROI_DRISHTI_MEANS', 'ROI_DRISHTI_STDS',
-    'EyeFundusDataset', 'load_dataset', 'load_files_from_dir', 'softmap_to_binary_mask',
+    'DS_STATS', 'EyeFundusDataset', 'load_dataset', 'load_files_from_dir', 'binarize_softmap',
     'prepare_origa_dataset', 'prepare_drishti_dataset', 'prepare_rimone_dataset',
     'get_mean_and_standard_deviation_from_files', 'get_mean_and_standard_deviation_from_dataloader',
 ]
 
-# Calculated only from the training set to avoid data leakage
-ORIGA_MEANS = (0.5543, 0.3410, 0.1510)  # RGB order
-ORIGA_STDS = (0.2541, 0.1580, 0.0823)
+# Mean and standard deviation for each dataset (calculated only from the training sets to avoid data leakage)
+# Format: (mean, std) for each channel (R, G, B)
+DS_STATS = {
+    'origa': ((0.4623, 0.2843, 0.1247), (0.3132, 0.1966, 0.1041)),
+    'origa-roi': ((0.8450, 0.5084, 0.2337), (0.1179, 0.1252, 0.1150)),
+    'drishti': ((0.2903, 0.1368, 0.0440), (0.2276, 0.1156, 0.0419)),
+    'drishti-roi': ((0.5454, 0.2625, 0.0814), (0.1814, 0.1240, 0.0653)),
+    'rimone': ((), ()),
+    'rimone-roi': ((), ()),
+    'origa-drishti': ((0.4388, 0.2644, 0.1140), (0.3087, 0.1945, 0.1021)),
+    'origa-drishti-roi': ((0.8044, 0.4754, 0.2137), (0.1646, 0.1511, 0.1216)),  # mixed ORIGA and Drishti
+}
 
-ROI_ORIGA_MEANS = (0.9400, 0.6225, 0.3316)
-ROI_ORIGA_STDS = (0.1557, 0.1727, 0.1556)
 
-DRISHTI_MEANS = (0.3443, 0.1621, 0.0505)
-DRISHTI_STDS = (0.1863, 0.0940, 0.0284)
-
-ROI_DRISHTI_MEANS = ()
-ROI_DRISHTI_STDS = ()
-
-
+# Custom dataset class for the eye fundus images
 class EyeFundusDataset(Dataset):
     def __init__(self, image_paths: list[str], mask_paths: list[str] = None, transform=None):
         self.image_paths = image_paths
@@ -44,12 +43,14 @@ class EyeFundusDataset(Dataset):
 
     def __getitem__(self, idx):
         image_path = self.image_paths[idx]
-        image = cv.cvtColor(cv.imread(image_path), cv.COLOR_BGR2RGB)
+        image = cv.imread(image_path, cv.IMREAD_COLOR)
+        image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
 
-        mask = None
-        if self.mask_paths is not None:
+        if self.mask_paths:
             mask_path = self.mask_paths[idx]
             mask = cv.imread(mask_path, cv.IMREAD_GRAYSCALE)
+        else:
+            mask = np.zeros(image.shape[:2], dtype=np.uint8)
 
         if self.transform:
             augmented = self.transform(image=image, mask=mask)
@@ -59,6 +60,7 @@ class EyeFundusDataset(Dataset):
         return image, mask
 
 
+# Load all files from a directory or a list of directories
 def load_files_from_dir(directory: str | list[str] | None):
     if directory is None:
         return []
@@ -67,18 +69,21 @@ def load_files_from_dir(directory: str | list[str] | None):
     files = []
     for d in directory:
         if not os.path.exists(d):
+            print(f'Warning: Directory {d} does not exist. Skipping...')
             continue
-        elif os.path.isfile(d):
-            files.append(d)
         elif os.path.isdir(d):
             new_files = [f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]
             files.extend(sorted(new_files))
+        elif os.path.isfile(d):
+            files.append(d)
     return files
 
 
-# Images can be a single directory, a list of directories or a list of files
-def load_dataset(images: str | list[str], masks: str | list[str], transform=None, batch_size: int = 4,
+# Images can be given as a single directory, a list of directories or a list of files
+def load_dataset(images: str | list[str], masks: str | list[str] = None, transform=None, batch_size: int = 4,
                  pin_memory: bool = False, num_workers: int = 1, shuffle: bool = False, return_loader: bool = True):
+    assert len(images) > 0, 'At least one image directory or file must be provided'
+
     # Get the paths to all the images and masks in the provided directories
     image_paths = load_files_from_dir(images)
     mask_paths = load_files_from_dir(masks)
@@ -90,9 +95,10 @@ def load_dataset(images: str | list[str], masks: str | list[str], transform=None
     return loader if return_loader else dataset
 
 
-# Binarize softmap maps using a threshold
-def softmap_to_binary_mask(softmap_mask, threshold: float = 0.5):
+# Convert a soft map to a binary mask using a threshold
+def binarize_softmap(softmap_mask, threshold: float = 0.5):
     softmap_mask = softmap_mask.astype(np.float32)
+    softmap_mask -= softmap_mask.min()
     softmap_mask /= softmap_mask.max()
     binary_mask = (softmap_mask >= threshold).astype(np.uint8)
     return binary_mask
@@ -150,7 +156,7 @@ def prepare_origa_dataset(base_dir: str | Path, test_size: float = None,
 
     images_dir = base_dir / 'Images'
     gt_dir = base_dir / 'Semi-automatic-annotations-done-by-doctors-eg-ground-truth'
-    labels = pd.read_excel(base_dir / 'labels.xlsx')
+    labels = pd.read_excel(base_dir / 'binary_labels.xlsx')
 
     img_file_names = sorted(os.listdir(images_dir))
     mask_file_names = sorted([f for f in os.listdir(gt_dir) if Path(f).suffix == '.mat'])
@@ -244,7 +250,7 @@ def prepare_drishti_dataset(base_dir: str | Path, test_size: float = None,
     img_file_names = sorted(os.listdir(images_dir))
     mask_file_names = sorted([f for f in os.listdir(gt_dir)])
 
-    if test_size is None:  # Default split to Drishti-GS1 and Drishti-GS2 subsets
+    if test_size is None:  # Default split to Drishti-GS A and B subsets
         set_a = set(os.listdir(base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Training/Images'))
         set_b = set(os.listdir(base_dir / 'Drishti-GS1_files/Drishti-GS1_files/Test/Images'))
 
@@ -372,7 +378,7 @@ def get_mean_and_standard_deviation_from_files(image_paths: list[str | Path]):
     std = np.zeros(3)
 
     # Iterate through the images and update mean and std
-    for image_path in image_paths:
+    for image_path in tqdm(image_paths, desc='Calculating mean and standard deviation'):
         # Load the image using OpenCV and convert to RGB
         image = cv.imread(str(image_path))
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
@@ -395,7 +401,7 @@ def get_mean_and_standard_deviation_from_files(image_paths: list[str | Path]):
 def get_mean_and_standard_deviation_from_dataloader(loader: DataLoader):
     channels_sum, channels_squared_sum, num_batches = 0, 0, 0
 
-    for images, *_ in loader:
+    for images, *_ in tqdm(loader, desc='Calculating mean and standard deviation'):
         if images.max() > 1:
             images = images / 255.0
         channels_sum += torch.mean(images, dim=[0, 2, 3])

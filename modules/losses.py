@@ -21,7 +21,7 @@ def logits_to_probs(logits: torch.Tensor, num_classes: int, dim: int = 1) -> tor
 
 
 def probs_to_labels(probs: torch.Tensor, thresh: int = None, dim: int = 1) -> torch.Tensor:
-    """Convert class probabilities to labels by choosing the class with the highest probability."""
+    """Convert class probabilities to binary_labels by choosing the class with the highest probability."""
     # probs.shape = (batch_size, num_classes, height, width)
     # returns.shape = (batch_size, height, width)
     return torch.argmax(probs, dim=dim) if thresh is None else (probs > thresh).squeeze(dim).long()
@@ -29,7 +29,7 @@ def probs_to_labels(probs: torch.Tensor, thresh: int = None, dim: int = 1) -> to
 
 def labels_to_onehot(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
     """Convert integer class label to one-hot encoding."""
-    # labels.shape = (batch_size, height, width)
+    # binary_labels.shape = (batch_size, height, width)
     # returns.shape = (batch_size, num_classes, height, width)
     # One-hot encode targets (e.g. 1 -> [0, 1, 0], 2 -> [0, 0, 1]) and move channel dimension to second position or
     # add channel dimension if the data is binary (e.g. (batch_size, height, width) -> (batch_size, 1, height, width))
@@ -360,7 +360,7 @@ class BoundaryLoss(nn.Module):
 # Signed Distance Field is a distance map with negative values inside the object and positive values outside
 def labels_to_sdf(labels: torch.Tensor, num_classes: int, normalize: bool) -> torch.Tensor:
     """Convert a label map to onehot and then to a set of distance maps."""
-    # labels.shape = (batch_size, height, width)
+    # binary_labels.shape = (batch_size, height, width)
     # returns.shape = (batch_size, num_classes, height, width)
     onehot = labels_to_onehot(labels, num_classes).detach().cpu().numpy()
     dist_maps = np.zeros_like(onehot)
@@ -560,7 +560,7 @@ class EdgeLoss(nn.Module):
         probs = logits_to_probs(logits, self.num_classes)
         targets = labels_to_onehot(targets, self.num_classes)
 
-        # Convert one-hot ground truth labels to inverse distance maps
+        # Convert one-hot ground truth binary_labels to inverse distance maps
         target_idms = onehot_to_inverse_dist_map(targets)
 
         # Calculate the Hausdorff distance
@@ -633,6 +633,8 @@ class ComboLoss(nn.Module):
         self.smooth = smooth
 
     def forward(self, logits, targets):
+        # logits shape = (batch_size, num_classes, height, width)
+        # targets shape = (batch_size, height, width)
         probs = logits_to_probs(logits, self.num_classes)
         targets_onehot = labels_to_onehot(targets, self.num_classes)
 

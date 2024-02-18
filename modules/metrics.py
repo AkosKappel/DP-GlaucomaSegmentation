@@ -3,11 +3,15 @@ import torch
 from scipy.ndimage import rotate
 
 __all__ = [
-    'calculate_diameter', 'calculate_vCDR', 'calculate_hCDR',
-    'calculate_metrics', 'get_metrics', 'update_metrics', 'get_extreme_examples',
+    'safe_division', 'calculate_diameter', 'calculate_vCDR', 'calculate_hCDR',
+    'calculate_metrics', 'get_tp_tn_fp_fn', 'get_metrics', 'update_metrics', 'get_extreme_examples',
     'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_and_worst_OD_examples',
     'get_best_OC_examples', 'get_worst_OC_examples', 'get_best_and_worst_OC_examples',
 ]
+
+
+def safe_division(a: int | float, b: int | float) -> float:
+    return a / b if b != 0 else 0
 
 
 def calculate_diameter(image: np.ndarray, label: int | list[int], angle: int = 0) -> int:
@@ -31,48 +35,28 @@ def calculate_diameter(image: np.ndarray, label: int | list[int], angle: int = 0
 def calculate_vCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> float:
     disc_diameter = calculate_diameter(mask, [disc_label], angle=0)
     cup_diameter = calculate_diameter(mask, [cup_label], angle=0)
-    return cup_diameter / disc_diameter
+    return safe_division(cup_diameter, disc_diameter)
 
 
 def calculate_hCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> float:
     disc_diameter = calculate_diameter(mask, [disc_label], angle=90)
     cup_diameter = calculate_diameter(mask, [cup_label], angle=90)
-    return cup_diameter / disc_diameter
+    return safe_division(cup_diameter, disc_diameter)
 
 
-def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) -> dict[str, float]:
-    # Binarize masks - since OC is always inside OD, we can use >= instead of == for extracting
-    # the masks of individual classes. For example, in the masks, the labels are as follows:
-    # 0 = BG, 1 = OD, 2 = OC
-    # but when creating the binary mask we accept:
-    # OD = 1 or 2, OC = 2
-    true = np.isin(true, class_ids)
-    pred = np.isin(pred, class_ids)
-
-    # True Positives, True Negatives, False Positives, False Negatives
-    tp = (true & pred).sum()
-    tn = (~true & ~pred).sum()
-    fp = (~true & pred).sum()
-    fn = (true & ~pred).sum()
-
-    # GT = Ground Truth, SR = Segmentation Region
-    # |GT| = tp + fn, |SR| = tp + fp, |GT ∩ SR| = tp, |GT ∪ SR| = tp + fp + fn
-
-    def safe_division(a, b):
-        return a / b if b != 0 else 0
-
-    # Calculate individual metrics
+# Calculate individual metrics from TP, TN, FP, FN
+def calculate_metrics(tp: int, tn: int, fp: int, fn: int) -> dict[str, float]:
     accuracy = safe_division(tp + tn, tp + tn + fp + fn)
     precision = safe_division(tp, tp + fp)  # PPV (Positive Predictive Value)
-    # npv = safe_division(tn, tn + fn)  # NPV (Negative Predictive Value)
+    npv = safe_division(tn, tn + fn)  # NPV (Negative Predictive Value)
     sensitivity = safe_division(tp, tp + fn)  # TPR (True Positive Rate), Recall, Hit-rate
     specificity = safe_division(tn, tn + fp)  # TNR (True Negative Rate), Selectivity
-    # fpr = safe_division(fp, fp + tn)  # FPR (False Positive Rate), Fall-out
-    # fnr = safe_division(fn, tp + fn)  # FNR (False Negative Rate), Miss Rate
+    fpr = safe_division(fp, fp + tn)  # FPR (False Positive Rate), Fall-out
+    fnr = safe_division(fn, tp + fn)  # FNR (False Negative Rate), Miss Rate
     dice = safe_division(2 * tp, 2 * tp + fp + fn)  # F1 score
     iou = safe_division(tp, tp + fp + fn)  # Jaccard index
     balance_accuracy = safe_division(sensitivity + specificity, 2)
-    # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
+    f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
     # informedness = specificity + sensitivity - 1
     # prevalence = safe_division(tp + fn, tp + tn + fp + fn)
     # fdr = safe_division(fp, tp + fp)  # False Discovery Rate
@@ -82,15 +66,18 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     # dor = safe_division(lr_pos, lr_neg)  # DOR (Diagnostic Odds Ratio)
     # voe = 1 - iou  # Volume Overlap Error
     # rvd = safe_division(fp - fn, tp + fn)  # Relative Volume Difference
-
     return {
         'accuracy': accuracy,
         'precision': precision,
+        'npv': npv,
         'sensitivity': sensitivity,
         'specificity': specificity,
+        'fpr': fpr,
+        'fnr': fnr,
         'dice': dice,
         'iou': iou,
         'balance_accuracy': balance_accuracy,
+        'f1': f1,
         'tp': tp,
         'tn': tn,
         'fp': fp,
@@ -98,8 +85,34 @@ def calculate_metrics(true: np.ndarray, pred: np.ndarray, class_ids: list[int]) 
     }
 
 
+def get_tp_tn_fp_fn(gt: np.ndarray, sr: np.ndarray, class_ids: list[int]) -> tuple[int, int, int, int]:
+    # Flatten the arrays if they are not 1D
+    if gt.ndim > 1:
+        gt = gt.flatten()
+    if sr.ndim > 1:
+        sr = sr.flatten()
+
+    # Binarize masks - since OC is always inside OD, we can use >= instead of == for extracting
+    # the masks of individual classes. For example, in the masks, the binary_labels are as follows:
+    # 0 = BG, 1 = OD, 2 = OC
+    # but when creating the binary mask we accept:
+    # OD = 1 or 2, OC = 2
+    gt = np.isin(gt, class_ids)
+    sr = np.isin(sr, class_ids)
+
+    # GT = Ground Truth, SR = Segmentation Region
+    # |GT| = tp + fn, |SR| = tp + fp, |GT ∩ SR| = tp, |GT ∪ SR| = tp + fp + fn
+    tp = (gt & sr).sum()
+    tn = (~gt & ~sr).sum()
+    fp = (~gt & sr).sum()
+    fn = (gt & ~sr).sum()
+
+    # True Positives, True Negatives, False Positives, False Negatives
+    return tp, tn, fp, fn
+
+
 def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray, labels: list) -> dict[str, float]:
-    # Flatten the tensors to 1D
+    # Flatten the tensors to 1D shape
     true_flat = true.flatten()
     pred_flat = pred.flatten()
 
@@ -109,11 +122,15 @@ def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray
     if isinstance(pred, torch.Tensor):
         pred_flat = pred_flat.detach().cpu().numpy()
 
+    def _get_metrics(gt: np.ndarray, sr: np.ndarray, class_ids: list[int]) -> dict[str, float]:
+        tp, tn, fp, fn = get_tp_tn_fp_fn(gt, sr, class_ids)
+        return calculate_metrics(tp, tn, fp, fn)
+
     # Get metrics separately for OD and OC, treating it as binary segmentation
-    metrics_bg = calculate_metrics(true_flat, pred_flat, [0]) if [0] in labels else {}
-    metrics_nrr = calculate_metrics(true_flat, pred_flat, [1]) if [1] in labels else {}
-    metrics_od = calculate_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in labels else {}
-    metrics_oc = calculate_metrics(true_flat, pred_flat, [2]) if [2] in labels else {}
+    metrics_bg = _get_metrics(true_flat, pred_flat, [0]) if [0] in labels else {}
+    metrics_nrr = _get_metrics(true_flat, pred_flat, [1]) if [1] in labels else {}
+    metrics_od = _get_metrics(true_flat, pred_flat, [1, 2]) if [1, 2] in labels else {}
+    metrics_oc = _get_metrics(true_flat, pred_flat, [2]) if [2] in labels else {}
 
     # Combine the metrics and add suffix to the keys
     return {
@@ -216,13 +233,13 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
                 probs = torch.sigmoid(outputs)
                 preds = (probs > thresh).squeeze(1).long()
 
-                # Convert the predictions to correct labels in ground truth format
+                # Convert the predictions to correct binary_labels in ground truth format
                 if class_ids == [1, 2]:
-                    masks[masks == 2] = 1  # turn OC labels to OD labels
+                    masks[masks == 2] = 1  # turn OC binary_labels to OD binary_labels
                 elif class_ids == [1]:
-                    masks[masks == 2] = 0  # hide OC labels
+                    masks[masks == 2] = 0  # hide OC binary_labels
                 elif class_ids == [2]:
-                    preds[preds == 1] = 2  # change predicted positive labels to OC labels
+                    preds[preds == 1] = 2  # change predicted positive binary_labels to OC binary_labels
                     masks[masks == 1] = 0  # hide OD from ground truth
             elif softmax:
                 # Multi-class segmentation

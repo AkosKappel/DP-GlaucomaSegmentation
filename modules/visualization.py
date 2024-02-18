@@ -7,23 +7,12 @@ from torchview import draw_graph
 from matplotlib.patches import Patch
 
 __all__ = [
-    'show_model_graph', 'show_model_view', 'plot_history', 'unnormalize', 'get_input_images', 'get_input_image',
-    'get_ground_truth_masks', 'get_ground_truth_mask', 'get_prediction_masks', 'get_prediction_mask',
-    'get_cover_images', 'get_cover_image', 'get_overlay_images', 'get_overlay_image', 'get_contour_images',
-    'get_contour_image', 'plot_image_grid', 'plot_results', 'plot_side_by_side', 'plot_results_from_loader',
+    'plot_history', 'show_model_graph', 'show_model_view',
+    'get_input_images', 'get_input_image', 'get_ground_truth_masks', 'get_ground_truth_mask',
+    'get_prediction_masks', 'get_prediction_mask', 'get_cover_images', 'get_cover_image',
+    'get_overlay_images', 'get_overlay_image', 'get_contour_images', 'get_contour_image',
+    'plot_image_grid', 'plot_results', 'plot_side_by_side', 'plot_results_from_loader',
 ]
-
-
-def show_model_graph(model, input_size, expand_nested=True):
-    model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)
-    return model_graph.visual_graph
-
-
-def show_model_view(model, input_size, name='model', fmt='png'):
-    x = torch.zeros(input_size, dtype=torch.float32)
-    graph = torchviz.make_dot(model(x), params=dict(model.named_parameters()))
-    graph.render(name, format=fmt)
-    graph.view()
 
 
 def plot_history(hist, figsize=(14, 8), n_cols: int = 4):
@@ -53,12 +42,16 @@ def plot_history(hist, figsize=(14, 8), n_cols: int = 4):
     plt.show()
 
 
-def unnormalize(image, mean, std):
-    """Restore a normalized image to its original state."""
-    restored_image = image.copy()
-    for c in range(restored_image.shape[-1]):
-        restored_image[:, :, c] = (restored_image[:, :, c] * std[c]) + mean[c]
-    return restored_image
+def show_model_graph(model, input_size, expand_nested=True):
+    model_graph = draw_graph(model, input_size=input_size, expand_nested=expand_nested)
+    return model_graph.visual_graph
+
+
+def show_model_view(model, input_size, name='model', fmt='png'):
+    x = torch.zeros(input_size, dtype=torch.float32)
+    graph = torchviz.make_dot(model(x), params=dict(model.named_parameters()))
+    graph.render(name, format=fmt)
+    graph.view()
 
 
 # Label colors
@@ -77,7 +70,7 @@ od_overlay_color = np.array((0, 0, 1))  # blue
 oc_overlay_color = np.array((0, 1, 1))  # cyan
 
 # Contour colors
-true_color = (0, 0, 255)  # blue
+true_color = (0, 0, 1)  # blue
 predicted_color = (0, 0, 0)  # black
 
 
@@ -256,8 +249,8 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
 
     if contour_legend:
         axes[rows - 1, contour_legend].legend(handles=[
-            Patch(color=np.array(true_color) / 255, label='True'),
-            Patch(color=np.array(predicted_color) / 255, label='Predicted'),
+            Patch(color=np.array(true_color), label='True'),
+            Patch(color=np.array(predicted_color), label='Predicted'),
         ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=1)
 
     plt.tight_layout()
