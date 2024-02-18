@@ -116,6 +116,8 @@ def predict_binary(model, images, masks=None, device=None, criterion=None,
 
     if binary_labels is None:
         binary_labels = torch.tensor([1, 2], device=images.device)
+    elif isinstance(binary_labels, torch.Tensor):
+        binary_labels = binary_labels.to(images.device)
     else:
         binary_labels = torch.tensor(binary_labels, device=images.device)
 
@@ -152,12 +154,12 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
     od_probabilities = torch.sigmoid(od_logits)  # (N, 1, H, W)
     od_predictions = (od_probabilities > (od_threshold or threshold)).long()  # (N, 1, H, W)
 
-    # Cascading effect: cover everything that is not inside the optic disc
-    images = images * od_predictions  # (N, C, H, W)
+    # Cascading effect: crop everything that is not inside the optic disc
+    cropped_images = images * od_predictions  # (N, C, H, W)
 
     model.eval()
     with torch.no_grad():
-        oc_logits = model(images)
+        oc_logits = model(cropped_images)
     oc_probabilities = torch.sigmoid(oc_logits)  # (N, 1, H, W)
     oc_predictions = (oc_probabilities > (oc_threshold or threshold)).long()  # (N, 1, H, W)
 

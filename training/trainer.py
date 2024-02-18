@@ -319,11 +319,11 @@ def save_checkpoint(state, filepath: str = 'model.pth'):
     torch.save(state, filepath)
 
 
-def load_checkpoint(filepath: str):
+def load_checkpoint(filepath: str, **kwargs):
     # check if file exists
     assert os.path.isfile(filepath), f'Invalid checkpoint file: {filepath}'
 
     # load checkpoint from file
     print(f'=> Loading checkpoint: {filepath}')
-    checkpoint = torch.load(filepath)
+    checkpoint = torch.load(filepath, **kwargs)
     return checkpoint
