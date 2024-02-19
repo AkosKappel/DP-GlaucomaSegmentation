@@ -258,7 +258,8 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
             preds = preds.detach().cpu().numpy()
 
             for i, _ in enumerate(images):
-                score = get_metrics(masks[i], preds[i], class_ids)[metric]
+                tp, tn, fp, fn = get_tp_tn_fp_fn(masks[i], preds[i], class_ids)
+                score = calculate_metrics(tp, tn, fp, fn)[metric]
                 examples.append((images[i], masks[i], preds[i], score))
 
         # Sort the examples based on their scores
