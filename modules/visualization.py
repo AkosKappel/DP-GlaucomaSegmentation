@@ -386,6 +386,7 @@ def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_s
             )
 
             if mode == 'binary':  # Binarize masks and predictions
+                masks = masks.to(device).long()
                 masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
                 if class_ids == [[2]]:
                     preds[preds == 1] = 2
