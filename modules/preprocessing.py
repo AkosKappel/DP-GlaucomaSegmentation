@@ -1,71 +1,231 @@
 import cv2 as cv
 import numpy as np
-from pathlib import Path
+import torch
 
 __all__ = [
-    'extract_optic_disc', 'extract_optic_cup',
-    'otsu', 'clahe', 'histogram_equalization',
-    'split_rgb_channels', 'to_greyscale', 'brightness_contrast', 'sharpening',
-    'distance_transform', 'boundary_transform',
+    'to_red_channel', 'to_green_channel', 'to_blue_channel', 'to_gray_channel',
+    'binarize', 'extract_disc_mask', 'extract_cup_mask',
+    'arctan', 'distance_transform', 'boundary_transform',
+    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform',
+    'occlude', 'sharpen', 'sharpening', 'otsu', 'clahe', 'histogram_equalization',
+    'calculate_rgb_cumsum', 'source_to_target_correction', 'get_bounding_box',
 ]
 
 
-def extract_optic_disc(src_dir: Path, dst_dir: Path, value: int = 0):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_GRAYSCALE)
-        disc = np.where(img > value, 1, 0).astype(np.uint8)
-
-        cv.imwrite(str(dst_dir / img_path.name), disc)
-        num += 1
-
-    print(f'Extracted optic disc from {num} images from {src_dir} and saved to {dst_dir}')
+def to_red_channel(image: np.ndarray, **kwargs) -> np.ndarray:
+    return image[:, :, 0]
 
 
-def extract_optic_cup(src_dir: Path, dst_dir: Path, value: int = 1):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_GRAYSCALE)
-        cup = np.where(img > value, 1, 0).astype(np.uint8)
-
-        cv.imwrite(str(dst_dir / img_path.name), cup)
-        num += 1
-
-    print(f'Extracted optic cup from {num} images from {src_dir} and saved to {dst_dir}')
+def to_green_channel(image: np.ndarray, **kwargs) -> np.ndarray:
+    return image[:, :, 1]
 
 
-def otsu(gray_image, ignore_value=None):
+def to_blue_channel(image: np.ndarray, **kwargs) -> np.ndarray:
+    return image[:, :, 2]
+
+
+def to_gray_channel(image: np.ndarray, **kwargs) -> np.ndarray:
+    if image.ndim == 3:
+        return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    return image
+
+
+def binarize(mask: np.ndarray, labels: int | list[int], **kwargs) -> np.ndarray:
+    assert mask.ndim == 2, f'Mask must be grayscale, but got shape: {mask.shape}'
+    if isinstance(labels, int):
+        return np.where(mask > labels, 1, 0).astype(np.uint8)
+    return np.isin(mask, labels).astype(np.uint8)
+
+
+def extract_disc_mask(mask: np.ndarray, **kwargs) -> np.ndarray:
+    return binarize(mask, labels=[1, 2])
+
+
+def extract_cup_mask(mask: np.ndarray, **kwargs) -> np.ndarray:
+    return binarize(mask, labels=[2])
+
+
+def extract_rim_mask(mask: np.ndarray, **kwargs) -> np.ndarray:
+    return binarize(mask, labels=[1])
+
+
+# Different activation function instead of sigmoid
+# see: https://lars76.github.io/2021/09/05/activations-segmentation.html
+def arctan(x):
+    return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
+
+
+def distance_transform(mask: np.ndarray, mode: str = 'L2', normalize: bool = True, invert: bool = False,
+                       add_fg: bool = True, add_bg: bool = True, negate_fg: bool = False, negate_bg: bool = False):
+    assert mode in ('L1', 'L2'), f'Invalid distance transform mode: {mode}'
+    assert add_fg or add_bg, 'At least one of add_fg and add_bg must be True'
+    assert mask.ndim == 2, f'Invalid mask shape: {mask.shape}. Must be 2D (grayscale)'
+
+    fg = np.where(mask > 0, 1, 0).astype(np.uint8)
+    bg = np.where(mask == 0, 1, 0).astype(np.uint8)
+
+    if mode == 'L1':
+        fg = cv.distanceTransform(fg, cv.DIST_L1, 3)
+        bg = cv.distanceTransform(bg, cv.DIST_L1, 3)
+    elif mode == 'L2':
+        fg = cv.distanceTransform(fg, cv.DIST_L2, 3)
+        bg = cv.distanceTransform(bg, cv.DIST_L2, 3)
+
+    if normalize:
+        fg = cv.normalize(fg, None, alpha=0, beta=1, norm_type=cv.NORM_MINMAX, dtype=cv.CV_32F)
+        bg = cv.normalize(bg, None, alpha=0, beta=1, norm_type=cv.NORM_MINMAX, dtype=cv.CV_32F)
+
+    if invert:
+        fg = np.max(fg) - fg
+        bg = np.max(bg) - bg
+
+    if negate_fg:
+        fg = -fg
+    if negate_bg:
+        bg = -bg
+
+    if add_fg and add_bg:
+        mask = fg + bg
+    elif add_fg:
+        mask = fg
+    elif add_bg:
+        mask = bg
+
+    return (mask * 255).astype(np.uint8)
+
+
+def boundary_transform(mask: np.ndarray, kernel_size: int = 5, structure: int = cv.MORPH_ELLIPSE, iterations: int = 1):
+    assert mask.ndim == 2, f'Invalid mask shape: {mask.shape}. Must be 2D (grayscale)'
+
+    kernel = cv.getStructuringElement(structure, (kernel_size, kernel_size))
+    dilation = cv.dilate(mask, kernel, iterations=iterations)
+    erosion = cv.erode(mask, kernel, iterations=iterations)
+
+    # Extracts the boundary of the mask as a difference between the dilation and erosion
+    boundary = dilation - erosion
+    return (boundary * 255).astype(np.uint8)
+
+
+def polar_transform(cartesian_image: np.ndarray, radius_ratio: float = 1.0, **kwargs) -> np.ndarray:
+    height, width = cartesian_image.shape[:2]
+    center = (width // 2, height // 2)
+
+    # Linear interpolation between inner and outer radius
+    inner_radius = np.min([width, height]) / 2.0
+    outer_radius = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
+    radius = inner_radius + (outer_radius - inner_radius) * radius_ratio
+
+    polar_image = cv.linearPolar(cartesian_image, center, radius, cv.WARP_FILL_OUTLIERS)
+    polar_image = cv.rotate(polar_image, cv.ROTATE_90_COUNTERCLOCKWISE)
+    return polar_image
+
+
+def inverse_polar_transform(polar_image: np.ndarray, radius_ratio: float = 1.0, **kwargs) -> np.ndarray:
+    polar_image = cv.rotate(polar_image, cv.ROTATE_90_CLOCKWISE)
+    height, width = polar_image.shape[:2]
+    center = (width // 2, height // 2)
+
+    inner_radius = np.min([width, height]) / 2.0
+    outer_radius = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
+    radius = inner_radius + (outer_radius - inner_radius) * radius_ratio
+
+    cartesian_image = cv.linearPolar(polar_image, center, radius, cv.WARP_INVERSE_MAP | cv.WARP_FILL_OUTLIERS)
+    return cartesian_image
+
+
+def undo_polar_transform(images_batch: torch.Tensor, masks_batch: torch.Tensor, preds_batch: torch.Tensor):
+    np_images = images_batch.detach().cpu().numpy().transpose(0, 2, 3, 1)
+    np_masks = masks_batch.detach().cpu().numpy()
+    np_preds = preds_batch.detach().cpu().numpy()
+
+    new_images = np.zeros_like(np_images)
+    new_masks = np.zeros_like(np_masks)
+    new_preds = np.zeros_like(np_preds)
+
+    for i, _ in enumerate(np_images):
+        new_images[i] = inverse_polar_transform(np_images[i])
+        new_masks[i] = inverse_polar_transform(np_masks[i])
+        new_preds[i] = inverse_polar_transform(np_preds[i])
+
+    images_batch = torch.from_numpy(new_images.transpose(0, 3, 1, 2)).float().to(images_batch.device)
+    masks_batch = torch.from_numpy(new_masks).long().to(masks_batch.device)
+    preds_batch = torch.from_numpy(new_preds).long().to(preds_batch.device)
+
+    return images_batch, masks_batch, preds_batch
+
+
+def occlude(image: np.ndarray, p: float = 0.5, occlusion_size: int = 32, occlusion_value: int = 0, **kwargs):
+    if np.random.rand() > p:
+        return image
+
+    h, w = image.shape[:2]
+    assert h >= occlusion_size and w >= occlusion_size, \
+        f'Image size ({h}x{w}) must be greater than occlusion size ({occlusion_size}x{occlusion_size})'
+
+    x = np.random.randint(0, w - occlusion_size)
+    y = np.random.randint(0, h - occlusion_size)
+
+    final_image = image.copy()
+    final_image[y:y + occlusion_size, x:x + occlusion_size] = occlusion_value
+    return final_image
+
+
+def sharpen(image: np.ndarray, p: float = 0.5, connectivity: int = 4, **kwargs):
+    if np.random.rand() > p:
+        return image
+
+    if connectivity == 4:
+        kernel = np.array([
+            [0, -1, 0],
+            [-1, 5, -1],
+            [0, -1, 0],
+        ])
+    elif connectivity == 8:
+        kernel = np.array([
+            [-1, -1, -1],
+            [-1, 9, -1],
+            [-1, -1, -1],
+        ])
+    else:
+        raise ValueError(f'Invalid connectivity: {connectivity!r}. Must be 4 or 8.')
+    return cv.filter2D(image, -1, kernel)
+
+
+def sharpening(image: np.ndarray, kernel_size: int = 5, sigma: float = 1.0, amount: float = 1.0, threshold: int = 0):
+    blurred = cv.GaussianBlur(image, (kernel_size, kernel_size), sigma)
+    sharpened = float(amount + 1) * image - float(amount) * blurred
+    sharpened = np.maximum(sharpened, np.zeros(sharpened.shape))
+    sharpened = np.minimum(sharpened, 255 * np.ones(sharpened.shape))
+    sharpened = sharpened.round().astype(np.uint8)
+
+    if threshold > 0:
+        low_contrast_mask = np.absolute(image - blurred) < threshold
+        np.copyto(sharpened, image, where=low_contrast_mask)
+
+    return sharpened
+
+
+def otsu(gray_image: np.ndarray, ignore_value: int = None) -> (int, np.ndarray):
+    if gray_image.ndim == 3:
+        gray_image = cv.cvtColor(gray_image, cv.COLOR_BGR2GRAY)
+    if gray_image.dtype != np.uint8:
+        gray_image = (gray_image * 255).astype(np.uint8)
+
     pixel_number = gray_image.shape[0] * gray_image.shape[1]
     mean_weight = 1.0 / pixel_number
 
-    his, bins = np.histogram(gray_image, np.arange(0, 257))
+    hist, bins = np.histogram(gray_image, np.arange(0, 257))
     intensity_arr = np.arange(256)
 
     final_thresh = -1
     final_value = -1
 
     if ignore_value is not None:
-        his[ignore_value] = 0
+        hist[ignore_value] = 0
 
     for t in bins[1:-1]:
-        pcb = np.sum(his[:t])
-        pcf = np.sum(his[t:])
+        pcb = np.sum(hist[:t])
+        pcf = np.sum(hist[t:])
 
         if pcb == 0:
             continue
@@ -75,264 +235,98 @@ def otsu(gray_image, ignore_value=None):
         wb = pcb * mean_weight
         wf = pcf * mean_weight
 
-        mub = np.sum(intensity_arr[:t] * his[:t]) / float(pcb)
-        muf = np.sum(intensity_arr[t:] * his[t:]) / float(pcf)
+        mub = np.sum(intensity_arr[:t] * hist[:t]) / float(pcb)
+        muf = np.sum(intensity_arr[t:] * hist[t:]) / float(pcf)
         value = wb * wf * (mub - muf) ** 2
 
         if value > final_value:
             final_thresh = t
             final_value = value
 
-    final_img = gray_image.copy()
-    final_img[gray_image > final_thresh] = 255
-    final_img[gray_image < final_thresh] = 0
-    return final_thresh - 1, final_img
-
-
-def clahe(src_dir: Path, dst_dir: Path, mode='grey', clip_limit: float = 2.0, tile_grid_size: tuple = (8, 8)):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-
-        if img.shape[-1] == 3:
-            if mode == 'grey':
-                img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            elif mode == 'red':
-                img = img[:, :, 2]
-            elif mode == 'green':
-                img = img[:, :, 1]
-            elif mode == 'blue':
-                img = img[:, :, 0]
-            else:
-                raise ValueError(f'Invalid image channel mode: {mode}')
-
-        c = cv.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        img = c.apply(img)
-        cv.imwrite(str(dst_dir / img_path.name), img)
-        num += 1
-
-    print(f'CLAHE ({mode}) applied to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def histogram_equalization(src_dir: Path, dst_dir: Path, mode='grey'):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-    assert mode in ['grey', 'red', 'green', 'blue'], f'Invalid image channel mode: {mode}'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-
-        if img.shape[-1] == 3:
-            if mode == 'grey':
-                img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            elif mode == 'red':
-                img = img[:, :, 2]
-            elif mode == 'green':
-                img = img[:, :, 1]
-            elif mode == 'blue':
-                img = img[:, :, 0]
-
-        img = cv.equalizeHist(img)
-        cv.imwrite(str(dst_dir / img_path.name), img)
-        num += 1
-
-    print(f'Histogram equalization ({mode}) applied to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def split_rgb_channels(src_dir: Path, dst_dir: Path,
-                       red_name: str = 'red', green_name: str = 'green', blue_name: str = 'blue'):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    red_dir = dst_dir / red_name
-    green_dir = dst_dir / green_name
-    blue_dir = dst_dir / blue_name
-
-    red_dir.mkdir(parents=True, exist_ok=True)
-    green_dir.mkdir(parents=True, exist_ok=True)
-    blue_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-
-        if img.shape[-1] == 3:
-            img_r, img_g, img_b = cv.split(img)
-            cv.imwrite(str(red_dir / img_path.name), img_r)
-            cv.imwrite(str(green_dir / img_path.name), img_g)
-            cv.imwrite(str(blue_dir / img_path.name), img_b)
-            num += 1
-
-    print(f'RGB channels split for {num} images from {src_dir} and saved to {red_dir}, {green_dir}, {blue_dir}')
-
-
-def to_greyscale(src_dir: Path, dst_dir: Path):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-
-        if img.shape[-1] == 3:
-            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            cv.imwrite(str(dst_dir / img_path.name), img)
-            num += 1
-
-    print(f'Converted {num} images from {src_dir} to greyscale and saved to {dst_dir}')
-
-
-def brightness_contrast(src_dir: Path, dst_dir: Path, alpha: float = 1.0, beta: float = 0.0):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-        img = cv.convertScaleAbs(img, alpha=alpha, beta=beta)
-        cv.imwrite(str(dst_dir / img_path.name), img)
-        num += 1
-
-    print(f'Applied brightness/contrast to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def sharpening(src_dir: Path, dst_dir: Path, kernel_size: int = 5, sigma: float = 1.0, amount: float = 1.0,
-               threshold: float = 0):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for img_path in src_dir.iterdir():
-        if not img_path.is_file():
-            continue
-
-        img = cv.imread(str(img_path), cv.IMREAD_COLOR)
-        # sharpened = cv.filter2D(img, -1, kernel)
-
-        blurred = cv.GaussianBlur(img, (kernel_size, kernel_size), sigma)
-        sharpened = float(amount + 1) * img - float(amount) * blurred
-        sharpened = np.maximum(sharpened, np.zeros(sharpened.shape))
-        sharpened = np.minimum(sharpened, 255 * np.ones(sharpened.shape))
-        sharpened = sharpened.round().astype(np.uint8)
-
-        if threshold > 0:
-            low_contrast_mask = np.absolute(img - blurred) < threshold
-            np.copyto(sharpened, img, where=low_contrast_mask)
-
-        cv.imwrite(str(dst_dir / img_path.name), sharpened)
-
-    print(f'Applied sharpening to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def distance_transform(src_dir: Path, dst_dir: Path, mode: str = 'L2', normalize: bool = True, invert: bool = False,
-                       add_fg: bool = True, add_bg: bool = True, negate_fg: bool = False, negate_bg: bool = False):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-    assert mode in ['L1', 'L2'], f'Invalid distance transform mode: {mode}'
-    assert add_fg or add_bg, 'At least one of add_fg and add_bg must be True'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    num = 0
-    for mask_path in src_dir.iterdir():
-        if not mask_path.is_file():
-            continue
-
-        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
-
-        fg = np.where(mask > 0, 1, 0).astype(np.uint8)
-        bg = np.where(mask == 0, 1, 0).astype(np.uint8)
-
-        if mode == 'L1':
-            fg = cv.distanceTransform(fg, cv.DIST_L1, 3)
-            bg = cv.distanceTransform(bg, cv.DIST_L1, 3)
-        elif mode == 'L2':
-            fg = cv.distanceTransform(fg, cv.DIST_L2, 3)
-            bg = cv.distanceTransform(bg, cv.DIST_L2, 3)
-
-        if normalize:
-            fg = cv.normalize(fg, None, alpha=0, beta=1, norm_type=cv.NORM_MINMAX, dtype=cv.CV_32F)
-            bg = cv.normalize(bg, None, alpha=0, beta=1, norm_type=cv.NORM_MINMAX, dtype=cv.CV_32F)
-
-        if invert:
-            fg = np.max(fg) - fg
-            bg = np.max(bg) - bg
-
-        if negate_fg:
-            fg = -fg
-        if negate_bg:
-            bg = -bg
-
-        if add_fg and add_bg:
-            mask = fg + bg
-        elif add_fg:
-            mask = fg
-        elif add_bg:
-            mask = bg
-
-        # Convert to uint8
-        mask = (mask * 255).astype(np.uint8)
-
-        cv.imwrite(str(dst_dir / mask_path.name), mask)
-        num += 1
-
-    print(f'Distance transform ({mode}) applied to {num} images from {src_dir} and saved to {dst_dir}')
-
-
-def boundary_transform(src_dir: Path, dst_dir: Path, kernel_size: int = 5):
-    assert src_dir.exists(), f'{src_dir} not found'
-    assert src_dir.is_dir(), f'{src_dir} is not a directory'
-
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (kernel_size, kernel_size))
-
-    num = 0
-    for mask_path in src_dir.iterdir():
-        if not mask_path.is_file():
-            continue
-
-        mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
-
-        dilation = cv.dilate(mask, kernel, iterations=1)
-        erosion = cv.erode(mask, kernel, iterations=1)
-
-        # Extracts the boundary of the mask as a difference between the dilation and erosion
-        boundary = dilation - erosion
-
-        # Convert to uint8
-        boundary = (boundary * 255).astype(np.uint8)
-
-        cv.imwrite(str(dst_dir / mask_path.name), boundary)
-        num += 1
-
-    print(f'Boundary transform applied to {num} images from {src_dir} and saved to {dst_dir}')
+    final_image = gray_image.copy()
+    final_image[gray_image > final_thresh] = 255
+    final_image[gray_image < final_thresh] = 0
+    return final_thresh - 1, final_image
+
+
+def clahe(image: np.ndarray, clip_limit: float = 2.0, tile_grid_size: tuple[int, int] = (8, 8), channel: str = 'grey'):
+    if image.ndim == 3:
+        if channel == 'grey':
+            image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        elif channel == 'red':
+            image = image[:, :, 2]
+        elif channel == 'green':
+            image = image[:, :, 1]
+        elif channel == 'blue':
+            image = image[:, :, 0]
+        else:
+            raise ValueError(f'Invalid image channel mode: {channel}')
+
+    c = cv.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    return c.apply(image.copy())
+
+
+def histogram_equalization(image: np.ndarray, channel: str = 'grey'):
+    if image.shape[-1] == 3:
+        if channel == 'grey':
+            image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        elif channel == 'red':
+            image = image[:, :, 2]
+        elif channel == 'green':
+            image = image[:, :, 1]
+        elif channel == 'blue':
+            image = image[:, :, 0]
+        else:
+            raise ValueError(f'Invalid image channel mode: {channel}')
+
+    return cv.equalizeHist(image)
+
+
+def calculate_rgb_cumsum(image: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarray):
+    r_hist = cv.calcHist([image], [0], None, [256], [0, 256])
+    g_hist = cv.calcHist([image], [1], None, [256], [0, 256])
+    b_hist = cv.calcHist([image], [2], None, [256], [0, 256])
+
+    r_cdf = r_hist.cumsum()
+    g_cdf = g_hist.cumsum()
+    c_blue = b_hist.cumsum()
+
+    # normalize to [0, 1]
+    r_cdf /= r_cdf[-1]
+    g_cdf /= g_cdf[-1]
+    c_blue /= c_blue[-1]
+
+    return r_cdf, g_cdf, c_blue
+
+
+def source_to_target_correction(source_image: np.ndarray, target_image: np.ndarray) -> np.ndarray:
+    cdf_source_red, cdf_source_green, cdf_source_blue = calculate_rgb_cumsum(source_image)
+    cdf_target_red, cdf_target_green, cdf_target_blue = calculate_rgb_cumsum(target_image)
+
+    # interpolate CDFs
+    red_lookup = np.interp(cdf_source_red, cdf_target_red, np.arange(256))
+    green_lookup = np.interp(cdf_source_green, cdf_target_green, np.arange(256))
+    blue_lookup = np.interp(cdf_source_blue, cdf_target_blue, np.arange(256))
+
+    # apply the lookup tables to the source image
+    corrected = source_image.copy()
+    corrected[..., 0] = red_lookup[source_image[..., 0]].reshape(source_image.shape[:2])
+    corrected[..., 1] = green_lookup[source_image[..., 1]].reshape(source_image.shape[:2])
+    corrected[..., 2] = blue_lookup[source_image[..., 2]].reshape(source_image.shape[:2])
+
+    return corrected
+
+
+def get_bounding_box(binary_mask: np.ndarray) -> tuple[int, int, int, int]:
+    # Find the contours of the binary mask (there should be only one)
+    contours, _ = cv.findContours(binary_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return 0, 0, 0, 0
+
+    # Get the largest / only contour
+    max_contour = max(contours, key=cv.contourArea)
+
+    # Get the bounding box of the contour
+    x, y, w, h = cv.boundingRect(max_contour)
+
+    return x, y, w, h

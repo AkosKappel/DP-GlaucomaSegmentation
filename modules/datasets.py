@@ -1,9 +1,9 @@
 import cv2 as cv
 import numpy as np
 import pandas as pd
-import torch
 import os
 import scipy.io
+import torch
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader

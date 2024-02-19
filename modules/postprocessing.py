@@ -16,25 +16,25 @@ __all__ = [
 
 
 def separate_disc_and_cup_mask(mask: np.ndarray) -> (np.ndarray, np.ndarray):
-    # OD: 1, OC: 2, BG: 0
-    od_mask = np.where(mask >= 1, 1, 0).astype(np.uint8)
-    oc_mask = np.where(mask >= 2, 1, 0).astype(np.uint8)
-    return od_mask, oc_mask
+    # Background: 0, Optic disc: 1, Optic cup: 2
+    optic_disc_mask = np.where(mask >= 1, 1, 0).astype(np.uint8)
+    optic_cup_mask = np.where(mask >= 2, 1, 0).astype(np.uint8)
+    return optic_disc_mask, optic_cup_mask
 
 
-def to_numpy(tensor):
+def to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy().astype(np.uint8)
 
 
-def to_tensor(array):
+def to_tensor(array: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(array)
 
 
-def unpack(array, axis: int = 0):
+def unpack(array: np.ndarray, axis: int = 0):
     return [array[i] for i in range(array.shape[axis])]
 
 
-def pack(array, axis: int = 0):
+def pack(array: list[np.ndarray], axis: int = 0):
     return np.stack(array, axis=axis)
 
 
