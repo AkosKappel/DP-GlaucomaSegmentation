@@ -64,9 +64,9 @@ class CBAM(nn.Module):
         return x
 
 
-class SingleConv(nn.Module):
+class RefSingleConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.2):
-        super(SingleConv, self).__init__()
+        super(RefSingleConv, self).__init__()
 
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False)
         self.bn = nn.BatchNorm2d(out_channels)
@@ -76,9 +76,9 @@ class SingleConv(nn.Module):
         return F.relu(self.dropout(self.bn(self.conv(x))), inplace=True)
 
 
-class DoubleConv(nn.Module):
+class RefDoubleConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
-        super(DoubleConv, self).__init__()
+        super(RefDoubleConv, self).__init__()
 
         if mid_channels is None:
             mid_channels = out_channels
@@ -108,17 +108,17 @@ class ConvCBAM(nn.Module):
         return F.relu(self.cbam(self.bn(self.conv(x))), inplace=True)
 
 
-class Encoder(nn.Module):
+class RefEncoder(nn.Module):
     def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
-        super(Encoder, self).__init__()
+        super(RefEncoder, self).__init__()
 
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.multi_scale_input = multi_scale_input
 
         if multi_scale_input:
-            self.side1 = SingleConv(in_channels, features[0])
-            self.side2 = SingleConv(in_channels, features[1])
-            self.side3 = SingleConv(in_channels, features[2])
+            self.side1 = RefSingleConv(in_channels, features[0])
+            self.side2 = RefSingleConv(in_channels, features[1])
+            self.side3 = RefSingleConv(in_channels, features[2])
 
             self.avgpool2 = nn.AvgPool2d(kernel_size=2, stride=2)
             self.avgpool4 = nn.AvgPool2d(kernel_size=4, stride=4)
@@ -127,11 +127,11 @@ class Encoder(nn.Module):
         multiplier = 2 if multi_scale_input else 1
 
         # Backbone encoder
-        self.en1 = DoubleConv(in_channels, features[0])
-        self.en2 = DoubleConv(features[0] * multiplier, features[1])
-        self.en3 = DoubleConv(features[1] * multiplier, features[2])
-        self.en4 = DoubleConv(features[2] * multiplier, features[3])
-        self.en5 = DoubleConv(features[3], features[4])
+        self.en1 = RefDoubleConv(in_channels, features[0])
+        self.en2 = RefDoubleConv(features[0] * multiplier, features[1])
+        self.en3 = RefDoubleConv(features[1] * multiplier, features[2])
+        self.en4 = RefDoubleConv(features[2] * multiplier, features[3])
+        self.en5 = RefDoubleConv(features[3], features[4])
 
     def forward(self, x):
         # Contracting path
@@ -161,9 +161,9 @@ class Encoder(nn.Module):
         return e1, e2, e3, e4, e5
 
 
-class Decoder(nn.Module):
+class RefDecoder(nn.Module):
     def __init__(self, features: list[int], out_channels: int, concat_channels: int, dropout: float = 0.2):
-        super(Decoder, self).__init__()
+        super(RefDecoder, self).__init__()
         # concat_features = number of channels per skip connection that will be concatenated
 
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -173,27 +173,27 @@ class Decoder(nn.Module):
         self.up8 = nn.Upsample(scale_factor=8, mode='bilinear', align_corners=True)
 
         # Decoder at level 4 (lowest)
-        self.de4_en2 = SingleConv(features[1], concat_channels, dropout=dropout)
-        self.de4_en4 = SingleConv(features[3], concat_channels, dropout=dropout)
-        self.de4_de5 = SingleConv(features[4], concat_channels, dropout=dropout)
+        self.de4_en2 = RefSingleConv(features[1], concat_channels, dropout=dropout)
+        self.de4_en4 = RefSingleConv(features[3], concat_channels, dropout=dropout)
+        self.de4_de5 = RefSingleConv(features[4], concat_channels, dropout=dropout)
         self.de4 = ConvCBAM(3 * concat_channels, features[3])
 
         # Decoder at level 3
-        self.de3_en1 = SingleConv(features[0], concat_channels, dropout=dropout)
-        self.de3_en3 = SingleConv(features[2], concat_channels, dropout=dropout)
-        self.de3_de4 = SingleConv(features[3], concat_channels, dropout=dropout)
+        self.de3_en1 = RefSingleConv(features[0], concat_channels, dropout=dropout)
+        self.de3_en3 = RefSingleConv(features[2], concat_channels, dropout=dropout)
+        self.de3_de4 = RefSingleConv(features[3], concat_channels, dropout=dropout)
         self.de3 = ConvCBAM(3 * concat_channels, features[2])
 
         # Decoder at level 2
-        self.de2_en2 = SingleConv(features[1], concat_channels, dropout=dropout)
-        self.de2_de3 = SingleConv(features[2], concat_channels, dropout=dropout)
+        self.de2_en2 = RefSingleConv(features[1], concat_channels, dropout=dropout)
+        self.de2_de3 = RefSingleConv(features[2], concat_channels, dropout=dropout)
         self.de2 = ConvCBAM(2 * concat_channels, features[1])
 
         # Decoder at level 1 (highest)
-        self.de1_en1 = SingleConv(features[0], concat_channels, dropout=dropout)
-        self.de1_de2 = SingleConv(features[1], concat_channels, dropout=dropout)
-        self.de1_de3 = SingleConv(features[2], concat_channels, dropout=dropout)
-        self.de1_de4 = SingleConv(features[3], concat_channels, dropout=dropout)
+        self.de1_en1 = RefSingleConv(features[0], concat_channels, dropout=dropout)
+        self.de1_de2 = RefSingleConv(features[1], concat_channels, dropout=dropout)
+        self.de1_de3 = RefSingleConv(features[2], concat_channels, dropout=dropout)
+        self.de1_de4 = RefSingleConv(features[3], concat_channels, dropout=dropout)
         self.de1 = ConvCBAM(4 * concat_channels, features[0])
 
         # Final convolution
@@ -238,8 +238,8 @@ class RefUnet3PlusCBAM(nn.Module):
         self.features = features or [32, 64, 128, 256, 512]
         assert len(self.features) == 5, 'Refined U-Net 3+ with CBAM requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder = Decoder(features, out_channels, features[0], dropout=dropout)
+        self.encoder = RefEncoder(in_channels, features, multi_scale_input)
+        self.decoder = RefDecoder(features, out_channels, features[0], dropout=dropout)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -258,9 +258,9 @@ class DualRefUnet3PlusCBAM(nn.Module):
         self.features = features or [32, 64, 128, 256, 512]
         assert len(self.features) == 5, 'Dual Refined U-Net 3+ with CBAM requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder1 = Decoder(features, out_channels, features[0], dropout=dropout)
-        self.decoder2 = Decoder(features, out_channels, features[0], dropout=dropout)
+        self.encoder = RefEncoder(in_channels, features, multi_scale_input)
+        self.decoder1 = RefDecoder(features, out_channels, features[0], dropout=dropout)
+        self.decoder2 = RefDecoder(features, out_channels, features[0], dropout=dropout)
 
     def forward(self, x):
         x = self.encoder(x)

@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class SingleConv(nn.Module):
+class RauSingleConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int):
-        super(SingleConv, self).__init__()
+        super(RauSingleConv, self).__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=True),
             nn.BatchNorm2d(out_channels),
@@ -16,9 +16,9 @@ class SingleConv(nn.Module):
         return self.conv(x)
 
 
-class DoubleConv(nn.Module):
+class RauDoubleConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, mid_channels: int = None, dropout: float = 0.2):
-        super(DoubleConv, self).__init__()
+        super(RauDoubleConv, self).__init__()
 
         if mid_channels is None:
             mid_channels = out_channels
@@ -94,7 +94,7 @@ class DecoderUnit(nn.Module):
 
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.attention = AttentionGate(in_channels, up_channels, in_channels // 2)
-        self.conv = DoubleConv(in_channels * n_skip_connections + up_channels, out_channels, dropout=dropout)
+        self.conv = RauDoubleConv(in_channels * n_skip_connections + up_channels, out_channels, dropout=dropout)
 
     def forward(self, x, skips):
         large_skips, small_skip = skips[:-1], skips[-1]  # shortest skip connection goes through attention gate
@@ -114,9 +114,9 @@ class OutConv(nn.Module):
         return self.conv(x)
 
 
-class Encoder(nn.Module):
+class RauEncoder(nn.Module):
     def __init__(self, in_channels: int, features: list[int], multi_scale_input: bool = False):
-        super(Encoder, self).__init__()
+        super(RauEncoder, self).__init__()
 
         self.multi_scale_input = multi_scale_input
         self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -164,9 +164,9 @@ class Encoder(nn.Module):
         return x1, x2, x3, x4, x5
 
 
-class Decoder(nn.Module):
+class RauDecoder(nn.Module):
     def __init__(self, features: list[int], out_channels: int, deep_supervision: bool = False, dropout: float = 0.2):
-        super(Decoder, self).__init__()
+        super(RauDecoder, self).__init__()
         self.deep_supervision = deep_supervision
 
         self.branch1 = nn.ModuleList([
@@ -243,8 +243,8 @@ class RAUnetPlusPlus(nn.Module):
         self.features = features or [32, 64, 128, 256, 512]
         assert len(self.features) == 5, 'Residual Attention U-Net++ requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder = Decoder(features, out_channels, deep_supervision, dropout)
+        self.encoder = RauEncoder(in_channels, features, multi_scale_input)
+        self.decoder = RauDecoder(features, out_channels, deep_supervision, dropout)
 
     def forward(self, x):
         skips = self.encoder(x)
@@ -263,9 +263,9 @@ class DualRAUnetPlusPlus(nn.Module):
         self.features = features or [32, 64, 128, 256, 512]
         assert len(self.features) == 5, 'Dual Residual Attention U-Net++ requires a list of 5 features'
 
-        self.encoder = Encoder(in_channels, features, multi_scale_input)
-        self.decoder1 = Decoder(features, out_channels, deep_supervision, dropout)
-        self.decoder2 = Decoder(features, out_channels, deep_supervision, dropout)
+        self.encoder = RauEncoder(in_channels, features, multi_scale_input)
+        self.decoder1 = RauDecoder(features, out_channels, deep_supervision, dropout)
+        self.decoder2 = RauDecoder(features, out_channels, deep_supervision, dropout)
 
     def forward(self, x):
         skips = self.encoder(x)
