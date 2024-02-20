@@ -13,7 +13,7 @@ from .cascade import CascadeTrainer, CascadeLogger
 from .dual import DualTrainer, DualLogger
 
 __all__ = [
-    'train', 'train_multiclass', 'train_multilabel', 'train_binary', 'train_cascade', 'train_dual',
+    'train', 'train_multiclass', 'train_multilabel', 'train_binary', 'train_cascade', 'train_dual', 'fit',
     'init_model_weights', 'initialize_weights', 'update_history', 'save_checkpoint', 'load_checkpoint',
 ]
 
@@ -24,49 +24,95 @@ CLASS_LABELS = {
 }
 
 
-# kwargs:
-# early_stopping_patience, save_best_model, save_interval, log_interval, log_to_wandb, show_plots,
-# clear_interval, checkpoint_dir, log_dir, plot_examples, inverse_transform, activation
+class TrainingMode:
+    MULTICLASS = 'multiclass'
+    MULTILABEL = 'multilabel'
+    BINARY = 'binary'
+    CASCADE = 'cascade'
+    DUAL = 'dual'
+
+
+# Common kwargs:
+#   early_stopping_patience, save_best_model, save_interval, log_interval, log_to_wandb, show_plots,
+#   clear_interval, checkpoint_dir, log_dir, plot_examples, inverse_transform, activation
+# Cascade only:
+#   binary_model, inter_processing
+# Dual only:
+#   od_loss_weight, oc_loss_weight
+def train(mode: str, model, criterion, optimizer, num_epochs: int, device, train_loader, val_loader=None,
+          scheduler=None, scaler=None, binary_labels: list[int] = None, binary_model=None, inter_processing=None,
+          od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0, **kwargs):
+    if mode == TrainingMode.MULTICLASS:
+        return train_multiclass(
+            model, criterion, optimizer, num_epochs, device, train_loader, val_loader, scheduler, scaler, **kwargs,
+        )
+
+    if mode == TrainingMode.MULTILABEL:
+        return train_multilabel(
+            model, criterion, optimizer, num_epochs, device, train_loader, val_loader, scheduler, scaler, **kwargs,
+        )
+
+    if mode == TrainingMode.BINARY:
+        assert binary_labels is not None, 'Binary class labels must be provided for binary segmentation'
+        return train_binary(
+            model, criterion, optimizer, num_epochs, device, train_loader, val_loader, scheduler, scaler,
+            binary_labels=binary_labels, **kwargs,
+        )
+
+    if mode == TrainingMode.CASCADE:
+        assert binary_model is not None, 'Base model for binary segmentation must be provided for cascade training'
+        return train_cascade(
+            binary_model, model, criterion, optimizer, num_epochs, device, train_loader, val_loader, scheduler, scaler,
+            inter_processing=inter_processing, **kwargs,
+        )
+
+    if mode == TrainingMode.DUAL:
+        return train_dual(
+            model, criterion, criterion, optimizer, num_epochs, device, train_loader, val_loader, scheduler, scaler,
+            od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs,
+        )
+
+
 def train_multiclass(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                      scheduler=None, scaler=None, **kwargs):
     assert model.out_channels > 1, 'The model should have more than 1 output channel for multi-class training'
-    return train(
+    return fit(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-        train_mode='multiclass', **kwargs,
+        train_mode=TrainingMode.MULTICLASS, **kwargs,
     )
 
 
 def train_multilabel(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
                      scheduler=None, scaler=None, threshold: float = 0.5, **kwargs):
     assert model.out_channels > 1, 'The model should have more than 1 output channel for multi-label training'
-    return train(
+    return fit(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-        train_mode='multilabel', threshold=threshold, **kwargs,
+        train_mode=TrainingMode.MULTILABEL, threshold=threshold, **kwargs,
     )
 
 
 def train_binary(model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
-                 scheduler=None, scaler=None, target_ids: list[int] = None, threshold: float = 0.5, **kwargs):
+                 scheduler=None, scaler=None, binary_labels: list[int] = None, threshold: float = 0.5, **kwargs):
     assert model.out_channels == 1, 'The model should have 1 output channel for binary training'
-    return train(
+    return fit(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
         train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
-        train_mode='binary', target_ids=target_ids, threshold=threshold, **kwargs,
+        train_mode=TrainingMode.BINARY, binary_labels=binary_labels, threshold=threshold, **kwargs,
     )
 
 
 def train_cascade(base_model, model, criterion, optimizer, epochs, device, train_loader, val_loader=None,
-                  scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, postprocess=None,
-                  **kwargs):
+                  scheduler=None, scaler=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
+                  inter_processing=None, **kwargs):
     assert model.out_channels == 1 and base_model.out_channels == 1, \
         'The cascade models should have each 1 output channel for cascade training'
-    return train(
+    return fit(
         model=model, criterion=criterion, optimizer=optimizer, epochs=epochs, device=device,
-        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='cascade',
-        od_threshold=od_threshold, oc_threshold=oc_threshold, base_cascade_model=base_model, postprocess=postprocess,
-        **kwargs,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
+        train_mode=TrainingMode.CASCADE, od_threshold=od_threshold, oc_threshold=oc_threshold,
+        base_cascade_model=base_model, inter_processing=inter_processing, **kwargs,
     )
 
 
@@ -75,21 +121,21 @@ def train_dual(model, od_criterion, oc_criterion, optimizer, epochs, device, tra
                od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0, **kwargs):
     assert model.out_channels == 1, \
         'The dual decoder model should have 1 output channel per branch for dual training'
-    return train(
+    return fit(
         model=model, criterion=od_criterion, optimizer=optimizer, epochs=epochs, device=device,
-        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler, train_mode='dual',
-        od_threshold=od_threshold, oc_threshold=oc_threshold, dual_branch_criterion=oc_criterion,
-        od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs,
+        train_loader=train_loader, val_loader=val_loader, scheduler=scheduler, scaler=scaler,
+        train_mode=TrainingMode.DUAL, od_threshold=od_threshold, oc_threshold=oc_threshold,
+        dual_branch_criterion=oc_criterion, od_loss_weight=od_loss_weight, oc_loss_weight=oc_loss_weight, **kwargs,
     )
 
 
-def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
-          train_mode: str = 'multiclass', early_stopping_patience: int = 0, save_best_model: bool = True,
-          save_interval: int = 0, log_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
-          clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
-          target_ids: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
-          base_cascade_model=None, postprocess=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
-          dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=None, scheduler=None, scaler=None,
+        train_mode: str = TrainingMode.MULTICLASS, early_stopping_patience: int = 0, save_best_model: bool = True,
+        save_interval: int = 0, log_interval: int = 0, log_to_wandb: bool = False, show_plots: bool = False,
+        clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
+        binary_labels: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
+        base_cascade_model=None, inter_processing=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
+        dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
     """
     Train a model with a given criterion and optimizer for a specified number of epochs in a selected training mode.
 
@@ -119,6 +165,7 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     - inverse_transform: function to convert images, masks and predictions to original format (default: None)
     - activation: activation function for the last layer of a binary branch (default: None for sigmoid)
     - base_cascade_model: pre-trained model for optic disc segmentation for cascade architecture
+    - inter_processing: post-processing function for the optic disc segmentation in cascade architecture (Optional)
     - od_threshold: decides whether a predicted optic disc probability is considered as a positive sample (default: 0.5)
     - oc_threshold: decides whether a predicted optic cup probability is considered as a positive sample (default: 0.5)
     - dual_branch_criterion: loss function for the second branch in dual branch training (Optional)
@@ -129,19 +176,6 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
     - history: history of training and validation metrics as a dictionary of lists
                e.g. {'train_loss': [0.1, 0.05, ...], ..., 'val_dice': [0.9, 0.92, ...]}
     """
-    train_mode = train_mode.lower()
-    valid_training_modes = ('multiclass', 'multilabel', 'binary', 'cascade', 'dual')
-    assert train_mode in valid_training_modes, \
-        f'Invalid training mode {train_mode!r}. Must be one of: {", ".join(valid_training_modes)}'
-
-    history = defaultdict(list)
-    best_loss = float('inf')
-    best_metrics = None
-    best_epoch = 0
-    epochs_without_improvement = 0
-    num_done_epochs = 0
-    log_loader = val_loader if val_loader is not None else train_loader
-
     # Prepare model
     model_name = model.__class__.__name__
     model = model.to(device)
@@ -149,29 +183,30 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         wandb.watch(model, criterion)
 
     # Initialize objects for selected training mode
-    if train_mode == 'multiclass':
+    train_mode = train_mode.lower()
+    if train_mode == TrainingMode.MULTICLASS:
         trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
         log = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
-    elif train_mode == 'multilabel':
+    elif train_mode == TrainingMode.MULTILABEL:
         trainer = MultilabelTrainer(
             model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
         )
         log = MultilabelLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
         )
-    elif train_mode == 'binary':
-        if target_ids is None:
-            target_ids = [1, 2]
-        target_ids = torch.tensor(target_ids, device=device)
+    elif train_mode == TrainingMode.BINARY:
+        if binary_labels is None:
+            binary_labels = [1, 2]
+        binary_labels = torch.tensor(binary_labels, device=device)
 
         trainer = BinaryTrainer(
-            model, criterion, optimizer, device, scaler, target_ids, threshold, inverse_transform, activation,
+            model, criterion, optimizer, device, scaler, binary_labels, threshold, inverse_transform, activation,
         )
         log = BinaryLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-            target_ids=target_ids, threshold=threshold,
+            binary_labels=binary_labels, threshold=threshold,
         )
-    elif train_mode == 'cascade':
+    elif train_mode == TrainingMode.CASCADE:
         # Prepare and freeze the pre-trained model
         base_cascade_model.eval()
         for param in base_cascade_model.parameters():
@@ -180,13 +215,13 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
 
         trainer = CascadeTrainer(
             base_cascade_model, model, criterion, optimizer, device, scaler,
-            od_threshold, oc_threshold, inverse_transform, activation, postprocess,
+            od_threshold, oc_threshold, inverse_transform, activation, inter_processing,
         )
         log = CascadeLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
             base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
         )
-    elif train_mode == 'dual':
+    elif train_mode == TrainingMode.DUAL:
         trainer = DualTrainer(
             model, criterion, dual_branch_criterion, optimizer, device, scaler,
             od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
@@ -197,6 +232,15 @@ def train(model, criterion, optimizer, epochs, device, train_loader, val_loader=
         )
     else:
         raise ValueError(f'Invalid training mode: {train_mode}')
+
+    # Initialize tracking variables
+    history = defaultdict(list)
+    best_loss = float('inf')
+    best_metrics = None
+    best_epoch = 0
+    epochs_without_improvement = 0
+    num_done_epochs = 0
+    log_loader = val_loader if val_loader is not None else train_loader
 
     # Run training & validation for N epochs
     for epoch in range(1, epochs + 1):

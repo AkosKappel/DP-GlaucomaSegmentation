@@ -137,7 +137,7 @@ def get_contour_images(imgs: list[np.ndarray], masks: list[np.ndarray], preds: l
 
 def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray = None, class_ids: list[int] = None):
     """Draw contours of the mask and/or prediction over the input image."""
-    contour_mask = img.copy()
+    contour_mask = get_input_image(img.copy(), uint8=True)
 
     # resize image to match mask size
     other = mask if mask is not None else pred
@@ -158,7 +158,7 @@ def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray
             contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
             cv.drawContours(contour_mask, contours, -1, PRED_CONTOUR_COLOR, thickness=1)
 
-    return get_input_image(contour_mask)
+    return contour_mask
 
 
 def plot_history(hist, figsize=(12, 8), n_cols: int = 4):
@@ -341,7 +341,7 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
                     overlay_legend=overlay_legend_index, contour_legend=contour_legend_index, **kwargs)
 
 
-def plot_results_from_loader(mode: str, loader, model, device: str = 'cuda', n_samples: int = 4,
+def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 4,
                              thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
                              class_ids: list = None, base_model=None, **kwargs):
     assert mode in ('binary', 'multiclass', 'multilabel', 'cascade', 'dual')

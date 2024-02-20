@@ -13,7 +13,7 @@ class CascadeTrainer:
 
     def __init__(self, base_model, model, criterion, optimizer, device, scaler=None,
                  od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                 inverse_transform=None, activation=None, postprocess=None):
+                 inverse_transform=None, activation=None, inter_processing=None):
         self.base_model = base_model
         self.model = model
         self.criterion = criterion
@@ -27,7 +27,7 @@ class CascadeTrainer:
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
-        self.postprocess = postprocess or []
+        self.inter_processing = inter_processing or []
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -43,7 +43,7 @@ class CascadeTrainer:
             od_preds = (od_probs > self.od_threshold).long()
 
         # Improve optic disc predictions (e.g. fill holes, keep only the largest object, dilate, etc.)
-        for func in self.postprocess:
+        for func in self.inter_processing:
             od_preds = func(od_preds)
 
         # Crop images to optic disc boundaries

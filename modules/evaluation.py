@@ -19,7 +19,7 @@ def evaluate(mode: str, model, loader, device, criterion=None,
 
     mean_metrics = None
     history = defaultdict(list)
-    loop = tqdm(loader, desc='Evaluating')
+    loop = tqdm(loader, desc=f'Evaluating {mode} segmentation')
 
     with torch.no_grad():
         for batch_idx, (images, masks) in enumerate(loop):
