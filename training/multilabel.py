@@ -205,7 +205,7 @@ class MultilabelLogger:
         file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
         file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
         file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
-        plot_types = ['image', 'mask', 'prediction', 'OD cover', 'OC cover']
+        plot_types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap']
 
         if self.plot_type in ['all', 'random']:
             plot_results(images, masks, preds, save_path=file, show=self.show, types=plot_types)

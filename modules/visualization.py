@@ -9,9 +9,11 @@ from matplotlib.patches import Patch
 from modules.inference import predict
 
 __all__ = [
-    'get_input_images', 'get_input_image', 'get_ground_truth_masks', 'get_ground_truth_mask',
-    'get_prediction_masks', 'get_prediction_mask', 'get_overlay_images', 'get_overlay_image',
-    'get_cover_images', 'get_cover_image', 'get_contour_images', 'get_contour_image',
+    'get_input_images', 'get_input_image',
+    'get_segmentation_masks', 'get_segmentation_mask',
+    'get_overlap_images', 'get_overlap_image',
+    'get_cover_images', 'get_cover_image',
+    'get_contour_images', 'get_contour_image',
     'plot_history', 'show_model_graph', 'show_model_view',
     'plot_image_grid', 'plot_results', 'plot_results_from_loader',
 ]
@@ -21,7 +23,7 @@ BG_COLOR = np.array((0.27, 0.01, 0.33), dtype=np.float32)
 OD_COLOR = np.array((0.13, 0.56, 0.55), dtype=np.float32)
 OC_COLOR = np.array((0.99, 0.91, 0.14), dtype=np.float32)
 
-# Overlay colors
+# Overlap colors
 TP_COLOR = np.array((0, 1, 0), dtype=np.uint8) * 255  # green
 TN_COLOR = np.array((0, 0, 0), dtype=np.uint8) * 255  # black
 FP_COLOR = np.array((1, 0, 0), dtype=np.uint8) * 255  # red
@@ -51,11 +53,11 @@ def get_input_image(img: np.ndarray, normalize: bool = True, uint8: bool = False
     return img
 
 
-def get_ground_truth_masks(masks: list[np.ndarray]):
-    return [get_ground_truth_mask(mask) for mask in masks]
+def get_segmentation_masks(masks: list[np.ndarray]):
+    return [get_segmentation_mask(mask) for mask in masks]
 
 
-def get_ground_truth_mask(mask: np.ndarray):
+def get_segmentation_mask(mask: np.ndarray):
     gt = np.zeros((*mask.shape, 3), dtype=np.float32)
     gt[mask == 0] = BG_COLOR
     gt[mask == 1] = OD_COLOR
@@ -63,25 +65,13 @@ def get_ground_truth_mask(mask: np.ndarray):
     return gt
 
 
-def get_prediction_masks(preds: list[np.ndarray]):
-    return [get_prediction_mask(pred) for pred in preds]
+def get_overlap_images(masks: list[np.ndarray], preds: list[np.ndarray], **kwargs):
+    return [get_overlap_image(mask, pred, **kwargs) for mask, pred in zip(masks, preds)]
 
 
-def get_prediction_mask(pred: np.ndarray):
-    pr = np.zeros((*pred.shape, 3), dtype=np.float32)
-    pr[pred == 0] = BG_COLOR
-    pr[pred == 1] = OD_COLOR
-    pr[pred == 2] = OC_COLOR
-    return pr
-
-
-def get_overlay_images(masks: list[np.ndarray], preds: list[np.ndarray], **kwargs):
-    return [get_overlay_image(mask, pred, **kwargs) for mask, pred in zip(masks, preds)]
-
-
-def get_overlay_image(mask: np.ndarray, pred: np.ndarray, class_ids: list[int] = None):
+def get_overlap_image(mask: np.ndarray, pred: np.ndarray, class_ids: list[int] = None):
     """
-    Visualize the correctness of the segmentation, by overlaying the mask and the prediction and
+    Visualize the correctness of the segmentation, by overlaping the mask and the prediction and
     color coding the results with TP, TN, FP, FN colors. The colors are defined as follows:
     True Positive: green
     True Negative: black
@@ -124,11 +114,11 @@ def get_cover_image(img: np.ndarray, mask: np.ndarray, alpha=0.3):
     """Draw the mask over the input image with a specified opacity."""
     img = get_input_image(img)
 
-    overlay_img = np.zeros_like(img)
-    overlay_img[mask == 1] = OD_COVER_COLOR
-    overlay_img[mask == 2] = OC_COVER_COLOR
+    cover = np.zeros_like(img)
+    cover[mask == 1] = OD_COVER_COLOR
+    cover[mask == 2] = OC_COVER_COLOR
 
-    return img * (1 - alpha) + overlay_img * alpha
+    return img * (1 - alpha) + cover * alpha
 
 
 def get_contour_images(imgs: list[np.ndarray], masks: list[np.ndarray], preds: list[np.ndarray], **kwargs):
@@ -203,7 +193,7 @@ def show_model_view(model, input_size, name='model', fmt='png'):
 def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None,
                     img_size: int = 3, transpose: bool = False, figsize: tuple = None,
                     save_path: str = None, show: bool = True,
-                    mask_legend=None, overlay_legend=None, contour_legend=None):
+                    mask_legend=None, overlap_legend=None, contour_legend=None):
     rows, cols = len(grid), len(grid[0])
 
     # swap rows and columns
@@ -244,8 +234,8 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
             Patch(facecolor=OC_COLOR, label='OC'),
         ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=2)
 
-    if overlay_legend:
-        axes[rows - 1, overlay_legend].legend(handles=[
+    if overlap_legend:
+        axes[rows - 1, overlap_legend].legend(handles=[
             Patch(color=TP_COLOR / 255, label='TP'),
             Patch(color=FN_COLOR / 255, label='FN'),
             Patch(color=FP_COLOR / 255, label='FP'),
@@ -271,12 +261,12 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
     # kwargs: img_size, transpose, figsize, save_path, show
     all_types = [
         'image', 'mask', 'prediction',
-        'OD overlay', 'OC overlay',
+        'OD overlap', 'OC overlap',
         'OD cover', 'OC cover',
         'OD contour', 'OC contour', 'contours',
     ]
     if types is None:
-        types = ['image', 'mask', 'prediction', 'OD overlay', 'OC overlay']  # default
+        types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap']  # default
     elif types == 'all':
         types = all_types
     elif isinstance(types, str):
@@ -285,7 +275,7 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
     titles = []
     columns = []
     mask_legend_index = None
-    overlay_legend_index = None
+    overlap_legend_index = None
     contour_legend_index = None
 
     for i, t in enumerate(types):
@@ -294,24 +284,24 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
             col = get_input_images(images)
         elif t == 'mask' and masks is not None:
             titles.append('Ground truth')
-            col = get_ground_truth_masks(masks)
+            col = get_segmentation_masks(masks)
             if mask_legend_index is None:
                 mask_legend_index = i
         elif t == 'prediction' and preds is not None:
             titles.append('Model prediction')
-            col = get_prediction_masks(preds)
+            col = get_segmentation_masks(preds)
             if mask_legend_index is None:
                 mask_legend_index = i
-        elif t == 'OD overlay' and all(x is not None for x in [masks, preds]):
+        elif t == 'OD overlap' and all(x is not None for x in [masks, preds]):
             titles.append('Optic disc')
-            col = get_overlay_images(masks, preds, class_ids=[1, 2])
-            if overlay_legend_index is None:
-                overlay_legend_index = i
-        elif t == 'OC overlay' and all(x is not None for x in [masks, preds]):
+            col = get_overlap_images(masks, preds, class_ids=[1, 2])
+            if overlap_legend_index is None:
+                overlap_legend_index = i
+        elif t == 'OC overlap' and all(x is not None for x in [masks, preds]):
             titles.append('Optic cup')
-            col = get_overlay_images(masks, preds, class_ids=[2])
-            if overlay_legend_index is None:
-                overlay_legend_index = i
+            col = get_overlap_images(masks, preds, class_ids=[2])
+            if overlap_legend_index is None:
+                overlap_legend_index = i
         elif t == 'OD cover' and all(x is not None for x in [images, masks]):
             titles.append('True mask')
             col = get_cover_images(images, masks)
@@ -338,7 +328,7 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
         columns.append(col)
 
     plot_image_grid(columns, titles=titles, transpose=True, mask_legend=mask_legend_index,
-                    overlay_legend=overlay_legend_index, contour_legend=contour_legend_index, **kwargs)
+                    overlap_legend=overlap_legend_index, contour_legend=contour_legend_index, **kwargs)
 
 
 def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 4,
@@ -359,15 +349,15 @@ def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 
         types = kwargs['types']
     elif mode == 'binary':
         sign = 'OD' if 1 in class_ids[0] else 'OC'
-        types = ['image', 'mask', 'prediction', sign + ' overlay', sign + ' contour']
+        types = ['image', 'mask', 'prediction', sign + ' overlap', sign + ' contour']
     elif mode == 'multiclass':
-        types = ['image', 'mask', 'prediction', 'OD overlay', 'OC overlay', 'OD contour', 'OC contour']
+        types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap', 'OD contour', 'OC contour']
     elif mode == 'multilabel':
-        types = ['image', 'mask', 'prediction', 'OD overlay', 'OC overlay', 'OD contour', 'OC contour']
+        types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap', 'OD contour', 'OC contour']
     elif mode == 'cascade':
-        types = ['image', 'mask', 'prediction', 'OD overlay', 'OC overlay', 'OD contour', 'OC contour']
+        types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap', 'OD contour', 'OC contour']
     elif mode == 'dual':
-        types = ['image', 'mask', 'prediction', 'OD overlay', 'OC overlay', 'OD contour', 'OC contour']
+        types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap', 'OD contour', 'OC contour']
     else:
         raise ValueError('Invalid model mode: ' + mode)
 

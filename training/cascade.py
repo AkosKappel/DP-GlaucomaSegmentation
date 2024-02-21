@@ -215,8 +215,8 @@ class CascadeLogger:
         file_worst_od = f'{self.dir}/epoch{epoch}_Worst-OD.png'
         file_best_oc = f'{self.dir}/epoch{epoch}_Best-OC.png'
         file_worst_oc = f'{self.dir}/epoch{epoch}_Worst-OC.png'
-        plot_types_od = ['image', 'mask', 'prediction', 'OD cover']
-        plot_types_oc = ['image', 'mask', 'prediction', 'OC cover']
+        plot_types_od = ['image', 'mask', 'prediction', 'OD overlap']
+        plot_types_oc = ['image', 'mask', 'prediction', 'OC overlap']
 
         if self.plot_type in ['all', 'random']:
             plot_results(images, oc_masks, oc_preds, save_path=file, show=self.show, types=plot_types_od)

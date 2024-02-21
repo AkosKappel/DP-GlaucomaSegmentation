@@ -110,7 +110,11 @@ def get_tp_tn_fp_fn(gt: np.ndarray, sr: np.ndarray, class_ids: list[int]) -> tup
     return tp, tn, fp, fn
 
 
-def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray, labels: list) -> dict[str, float]:
+def get_metrics(true: torch.Tensor | np.ndarray, pred: torch.Tensor | np.ndarray,
+                labels: list = None) -> dict[str, float]:
+    if labels is None:
+        labels = [[1, 2], [2]]
+
     # Flatten the tensors to 1D shape
     true_flat = true.flatten()
     pred_flat = pred.flatten()
