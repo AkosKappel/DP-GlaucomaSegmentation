@@ -192,8 +192,9 @@ def get_best_and_worst_OC_examples(*args, **kwargs):
     return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 
+# TODO: check this code
 def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True, class_ids: list = None,
-                         device: str = 'cuda', metric: str = 'iou', thresh: float = 0.5, softmax: bool = False,
+                         device: torch.device = None, metric: str = 'iou', thresh: float = 0.5, softmax: bool = False,
                          out_idx: int = None, first_model=None):
     """
     Returns the best/worst segmentation examples of a model from a given data loader based on a specified metric.
@@ -201,6 +202,9 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
     correctness of the segmentation can be one of the following: 'iou', 'dice', 'accuracy', 'precision',
     'sensitivity', 'specificity'.
     """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     if metric not in ('iou', 'dice', 'accuracy', 'precision', 'sensitivity', 'specificity'):
         raise ValueError(f'Invalid metric: {metric}')
 

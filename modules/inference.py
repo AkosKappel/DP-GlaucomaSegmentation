@@ -2,50 +2,91 @@ import cv2 as cv
 import numpy as np
 import torch
 import torch.nn.functional as F
+from collections import defaultdict
+from tqdm import tqdm
+
+from modules.metrics import update_metrics
 
 __all__ = [
-    'predict', 'predict_multiclass', 'predict_multilabel',
+    'evaluate', 'predict', 'predict_multiclass', 'predict_multilabel',
     'predict_binary', 'predict_cascade', 'predict_dual',
-    'd4_transform', 'd4_inverse_transform', 'apply_morphological_operations',
+    'd4_transform', 'd4_inverse_transform', 'apply_morphological_operation',
 ]
+
+
+def evaluate(mode: str, model, loader, device=None, criterion=None,
+             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
+             binary_labels: list[int] = None, base_model=None, inverse_transform=None,
+             post_process_fn=None, tta: bool = False, **morph_kwargs):
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    elif isinstance(device, str):
+        device = torch.device(device)
+
+    mean_metrics = None
+    history = defaultdict(list)
+    loop = tqdm(loader, desc=f'Evaluating {mode} segmentation')
+    labels = [binary_labels] if mode == 'binary' else [[1, 2], [2]]
+
+    with torch.no_grad():
+        for images, masks in loop:
+            preds, _, loss = predict(
+                mode, model, images, masks, device, thresh, od_thresh, oc_thresh,
+                criterion, binary_labels, base_model, post_process_fn, tta, **morph_kwargs,
+            )
+            if inverse_transform is not None:
+                images, masks, preds = inverse_transform(images, masks, preds)
+
+            update_metrics(masks, preds, history, labels)
+            if loss is not None:
+                history['loss'].append(loss.item())
+
+            # show updated average metrics
+            mean_metrics = {k: np.mean(v) for k, v in history.items()}
+            loop.set_postfix(**mean_metrics)
+
+    return mean_metrics
 
 
 def predict(mode: str, model, images, masks=None, device=None,
             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
             criterion=None, binary_labels=None, base_model=None,
-            tta: bool = False, **morph_kwargs):
+            post_process_fn=None, tta: bool = False, **morph_kwargs):
     # Morph kwargs = operation: str, kernel_size: int, iterations: int, kernel_shape: int
     if mode == 'multiclass':  # Multi-class segmentation
         return predict_multiclass(
-            model, images, masks, device, criterion, tta, **morph_kwargs
+            model, images, masks, device, criterion, post_process_fn, tta, **morph_kwargs
         )
 
     if mode == 'multilabel':  # Multi-label segmentation
         return predict_multilabel(
-            model, images, masks, device, criterion, thresh, tta, **morph_kwargs
+            model, images, masks, device, criterion, thresh, post_process_fn, tta, **morph_kwargs
         )
 
     if mode == 'binary':  # Binary segmentation
         assert binary_labels is not None, 'Binary class labels must be provided'
         return predict_binary(
-            model, images, masks, device, criterion, thresh, binary_labels, tta, **morph_kwargs
+            model, images, masks, device, criterion, thresh, binary_labels, post_process_fn, tta, **morph_kwargs
         )
 
     if mode == 'cascade':  # Cascade architecture
         assert base_model is not None, 'Cascade model needs a base model'
         return predict_cascade(
-            base_model, model, images, masks, device, criterion, thresh, od_thresh, oc_thresh, tta, **morph_kwargs
+            base_model, model, images, masks, device, criterion,
+            thresh, od_thresh, oc_thresh, post_process_fn, tta, **morph_kwargs
         )
 
     if mode == 'dual':  # Dual architecture
         return predict_dual(
-            model, images, masks, device, criterion, thresh, od_thresh, oc_thresh, tta, **morph_kwargs
+            model, images, masks, device, criterion,
+            thresh, od_thresh, oc_thresh, post_process_fn, tta, **morph_kwargs
         )
 
     raise ValueError(f'Invalid mode: {mode}')
 
 
-def predict_multiclass(model, images, masks=None, device=None, criterion=None, tta: bool = False, **morph_kwargs):
+def predict_multiclass(model, images, masks=None, device=None, criterion=None,
+                       post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -75,13 +116,16 @@ def predict_multiclass(model, images, masks=None, device=None, criterion=None, t
     predictions = torch.argmax(probabilities, dim=1).long()  # (N, H, W)
 
     if morph_kwargs:
-        predictions = apply_morphological_operations(predictions, **morph_kwargs)
+        predictions = apply_morphological_operation(predictions, **morph_kwargs)
+
+    if post_process_fn is not None:
+        predictions = post_process_fn(predictions)
 
     return predictions, probabilities, loss
 
 
-def predict_multilabel(model, images, masks=None, device=None, criterion=None,
-                       threshold: float = 0.5, tta: bool = False, **morph_kwargs):
+def predict_multilabel(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
+                       post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -122,13 +166,16 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None,
         predictions += (probabilities[:, i] > threshold).long()
 
     if morph_kwargs:
-        predictions = apply_morphological_operations(predictions, **morph_kwargs)
+        predictions = apply_morphological_operation(predictions, **morph_kwargs)
+
+    if post_process_fn is not None:
+        predictions = post_process_fn(predictions)
 
     return predictions, probabilities, loss
 
 
-def predict_binary(model, images, masks=None, device=None, criterion=None,
-                   threshold: float = 0.5, binary_labels: list[int] = None, tta: bool = False, **morph_kwargs):
+def predict_binary(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
+                   binary_labels: list[int] = None, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -166,14 +213,14 @@ def predict_binary(model, images, masks=None, device=None, criterion=None,
     predictions = (probabilities > threshold).squeeze(1).long()  # (N, H, W)
 
     if morph_kwargs:
-        predictions = apply_morphological_operations(predictions, **morph_kwargs)
+        predictions = apply_morphological_operation(predictions, **morph_kwargs)
 
     return predictions, probabilities, loss
 
 
 def predict_cascade(base_model, model, images, masks=None, device=None, criterion=None,
                     threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                    tta: bool = False, **morph_kwargs):
+                    post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -224,14 +271,17 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
     predictions = predictions.squeeze(1)  # (N, H, W)
 
     if morph_kwargs:
-        predictions = apply_morphological_operations(predictions, **morph_kwargs)
+        predictions = apply_morphological_operation(predictions, **morph_kwargs)
+
+    if post_process_fn is not None:
+        predictions = post_process_fn(predictions)
 
     return predictions, probabilities, loss
 
 
 def predict_dual(model, images, masks=None, device=None, criterion=None,
                  threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                 tta: bool = False, **morph_kwargs):
+                 post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -279,7 +329,10 @@ def predict_dual(model, images, masks=None, device=None, criterion=None,
     predictions = predictions.squeeze(1).long()  # (N, H, W)
 
     if morph_kwargs:
-        predictions = apply_morphological_operations(predictions, **morph_kwargs)
+        predictions = apply_morphological_operation(predictions, **morph_kwargs)
+
+    if post_process_fn is not None:
+        predictions = post_process_fn(predictions)
 
     return predictions, probabilities, loss
 
@@ -338,8 +391,8 @@ def d4_inverse_transform(probabilities: torch.Tensor) -> torch.Tensor:
     return aggregated_probabilities
 
 
-def apply_morphological_operations(predictions: torch.Tensor, operation: str, kernel_size: int = 5,
-                                   iterations: int = 1, kernel_shape: int = cv.MORPH_ELLIPSE) -> torch.Tensor:
+def apply_morphological_operation(predictions: torch.Tensor, operation: str, kernel_size: int = 5,
+                                  iterations: int = 1, kernel_shape: int = cv.MORPH_ELLIPSE) -> torch.Tensor:
     # predictions.shape = (B, H, W)
     morphed_predictions = []
     kernel = cv.getStructuringElement(kernel_shape, (kernel_size, kernel_size))

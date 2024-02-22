@@ -1,12 +1,10 @@
 import cv2 as cv
 import numpy as np
-import torch
 
 __all__ = [
     'to_red_channel', 'to_green_channel', 'to_blue_channel', 'to_gray_channel',
     'binarize', 'extract_disc_mask', 'extract_cup_mask',
-    'arctan', 'distance_transform', 'boundary_transform',
-    'polar_transform', 'inverse_polar_transform', 'undo_polar_transform',
+    'distance_transform', 'boundary_transform', 'polar_transform', 'inverse_polar_transform',
     'occlude', 'sharpen', 'sharpening', 'otsu', 'clahe', 'histogram_equalization',
     'calculate_rgb_cumsum', 'source_to_target_correction', 'get_bounding_box',
 ]
@@ -47,12 +45,6 @@ def extract_cup_mask(mask: np.ndarray, **kwargs) -> np.ndarray:
 
 def extract_rim_mask(mask: np.ndarray, **kwargs) -> np.ndarray:
     return binarize(mask, labels=[1])
-
-
-# Different activation function instead of sigmoid
-# see: https://lars76.github.io/2021/09/05/activations-segmentation.html
-def arctan(x):
-    return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
 
 
 def distance_transform(mask: np.ndarray, mode: str = 'L2', normalize: bool = True, invert: bool = False,
@@ -131,27 +123,6 @@ def inverse_polar_transform(polar_image: np.ndarray, radius_ratio: float = 1.0, 
 
     cartesian_image = cv.linearPolar(polar_image, center, radius, cv.WARP_INVERSE_MAP | cv.WARP_FILL_OUTLIERS)
     return cartesian_image
-
-
-def undo_polar_transform(images_batch: torch.Tensor, masks_batch: torch.Tensor, preds_batch: torch.Tensor):
-    np_images = images_batch.detach().cpu().numpy().transpose(0, 2, 3, 1)
-    np_masks = masks_batch.detach().cpu().numpy()
-    np_preds = preds_batch.detach().cpu().numpy()
-
-    new_images = np.zeros_like(np_images)
-    new_masks = np.zeros_like(np_masks)
-    new_preds = np.zeros_like(np_preds)
-
-    for i, _ in enumerate(np_images):
-        new_images[i] = inverse_polar_transform(np_images[i])
-        new_masks[i] = inverse_polar_transform(np_masks[i])
-        new_preds[i] = inverse_polar_transform(np_preds[i])
-
-    images_batch = torch.from_numpy(new_images.transpose(0, 3, 1, 2)).float().to(images_batch.device)
-    masks_batch = torch.from_numpy(new_masks).long().to(masks_batch.device)
-    preds_batch = torch.from_numpy(new_preds).long().to(preds_batch.device)
-
-    return images_batch, masks_batch, preds_batch
 
 
 def occlude(image: np.ndarray, p: float = 0.5, occlusion_size: int = 32, occlusion_value: int = 0, **kwargs):

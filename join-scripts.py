@@ -2,10 +2,10 @@ base_dir = './'
 script_files = [
     'ROI/neural_network/helpers.py',
     'modules/datasets.py',
-    'modules/evaluation.py',
     'modules/inference.py',
     'modules/losses.py',
     'modules/metrics.py',
+    'modules/misc.py',
     'modules/postprocessing.py',
     'modules/preprocessing.py',
     'modules/visualization.py',

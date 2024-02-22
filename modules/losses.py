@@ -9,8 +9,14 @@ __all__ = [
     'FocalLoss', 'TverskyLoss', 'FocalTverskyLoss',
     'BoundaryLoss', 'HausdorffLoss', 'EdgeLoss',
     'CrossEntropyLoss', 'SensitivitySpecificityLoss',
-    'ComboLoss', 'CompositeLoss',
+    'ComboLoss', 'CompositeLoss', 'arctan',
 ]
+
+
+# Different activation function instead of sigmoid
+# see: https://lars76.github.io/2021/09/05/activations-segmentation.html
+def arctan(x):
+    return 1e-7 + (1 - 2 * 1e-7) * (0.5 + torch.arctan(x) / torch.tensor(np.pi))
 
 
 def logits_to_probs(logits: torch.Tensor, num_classes: int, dim: int = 1) -> torch.Tensor:
