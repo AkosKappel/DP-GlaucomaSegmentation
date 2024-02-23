@@ -245,7 +245,12 @@ def snakes(binary_masks: np.ndarray, alpha: float = 0.1, beta: float = 10.5, gam
     return snake_masks
 
 
-def dense_crf(image, probab, n_iterations: int = 5, gaussian_kwargs: dict = None, bilateral_kwargs: dict = None):
+def dense_crf(predictions: np.ndarray, images: torch.Tensor, n_iterations: int = 5,
+              gaussian_kwargs: dict = None, bilateral_kwargs: dict = None) -> np.ndarray:
+    # predictions: (B, C, H, W)
+    # images: (B, C, H, W)
+    images = images.cpu().numpy().transpose((0, 2, 3, 1))
+
     if gaussian_kwargs is None:
         gaussian_kwargs = {
             'sxy': (3, 3),
@@ -257,25 +262,29 @@ def dense_crf(image, probab, n_iterations: int = 5, gaussian_kwargs: dict = None
         bilateral_kwargs = {
             'sxy': (80, 80),
             'srgb': (13, 13, 13),
-            'rgbim': np.ascontiguousarray(image).astype(np.uint8),
+            'rgbim': np.ascontiguousarray(images[0], dtype=np.uint8),
             'compat': 10,
             'kernel': dcrf.DIAG_KERNEL,
             'normalization': dcrf.NORMALIZE_SYMMETRIC,
         }
 
-    width, height = image.shape[:2]
-    n_labels = probab.shape[0]
+    crf_masks = np.zeros_like(predictions)
 
-    d = dcrf.DenseCRF2D(width, height, n_labels)
+    for idx, (prediction, image) in enumerate(zip(predictions, images)):
+        n_labels = prediction.shape[0]
+        width, height = image.shape[:2]
 
-    # U = unary_from_softmax(probab)  # shape of probabilities must be (n_classes, ...)
-    U = unary_from_labels(probab, n_labels, gt_prob=0.7, zero_unsure=True)
-    d.setUnaryEnergy(U)
+        d = dcrf.DenseCRF2D(width, height, n_labels)
 
-    d.addPairwiseGaussian(**gaussian_kwargs)  # adds the color-independent term, features are the locations only
-    d.addPairwiseBilateral(**bilateral_kwargs)  # adds the color-dependent term, i.e. features are (x, y, r, g, b)
+        # U = unary_from_softmax(probab)  # shape of probabilities must be flat: (n_classes, -1)
+        U = unary_from_labels(prediction, n_labels, gt_prob=0.7, zero_unsure=False)
+        d.setUnaryEnergy(U)
 
-    Q = d.inference(n_iterations)
-    crf_mask = np.argmax(Q, axis=0).reshape((width, height))
+        d.addPairwiseGaussian(**gaussian_kwargs)  # adds the color-independent term, features are the locations only
+        d.addPairwiseBilateral(**bilateral_kwargs)  # adds the color-dependent term, i.e. features are (x, y, r, g, b)
 
-    return crf_mask
+        Q = d.inference(n_iterations)
+        crf_mask = np.argmax(Q, axis=0).reshape((width, height))
+        crf_masks[idx] = crf_mask
+
+    return crf_masks
