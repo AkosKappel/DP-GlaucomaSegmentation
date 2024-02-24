@@ -27,7 +27,7 @@ class CascadeTrainer:
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
-        self.inter_processing = inter_processing or []
+        self.inter_processing = inter_processing
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -43,8 +43,8 @@ class CascadeTrainer:
             od_preds = (od_probs > self.od_threshold).long()
 
         # Improve optic disc predictions (e.g. fill holes, keep only the largest object, dilate, etc.)
-        for func in self.inter_processing:
-            od_preds = func(od_preds)
+        if self.inter_processing is not None:
+            od_preds = self.inter_processing(od_preds)
 
         # Crop images to optic disc boundaries
         cropped_images = images * od_preds
@@ -133,7 +133,9 @@ class CascadeLogger:
 
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
-                 base_model=None, od_threshold: float = 0.5, oc_threshold: float = 0.5, postprocess=None):
+                 base_model=None, inter_processing=None, od_threshold: float = 0.5, oc_threshold: float = 0.5):
+        plot_type = plot_type.lower()
+        assert plot_type in ('all', 'random', 'extreme', 'best', 'worst', 'OD', 'OC', 'none', '')
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
@@ -143,9 +145,9 @@ class CascadeLogger:
         self.num_examples = num_examples
         self.part = part
         self.base_model = base_model
+        self.inter_processing = inter_processing
         self.od_threshold = od_threshold
         self.oc_threshold = oc_threshold
-        self.postprocess = postprocess or []
 
     def __call__(self, model, loader, optimizer, history, epoch, device, force: bool = False):
         if self.wandb:
@@ -169,8 +171,8 @@ class CascadeLogger:
             od_preds = (od_probs > self.od_threshold).long()
 
             # Refine predictions
-            for func in self.postprocess:
-                od_preds = func(od_preds)
+            if self.inter_processing is not None:
+                od_preds = self.inter_processing(od_preds)
 
             # Apply masks to images
             cropped_images = images * od_preds

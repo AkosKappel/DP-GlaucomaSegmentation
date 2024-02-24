@@ -142,6 +142,8 @@ class MultilabelLogger:
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
                  threshold: float = 0.5):
+        plot_type = plot_type.lower()
+        assert plot_type in ('all', 'random', 'extreme', 'best', 'worst', 'OD', 'OC', 'none', '')
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb

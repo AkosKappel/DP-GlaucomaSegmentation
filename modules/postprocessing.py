@@ -7,8 +7,8 @@ from scipy.interpolate import splprep, splev
 from skimage.segmentation import active_contour
 
 __all__ = [
-    'postprocess', 'tensor_to_numpy', 'numpy_to_tensor', 'erosion', 'dilation', 'opening', 'closing',
-    'separate_disc_and_cup', 'join_disc_and_cup', 'remove_small_components', 'keep_largest_component',
+    'postprocess', 'interprocess', 'tensor_to_numpy', 'numpy_to_tensor', 'separate_disc_and_cup', 'join_disc_and_cup',
+    'erosion', 'dilation', 'opening', 'closing', 'remove_small_components', 'keep_largest_component',
     'fill_holes', 'fit_ellipse', 'douglas_peucker', 'smooth_contours', 'snakes', 'dense_crf'
 ]
 
@@ -37,6 +37,43 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
 
     # Convert the predictions back to a tensor and return it
     return numpy_to_tensor(predictions, device)
+
+
+# Main post-processing function for cascade architecture (takes place between the first model's predictions
+# and the second model's input, to improve the first model's predictions which later modify the input images)
+def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torch.Tensor:
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Convert the predictions tensor to a numpy array
+    predictions = tensor_to_numpy(predictions)
+
+    # Apply postprocessing to the predictions
+    discs, cups = separate_disc_and_cup(predictions)
+
+    # Fill holes in the masks
+    discs = fill_holes(discs)
+    cups = fill_holes(cups)
+
+    discs = dilation(discs, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
+    cups = dilation(cups, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
+
+    # Join the disc and cup masks
+    predictions = join_disc_and_cup(discs, cups)
+
+    # Convert the predictions back to a tensor and return it
+    return numpy_to_tensor(predictions, device)
+
+
+def separate_disc_and_cup(masks: np.ndarray) -> (np.ndarray, np.ndarray):
+    # Background: 0, Optic disc: 1, Optic cup: 2
+    optic_disc_masks = np.where(masks >= 1, 1, 0).astype(np.uint8)
+    optic_cup_masks = np.where(masks >= 2, 1, 0).astype(np.uint8)
+    return optic_disc_masks, optic_cup_masks
+
+
+def join_disc_and_cup(optic_disc_masks: np.ndarray, optic_cup_masks: np.ndarray) -> np.ndarray:
+    return optic_disc_masks + optic_cup_masks
 
 
 def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
@@ -73,17 +110,6 @@ def closing(masks: np.ndarray | list[np.ndarray], kernel_size: int = 5, iteratio
     return np.array([
         cv.morphologyEx(mask.astype(np.uint8), cv.MORPH_CLOSE, kernel, iterations=iterations) for mask in masks
     ])
-
-
-def separate_disc_and_cup(masks: np.ndarray) -> (np.ndarray, np.ndarray):
-    # Background: 0, Optic disc: 1, Optic cup: 2
-    optic_disc_masks = np.where(masks >= 1, 1, 0).astype(np.uint8)
-    optic_cup_masks = np.where(masks >= 2, 1, 0).astype(np.uint8)
-    return optic_disc_masks, optic_cup_masks
-
-
-def join_disc_and_cup(optic_disc_masks: np.ndarray, optic_cup_masks: np.ndarray) -> np.ndarray:
-    return optic_disc_masks + optic_cup_masks
 
 
 def remove_small_components(binary_masks: np.ndarray, min_size: int | float = 0.05):

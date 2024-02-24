@@ -119,6 +119,9 @@ class BinaryLogger:
     def __init__(self, log_dir: str = '.', interval: int = 1, log_to_wandb: bool = False, show_plots: bool = False,
                  plot_type: str = 'all', class_labels: dict = None, num_examples: int = 4, part: str = 'validation',
                  binary_labels=None, threshold: float = 0.5):
+        plot_type = plot_type.lower()
+        assert plot_type in ('all', 'random', 'extreme', 'best', 'worst', 'OD', 'OC', 'none', '')
+        assert binary_labels is not None, 'target class ids must be specified for binary segmentation'
         self.dir = log_dir
         self.interval = interval
         self.wandb = log_to_wandb
@@ -139,7 +142,6 @@ class BinaryLogger:
         if not force and (not self.interval or epoch % self.interval != 0):
             return
 
-        assert self.binary_labels is not None, 'target_ids must be specified for binary segmentation'
         optic = 'OC' if self.binary_labels.detach().cpu().numpy().tolist() == [2] else 'OD'
 
         model.eval()

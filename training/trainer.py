@@ -186,14 +186,16 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
     train_mode = train_mode.lower()
     if train_mode == TrainingMode.MULTICLASS:
         trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
-        log = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+        logger = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+
     elif train_mode == TrainingMode.MULTILABEL:
         trainer = MultilabelTrainer(
             model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
         )
-        log = MultilabelLogger(
+        logger = MultilabelLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
         )
+
     elif train_mode == TrainingMode.BINARY:
         if binary_labels is None:
             binary_labels = [1, 2]
@@ -202,10 +204,11 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
         trainer = BinaryTrainer(
             model, criterion, optimizer, device, scaler, binary_labels, threshold, inverse_transform, activation,
         )
-        log = BinaryLogger(
+        logger = BinaryLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
             binary_labels=binary_labels, threshold=threshold,
         )
+
     elif train_mode == TrainingMode.CASCADE:
         # Prepare and freeze the pre-trained model
         base_cascade_model.eval()
@@ -217,19 +220,22 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
             base_cascade_model, model, criterion, optimizer, device, scaler,
             od_threshold, oc_threshold, inverse_transform, activation, inter_processing,
         )
-        log = CascadeLogger(
+        logger = CascadeLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-            base_model=base_cascade_model, od_threshold=od_threshold, oc_threshold=oc_threshold,
+            base_model=base_cascade_model, inter_processing=inter_processing,
+            od_threshold=od_threshold, oc_threshold=oc_threshold,
         )
+
     elif train_mode == TrainingMode.DUAL:
         trainer = DualTrainer(
             model, criterion, dual_branch_criterion, optimizer, device, scaler,
             od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
         )
-        log = DualLogger(
+        logger = DualLogger(
             log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
             od_threshold=od_threshold, oc_threshold=oc_threshold,
         )
+
     else:
         raise ValueError(f'Invalid training mode: {train_mode}')
 
@@ -268,7 +274,7 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
             scheduler.step(epoch_loss)
 
         # Logging - log metrics and plots locally and to Weights & Biases
-        log(model, log_loader, optimizer, history, epoch, device)
+        logger(model, log_loader, optimizer, history, epoch, device)
 
         # Checkpoints - save model every few epochs
         if save_interval and epoch % save_interval == 0 and checkpoint_dir:
@@ -303,7 +309,7 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
 
     # If last epoch was not logged, force log metrics before training ends
     if log_interval and num_done_epochs % log_interval != 0:
-        log(model, log_loader, optimizer, history, num_done_epochs, device, force=True)
+        logger(model, log_loader, optimizer, history, num_done_epochs, device, force=True)
 
     return history
 

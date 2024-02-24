@@ -17,7 +17,7 @@ __all__ = [
 def evaluate(mode: str, model, loader, device=None, criterion=None,
              thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
              binary_labels: list[int] = None, base_model=None, inverse_transform=None,
-             post_process_fn=None, tta: bool = False, **morph_kwargs):
+             inter_process_fn=None, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -32,7 +32,7 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
         for images, masks in loop:
             preds, _, loss = predict(
                 mode, model, images, masks, device, thresh, od_thresh, oc_thresh,
-                criterion, binary_labels, base_model, post_process_fn, tta, **morph_kwargs,
+                criterion, binary_labels, base_model, inter_process_fn, post_process_fn, tta, **morph_kwargs,
             )
             if inverse_transform is not None:
                 images, masks, preds = inverse_transform(images, masks, preds)
@@ -51,7 +51,7 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
 def predict(mode: str, model, images, masks=None, device=None,
             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
             criterion=None, binary_labels=None, base_model=None,
-            post_process_fn=None, tta: bool = False, **morph_kwargs):
+            inter_process_fn=None, post_process_fn=None, tta: bool = False, **morph_kwargs):
     # Morph kwargs = operation: str, kernel_size: int, iterations: int, kernel_shape: int
     if mode == 'multiclass':  # Multi-class segmentation
         return predict_multiclass(
@@ -73,7 +73,7 @@ def predict(mode: str, model, images, masks=None, device=None,
         assert base_model is not None, 'Cascade model needs a base model'
         return predict_cascade(
             base_model, model, images, masks, device, criterion,
-            thresh, od_thresh, oc_thresh, post_process_fn, tta, **morph_kwargs
+            thresh, od_thresh, oc_thresh, inter_process_fn, post_process_fn, tta, **morph_kwargs
         )
 
     if mode == 'dual':  # Dual architecture
@@ -220,7 +220,7 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
 
 def predict_cascade(base_model, model, images, masks=None, device=None, criterion=None,
                     threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                    post_process_fn=None, tta: bool = False, **morph_kwargs):
+                    inter_process_fn=None, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -244,6 +244,9 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
     if tta:
         od_probabilities = d4_inverse_transform(od_probabilities)
     od_predictions = (od_probabilities > (od_threshold or threshold)).long()  # (N, 1, H, W)
+
+    if inter_process_fn is not None:
+        od_predictions = inter_process_fn(od_predictions)
 
     # Cascading effect: crop everything that is not inside the optic disc
     cropped_images = images * od_predictions  # (N, C, H, W)

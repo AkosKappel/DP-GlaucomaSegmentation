@@ -192,7 +192,6 @@ def get_best_and_worst_OC_examples(*args, **kwargs):
     return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 
-# TODO: check this code
 def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True, class_ids: list = None,
                          device: torch.device = None, metric: str = 'iou', thresh: float = 0.5, softmax: bool = False,
                          out_idx: int = None, first_model=None):
@@ -240,13 +239,13 @@ def get_extreme_examples(model, loader, n, best: bool = True, worst: bool = True
                 probs = torch.sigmoid(outputs)
                 preds = (probs > thresh).squeeze(1).long()
 
-                # Convert the predictions to correct binary_labels in ground truth format
+                # Convert the predictions to correct binary labels in ground truth format
                 if class_ids == [1, 2]:
-                    masks[masks == 2] = 1  # turn OC binary_labels to OD binary_labels
+                    masks[masks == 2] = 1  # turn OC labels to OD binary labels
                 elif class_ids == [1]:
-                    masks[masks == 2] = 0  # hide OC binary_labels
+                    masks[masks == 2] = 0  # hide OC binary labels
                 elif class_ids == [2]:
-                    preds[preds == 1] = 2  # change predicted positive binary_labels to OC binary_labels
+                    preds[preds == 1] = 2  # change predicted positive binary labels to OC labels
                     masks[masks == 1] = 0  # hide OD from ground truth
             elif softmax:
                 # Multi-class segmentation
