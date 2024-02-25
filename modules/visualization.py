@@ -87,19 +87,19 @@ def get_overlap_image(mask: np.ndarray, pred: np.ndarray, class_ids: list[int] =
         cover_img[(mask == 0) & (pred != 0)] = FP_COLOR
         cover_img[(mask != 0) & (pred == 0)] = FN_COLOR
     else:
-        # True positive (TP): both mask and pred have one of the class_ids at the same pixel
+        # True positive (TP): both mask and pred have one of the binary_labels at the same pixel
         tp_mask = np.isin(mask, class_ids) & np.isin(pred, class_ids)
         cover_img[tp_mask] = TP_COLOR
 
-        # True negative (TN): neither mask nor pred have one of the class_ids at the same position
+        # True negative (TN): neither mask nor pred have one of the binary_labels at the same position
         tn_mask = np.logical_not(np.isin(mask, class_ids)) & np.logical_not(np.isin(pred, class_ids))
         cover_img[tn_mask] = TN_COLOR
 
-        # False positive (FP): pred has one of the class_ids, but mask does not
+        # False positive (FP): pred has one of the binary_labels, but mask does not
         fp_mask = np.logical_not(np.isin(mask, class_ids)) & np.isin(pred, class_ids)
         cover_img[fp_mask] = FP_COLOR
 
-        # False negative (FN): pred does not have one of the class_ids, but mask does
+        # False negative (FN): pred does not have one of the binary_labels, but mask does
         fn_mask = np.isin(mask, class_ids) & np.logical_not(np.isin(pred, class_ids))
         cover_img[fn_mask] = FN_COLOR
 
@@ -331,25 +331,40 @@ def plot_results(images=None, masks=None, preds=None, types: str | list[str] = N
                     overlap_legend=overlap_legend_index, contour_legend=contour_legend_index, **kwargs)
 
 
+# plot results kwargs: types, img_size, save_path, show
 def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 4,
                              thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
-                             class_ids: list = None, base_model=None, **kwargs):
+                             binary_labels: list = None, base_model=None, inverse_transform=None,
+                             inter_process_fn=None, post_process_fn=None, tta: bool = False, **kwargs):
     assert mode in ('binary', 'multiclass', 'multilabel', 'cascade', 'dual')
 
-    if class_ids is None:
-        class_ids = [[1, 2]]
-    elif isinstance(class_ids, int):
-        class_ids = [[class_ids]]
-    elif isinstance(class_ids[0], int):
-        class_ids = [class_ids]
-    tensor_class_ids = torch.tensor(class_ids).to(device)
+    if binary_labels is None:
+        binary_labels = [[1, 2]]
+    elif isinstance(binary_labels, int):
+        binary_labels = [[binary_labels]]
+    elif isinstance(binary_labels[0], int):
+        binary_labels = [binary_labels]
+    tensor_binary_labels = torch.tensor(binary_labels).to(device)
 
     # parse keyword arguments
+    img_size = 3
+    save_path = None
+    show = True
+    if 'img_size' in kwargs:
+        img_size = kwargs['img_size']
+        del kwargs['img_size']
+    if 'save_path' in kwargs:
+        save_path = kwargs['save_path']
+        del kwargs['save_path']
+    if 'show' in kwargs:
+        show = kwargs['show']
+        del kwargs['show']
     if 'types' in kwargs:
         types = kwargs['types']
+        del kwargs['types']
     elif mode == 'binary':
-        sign = 'OD' if 1 in class_ids[0] else 'OC'
-        types = ['image', 'mask', 'prediction', sign + ' overlap', sign + ' contour']
+        entity = 'OD' if 1 in binary_labels[0] else 'OC'
+        types = ['image', 'mask', 'prediction', entity + ' overlap', entity + ' contour']
     elif mode == 'multiclass':
         types = ['image', 'mask', 'prediction', 'OD overlap', 'OC overlap', 'OD contour', 'OC contour']
     elif mode == 'multilabel':
@@ -361,10 +376,6 @@ def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 
     else:
         raise ValueError('Invalid model mode: ' + mode)
 
-    img_size = kwargs['img_size'] if 'img_size' in kwargs else 3
-    save_path = kwargs['save_path'] if 'save_path' in kwargs else None
-    show = kwargs['show'] if 'show' in kwargs else True
-
     with torch.no_grad():
         samples_so_far = 0
         images_all, masks_all, preds_all = [], [], []
@@ -372,15 +383,22 @@ def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 
         for images, masks in loader:
             preds, *_ = predict(
                 mode, model, images, masks, device, thresh, od_thresh, oc_thresh,
-                base_model=base_model, binary_labels=tensor_class_ids,
+                base_model=base_model, binary_labels=tensor_binary_labels,
+                inter_process_fn=inter_process_fn, post_process_fn=post_process_fn, tta=tta,
             )
 
             if mode == 'binary':  # Binarize masks and predictions
                 masks = masks.to(device).long()
-                masks = torch.where(torch.isin(masks, tensor_class_ids), 1, 0)
-                if class_ids == [[2]]:
+                masks = torch.where(torch.isin(masks, tensor_binary_labels), 1, 0)
+                if binary_labels == [[2]]:
                     preds[preds == 1] = 2
                     masks[masks == 1] = 2
+
+            if inverse_transform is not None:
+                images, masks, preds = inverse_transform(images, masks, preds)
+
+            if post_process_fn is not None:
+                preds = post_process_fn(preds)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
             masks = masks.detach().cpu().numpy()

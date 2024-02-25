@@ -27,7 +27,7 @@ code = []
 skipping = False
 
 for file in script_files:
-    with open(file, 'r') as f:
+    with open(file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         for line in lines:
             if line.startswith('import') or line.startswith('from'):
@@ -64,6 +64,6 @@ def comment_problematic(x):
 
 imports = map(comment_problematic, sorted(filter(non_local, list(set(imports)))))
 
-with open('joined-scripts.py', 'w') as f:
+with open('joined-scripts.py', 'w', encoding='utf-8') as f:
     f.writelines(imports)
     f.writelines(code)

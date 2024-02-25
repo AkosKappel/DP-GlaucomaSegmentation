@@ -163,32 +163,32 @@ def update_metrics(true: torch.Tensor, pred: torch.Tensor, old: dict[str, list[f
 
 
 def get_best_OD_examples(*args, **kwargs):
-    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [1, 2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=class_ids)
 
 
 def get_worst_OD_examples(*args, **kwargs):
-    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [1, 2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=class_ids)
 
 
 def get_best_and_worst_OD_examples(*args, **kwargs):
-    class_ids = [1, 2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [1, 2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 
 def get_best_OC_examples(*args, **kwargs):
-    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=True, worst=False, class_ids=class_ids)
 
 
 def get_worst_OC_examples(*args, **kwargs):
-    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=False, worst=True, class_ids=class_ids)
 
 
 def get_best_and_worst_OC_examples(*args, **kwargs):
-    class_ids = [2] if 'class_ids' not in kwargs else kwargs['class_ids']
+    class_ids = [2] if 'binary_labels' not in kwargs else kwargs['binary_labels']
     return get_extreme_examples(*args, **kwargs, best=True, worst=True, class_ids=class_ids)
 
 

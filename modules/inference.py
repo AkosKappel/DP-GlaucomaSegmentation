@@ -215,6 +215,9 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
 
+    if post_process_fn is not None:
+        predictions = post_process_fn(predictions)
+
     return predictions, probabilities, loss
 
 
