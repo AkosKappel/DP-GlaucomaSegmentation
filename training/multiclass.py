@@ -32,8 +32,8 @@ class MulticlassTrainer:
 
         if self.scaler is None:
             # Forward pass
-            outputs = self.model(images)  # Model returns logits (before softmax)
-            loss = self.criterion(outputs, masks)
+            logits = self.model(images)  # Model returns logits (before softmax)
+            loss = self.criterion(logits, masks)
 
             # Backward pass
             if backward:
@@ -43,8 +43,8 @@ class MulticlassTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                outputs = self.model(images)
-                loss = self.criterion(outputs, masks)
+                logits = self.model(images)
+                loss = self.criterion(logits, masks)
 
             # Backward pass
             if backward:
@@ -54,7 +54,7 @@ class MulticlassTrainer:
                 self.scaler.update()
 
         # Convert logits to probabilities and then to class label predictions
-        probs = torch.softmax(outputs, dim=1)
+        probs = torch.softmax(logits, dim=1)
         preds = torch.argmax(probs, dim=1)
 
         # Inverse initial transformations like normalization, polar transform, etc.
@@ -135,8 +135,8 @@ class MulticlassLogger:
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            outputs = model(images)
-            probs = torch.softmax(outputs, dim=1)
+            logits = model(images)
+            probs = torch.softmax(logits, dim=1)
             preds = torch.argmax(probs, dim=1)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)

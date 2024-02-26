@@ -39,14 +39,14 @@ class MultilabelTrainer:
 
         if self.scaler is None:
             # Forward pass
-            outputs = self.model(images)
-            bg_outputs = outputs[:, 0].unsqueeze(1)
-            od_outputs = outputs[:, 1].unsqueeze(1)
-            oc_outputs = outputs[:, 2].unsqueeze(1)
+            logits = self.model(images)
+            bg_logits = logits[:, 0].unsqueeze(1)
+            od_logits = logits[:, 1].unsqueeze(1)
+            oc_logits = logits[:, 2].unsqueeze(1)
 
-            bg_loss = self.criterion(bg_outputs, bg_masks)
-            od_loss = self.criterion(od_outputs, od_masks)
-            oc_loss = self.criterion(oc_outputs, oc_masks)
+            bg_loss = self.criterion(bg_logits, bg_masks)
+            od_loss = self.criterion(od_logits, od_masks)
+            oc_loss = self.criterion(oc_logits, oc_masks)
             loss = bg_loss + od_loss + oc_loss
 
             # Backward pass
@@ -57,14 +57,14 @@ class MultilabelTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                outputs = self.model(images)
-                bg_outputs = outputs[:, 0].unsqueeze(1)
-                od_outputs = outputs[:, 1].unsqueeze(1)
-                oc_outputs = outputs[:, 2].unsqueeze(1)
+                logits = self.model(images)
+                bg_logits = logits[:, 0].unsqueeze(1)
+                od_logits = logits[:, 1].unsqueeze(1)
+                oc_logits = logits[:, 2].unsqueeze(1)
 
-                bg_loss = self.criterion(bg_outputs, bg_masks)
-                od_loss = self.criterion(od_outputs, od_masks)
-                oc_loss = self.criterion(oc_outputs, oc_masks)
+                bg_loss = self.criterion(bg_logits, bg_masks)
+                od_loss = self.criterion(od_logits, od_masks)
+                oc_loss = self.criterion(oc_logits, oc_masks)
                 loss = bg_loss + od_loss + oc_loss
 
             # Backward pass
@@ -75,13 +75,13 @@ class MultilabelTrainer:
                 self.scaler.update()
 
         # Convert logits to probabilities and apply threshold
-        bg_probs = self.activation(bg_outputs)
+        bg_probs = self.activation(bg_logits)
         bg_preds = (bg_probs > self.threshold).squeeze(1).long()
 
-        od_probs = self.activation(od_outputs)
+        od_probs = self.activation(od_logits)
         od_preds = (od_probs > self.threshold).squeeze(1).long()
 
-        oc_probs = self.activation(oc_outputs)
+        oc_probs = self.activation(oc_logits)
         oc_preds = (oc_probs > self.threshold).squeeze(1).long()
 
         # Join predictions into a single mask
@@ -169,8 +169,8 @@ class MultilabelLogger:
             images = images.float().to(device)
             masks = masks.long().to(device)
 
-            outputs = model(images)
-            probs = torch.sigmoid(outputs)
+            logits = model(images)
+            probs = torch.sigmoid(logits)
             preds = torch.zeros_like(probs[:, 0])
             for i in range(1, probs.shape[1]):
                 preds += (probs[:, i] > self.threshold).long()

@@ -38,8 +38,8 @@ class CascadeTrainer:
 
         # Apply first model to get optic disc masks which get passed to the second model
         with torch.no_grad():
-            od_outputs = self.base_model(images)
-            od_probs = self.activation(od_outputs)
+            od_logits = self.base_model(images)
+            od_probs = self.activation(od_logits)
             od_preds = (od_probs > self.od_threshold).long()
 
         # Improve optic disc predictions (e.g. fill holes, keep only the largest object, dilate, etc.)
@@ -55,8 +55,8 @@ class CascadeTrainer:
 
         if self.scaler is None:
             # Forward pass
-            oc_outputs = self.model(cropped_images)
-            loss = self.criterion(oc_outputs, oc_masks)
+            oc_logits = self.model(cropped_images)
+            loss = self.criterion(oc_logits, oc_masks)
 
             # Backward pass
             if backward:
@@ -66,8 +66,8 @@ class CascadeTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                oc_outputs = self.model(cropped_images)
-                loss = self.criterion(oc_outputs, oc_masks)
+                oc_logits = self.model(cropped_images)
+                loss = self.criterion(oc_logits, oc_masks)
 
             # Backward pass
             if backward:
@@ -77,7 +77,7 @@ class CascadeTrainer:
                 self.scaler.update()
 
         # Convert logits to probabilities
-        oc_probs = self.activation(oc_outputs)
+        oc_probs = self.activation(oc_logits)
         oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
         od_preds = od_preds.squeeze(1)
@@ -167,8 +167,8 @@ class CascadeLogger:
             masks = masks.long().to(device)
 
             # Create optic disc masks
-            od_outputs = self.base_model(images)
-            od_probs = torch.sigmoid(od_outputs)
+            od_logits = self.base_model(images)
+            od_probs = torch.sigmoid(od_logits)
             od_preds = (od_probs > self.od_threshold).long()
 
             # Refine predictions
@@ -181,8 +181,8 @@ class CascadeLogger:
 
             oc_masks = (masks == 2).long()
 
-            oc_outputs = model(cropped_images)
-            oc_probs = torch.sigmoid(oc_outputs)
+            oc_logits = model(cropped_images)
+            oc_probs = torch.sigmoid(oc_logits)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
             oc_masks[oc_masks == 1] = 2

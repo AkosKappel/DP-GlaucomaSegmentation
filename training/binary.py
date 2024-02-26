@@ -37,8 +37,8 @@ class BinaryTrainer:
 
         if self.scaler is None:
             # Forward pass
-            outputs = self.model(images)
-            loss = self.criterion(outputs, masks)
+            logits = self.model(images)
+            loss = self.criterion(logits, masks)
 
             # Backward pass
             if backward:
@@ -48,8 +48,8 @@ class BinaryTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                outputs = self.model(images)
-                loss = self.criterion(outputs, masks)
+                logits = self.model(images)
+                loss = self.criterion(logits, masks)
 
             # Backward pass
             if backward:
@@ -59,7 +59,7 @@ class BinaryTrainer:
                 self.scaler.update()
 
         # Convert logits to probabilities and apply threshold to get predictions
-        probs = self.activation(outputs)
+        probs = self.activation(logits)
         preds = (probs > self.threshold).squeeze(1).long()
 
         # Shift predicted class labels for OC
@@ -152,8 +152,8 @@ class BinaryLogger:
 
             masks = torch.where(torch.isin(masks, self.binary_labels), 1, 0)
 
-            outputs = model(images)
-            probs = torch.sigmoid(outputs)
+            logits = model(images)
+            probs = torch.sigmoid(logits)
             preds = (probs > self.threshold).squeeze(1).long()
 
             if optic == 'OC':

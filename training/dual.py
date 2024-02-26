@@ -43,9 +43,9 @@ class DualTrainer:
 
         if self.scaler is None:
             # Forward pass
-            od_outputs, oc_outputs = self.model(images)
-            od_loss = self.od_criterion(od_outputs, od_masks)
-            oc_loss = self.oc_criterion(oc_outputs, oc_masks)
+            od_logits, oc_logits = self.model(images)
+            od_loss = self.od_criterion(od_logits, od_masks)
+            oc_loss = self.oc_criterion(oc_logits, oc_masks)
             total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
 
             # Backward pass
@@ -56,9 +56,9 @@ class DualTrainer:
         else:
             # Forward pass
             with torch.cuda.amp.autocast():
-                od_outputs, oc_outputs = self.model(images)
-                od_loss = self.od_criterion(od_outputs, od_masks)
-                oc_loss = self.oc_criterion(oc_outputs, oc_masks)
+                od_logits, oc_logits = self.model(images)
+                od_loss = self.od_criterion(od_logits, od_masks)
+                oc_loss = self.oc_criterion(oc_logits, oc_masks)
                 total_loss = od_loss * self.od_loss_weight + oc_loss * self.oc_loss_weight
 
             # Backward pass
@@ -69,10 +69,10 @@ class DualTrainer:
                 self.scaler.update()
 
         # Convert logits to probabilities for OD and OC
-        od_probs = self.activation(od_outputs)
+        od_probs = self.activation(od_logits)
         od_preds = (od_probs > self.od_threshold).squeeze(1).long()
 
-        oc_probs = self.activation(oc_outputs)
+        oc_probs = self.activation(oc_logits)
         oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
         # Join OD and OC predictions into a single tensor
@@ -157,10 +157,10 @@ class DualLogger:
             od_masks = (masks == 1).long() + (masks == 2).long()
             oc_masks = (masks == 2).long()
 
-            od_outputs, oc_outputs = model(images)
-            od_probs = torch.sigmoid(od_outputs)
+            od_logits, oc_logits = model(images)
+            od_probs = torch.sigmoid(od_logits)
             od_preds = (od_probs > self.od_threshold).squeeze(1).long()
-            oc_probs = torch.sigmoid(oc_outputs)
+            oc_probs = torch.sigmoid(oc_logits)
             oc_preds = (oc_probs > self.oc_threshold).squeeze(1).long()
 
             # Shift labels of optic cup from 1 to 2
