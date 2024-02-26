@@ -6,10 +6,13 @@ from pydensecrf.utils import unary_from_softmax, unary_from_labels
 from scipy.interpolate import splprep, splev
 from skimage.segmentation import active_contour
 
+from modules.preprocessing import polar_transform, inverse_polar_transform
+
 __all__ = [
-    'postprocess', 'interprocess', 'tensor_to_numpy', 'numpy_to_tensor', 'separate_disc_and_cup', 'join_disc_and_cup',
-    'erosion', 'dilation', 'opening', 'closing', 'remove_small_components', 'keep_largest_component',
-    'fill_holes', 'fit_ellipse', 'douglas_peucker', 'smooth_contours', 'snakes', 'dense_crf'
+    'postprocess', 'interprocess', 'tensor_to_numpy', 'numpy_to_tensor', 'cartesian_to_polar', 'polar_to_cartesian',
+    'separate_disc_and_cup', 'join_disc_and_cup', 'erosion', 'dilation', 'opening', 'closing',
+    'remove_small_components', 'keep_largest_component', 'fill_holes', 'fit_ellipse',
+    'douglas_peucker', 'smooth_contours', 'snakes', 'dense_crf',
 ]
 
 
@@ -77,11 +80,41 @@ def join_disc_and_cup(optic_disc_masks: np.ndarray, optic_cup_masks: np.ndarray)
 
 
 def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
+    if isinstance(tensor, np.ndarray):
+        return tensor
+    if tensor.requires_grad:
+        tensor = tensor.detach()
     return tensor.cpu().numpy()
 
 
 def numpy_to_tensor(array: np.ndarray, device) -> torch.Tensor:
+    if isinstance(array, torch.Tensor):
+        return array
     return torch.from_numpy(array).to(device)
+
+
+def cartesian_to_polar(cartesian_masks: np.ndarray | torch.Tensor) -> np.ndarray:
+    if isinstance(cartesian_masks, torch.Tensor):
+        cartesian_masks = tensor_to_numpy(cartesian_masks)
+
+    polar_masks = np.zeros_like(cartesian_masks)
+
+    for idx, mask in enumerate(cartesian_masks):
+        polar_masks[idx] = polar_transform(mask)
+
+    return polar_masks
+
+
+def polar_to_cartesian(polar_masks: np.ndarray | torch.Tensor) -> np.ndarray:
+    if isinstance(polar_masks, torch.Tensor):
+        polar_masks = tensor_to_numpy(polar_masks)
+
+    cartesian_masks = np.zeros_like(polar_masks)
+
+    for idx, mask in enumerate(polar_masks):
+        cartesian_masks[idx] = inverse_polar_transform(mask)
+
+    return cartesian_masks
 
 
 def erosion(masks: np.ndarray, kernel_size: int = 5, iterations: int = 1,

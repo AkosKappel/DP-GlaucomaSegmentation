@@ -98,9 +98,11 @@ def boundary_transform(mask: np.ndarray, kernel_size: int = 5, structure: int = 
     return (boundary * 255).astype(np.uint8)
 
 
-def polar_transform(cartesian_image: np.ndarray, radius_ratio: float = 1.0, **kwargs) -> np.ndarray:
+def polar_transform(cartesian_image: np.ndarray, radius_ratio: float = 1.0,
+                    center: tuple[int, int] = None, **kwargs) -> np.ndarray:
     height, width = cartesian_image.shape[:2]
-    center = (width // 2, height // 2)
+    if center is None:
+        center = (width // 2, height // 2)
 
     # Linear interpolation between inner and outer radius
     inner_radius = np.min([width, height]) / 2.0
@@ -112,10 +114,12 @@ def polar_transform(cartesian_image: np.ndarray, radius_ratio: float = 1.0, **kw
     return polar_image
 
 
-def inverse_polar_transform(polar_image: np.ndarray, radius_ratio: float = 1.0, **kwargs) -> np.ndarray:
+def inverse_polar_transform(polar_image: np.ndarray, radius_ratio: float = 1.0,
+                            center: tuple[int, int] = None, **kwargs) -> np.ndarray:
     polar_image = cv.rotate(polar_image, cv.ROTATE_90_CLOCKWISE)
     height, width = polar_image.shape[:2]
-    center = (width // 2, height // 2)
+    if center is None:
+        center = (width // 2, height // 2)
 
     inner_radius = np.min([width, height]) / 2.0
     outer_radius = np.sqrt(((width / 2.0) ** 2.0) + ((height / 2.0) ** 2.0))
