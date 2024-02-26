@@ -21,8 +21,10 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    input_shape = predictions.shape  # (B, 1, H, W)
+
     # Convert the predictions tensor to a numpy array
-    predictions = tensor_to_numpy(predictions)
+    predictions = tensor_to_numpy(predictions.squeeze(1))  # (B, H, W)
 
     # Apply postprocessing to the predictions
     discs, cups = separate_disc_and_cup(predictions)
@@ -39,7 +41,10 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
     predictions = join_disc_and_cup(discs, cups)
 
     # Convert the predictions back to a tensor and return it
-    return numpy_to_tensor(predictions, device)
+    predictions = numpy_to_tensor(predictions, device).unsqueeze(1)
+
+    assert predictions.shape == input_shape, f'Invalid shape: {predictions.shape} != {input_shape}'
+    return predictions
 
 
 # Main post-processing function for cascade architecture (takes place between the first model's predictions
@@ -48,24 +53,28 @@ def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torc
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    input_shape = predictions.shape  # (B, 1, H, W)
+
     # Convert the predictions tensor to a numpy array
-    predictions = tensor_to_numpy(predictions)
+    predictions = tensor_to_numpy(predictions.squeeze(1))  # (B, H, W)
 
     # Apply postprocessing to the predictions
-    discs, cups = separate_disc_and_cup(predictions)
+    discs, _ = separate_disc_and_cup(predictions)
 
-    # Fill holes in the masks
+    # Fill holes in the disc masks
     discs = fill_holes(discs)
-    cups = fill_holes(cups)
 
+    # Fit an ellipse to the disc masks
+    discs = fit_ellipse(discs)
+
+    # Enlarge the disc masks a bit
     discs = dilation(discs, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
-    cups = dilation(cups, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
-
-    # Join the disc and cup masks
-    predictions = join_disc_and_cup(discs, cups)
 
     # Convert the predictions back to a tensor and return it
-    return numpy_to_tensor(predictions, device)
+    predictions = numpy_to_tensor(discs, device).unsqueeze(1)
+
+    assert predictions.shape == input_shape, f'Invalid shape: {predictions.shape} != {input_shape}'
+    return predictions
 
 
 def separate_disc_and_cup(masks: np.ndarray) -> (np.ndarray, np.ndarray):
@@ -87,7 +96,7 @@ def tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.cpu().numpy()
 
 
-def numpy_to_tensor(array: np.ndarray, device) -> torch.Tensor:
+def numpy_to_tensor(array: np.ndarray, device: torch.device) -> torch.Tensor:
     if isinstance(array, torch.Tensor):
         return array
     return torch.from_numpy(array).to(device)
