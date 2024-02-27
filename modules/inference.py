@@ -24,6 +24,8 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
         device = torch.device(device)
+    if binary_labels is None:
+        binary_labels = [1, 2]
 
     mean_metrics = None
     history = defaultdict(list)
@@ -72,7 +74,8 @@ def predict(mode: str, model, images, masks=None, device=None,
         )
 
     if mode == 'binary':  # Binary segmentation
-        assert binary_labels is not None, 'Binary class labels must be provided'
+        if binary_labels is None:
+            binary_labels = [1, 2]
         return predict_binary(
             model, images, masks, device, criterion, thresh,
             in_polar, to_cartesian, binary_labels, post_process_fn, tta, **morph_kwargs,

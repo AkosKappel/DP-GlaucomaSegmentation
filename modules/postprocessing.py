@@ -21,10 +21,10 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    input_shape = predictions.shape  # (B, 1, H, W)
+    input_shape = predictions.shape
 
     # Convert the predictions tensor to a numpy array
-    predictions = tensor_to_numpy(predictions.squeeze(1))  # (B, H, W)
+    predictions = tensor_to_numpy(predictions)
 
     # Apply postprocessing to the predictions
     discs, cups = separate_disc_and_cup(predictions)
@@ -37,11 +37,15 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
     discs = keep_largest_component(discs)
     cups = keep_largest_component(cups)
 
+    # Fit an ellipse to the masks
+    discs = fit_ellipse(discs, morph='erosion', kernel_size=15)
+    cups = fit_ellipse(cups, morph='erosion', kernel_size=15)
+
     # Join the disc and cup masks
     predictions = join_disc_and_cup(discs, cups)
 
     # Convert the predictions back to a tensor and return it
-    predictions = numpy_to_tensor(predictions, device).unsqueeze(1)
+    predictions = numpy_to_tensor(predictions, device)
 
     assert predictions.shape == input_shape, f'Invalid shape: {predictions.shape} != {input_shape}'
     return predictions
@@ -71,7 +75,7 @@ def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torc
     discs = dilation(discs, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
 
     # Convert the predictions back to a tensor and return it
-    predictions = numpy_to_tensor(discs, device).unsqueeze(1)
+    predictions = numpy_to_tensor(discs, device).unsqueeze(1)  # (B, 1, H, W)
 
     assert predictions.shape == input_shape, f'Invalid shape: {predictions.shape} != {input_shape}'
     return predictions
@@ -215,7 +219,11 @@ def fill_holes(binary_masks: np.ndarray) -> np.ndarray:
     return filled_masks
 
 
-def fit_ellipse(binary_masks: np.ndarray) -> np.ndarray:
+def fit_ellipse(binary_masks: np.ndarray, morph: str = None, kernel_size: int = 5, iterations: int = 1,
+                kernel_shape: int = cv.MORPH_ELLIPSE) -> np.ndarray:
+    operations = {
+        'erosion': erosion, 'dilation': dilation, 'opening': opening, 'closing': closing,
+    }
     ellipse_masks = np.zeros_like(binary_masks, dtype=np.uint8)
 
     for idx, mask in enumerate(binary_masks.astype(np.uint8)):
@@ -233,10 +241,17 @@ def fit_ellipse(binary_masks: np.ndarray) -> np.ndarray:
 
         # Fit an ellipse to the largest contour and draw it on a blank mask
         ellipse = cv.fitEllipse(max_contour)
-        cv.ellipse(ellipse_masks[idx], ellipse, (1,), -1)  # Fill ellipse with 1's
+        ellipse_mask = np.zeros_like(mask, dtype=np.uint8)
+        cv.ellipse(ellipse_mask, ellipse, (1,), -1)  # Fill ellipse with 1's
+
+        # Enlarge or shrink the ellipse with a morphological operation
+        if morph in operations:
+            ellipse_mask = operations[morph](
+                np.array([ellipse_mask]), kernel_size=kernel_size, iterations=iterations, kernel_shape=kernel_shape
+            )[0]
 
         # Preserve original boundaries by combining the ellipse mask with the original mask
-        ellipse_masks[idx] = np.logical_or(ellipse_masks[idx], mask).astype(np.uint8)
+        ellipse_masks[idx] = np.logical_or(ellipse_mask, mask).astype(np.uint8)
 
     return ellipse_masks
 
