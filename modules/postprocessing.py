@@ -17,7 +17,7 @@ __all__ = [
 
 
 # Main post-processing function
-def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch.Tensor:
+def postprocess(predictions: torch.Tensor, is_in_polar: bool = True, device: torch.device = None) -> torch.Tensor:
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -25,6 +25,9 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
 
     # Convert the predictions tensor to a numpy array
     predictions = tensor_to_numpy(predictions)
+
+    if is_in_polar:
+        predictions = polar_to_cartesian(predictions)
 
     # Apply postprocessing to the predictions
     discs, cups = separate_disc_and_cup(predictions)
@@ -44,6 +47,9 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
     # Join the disc and cup masks
     predictions = join_disc_and_cup(discs, cups)
 
+    if is_in_polar:
+        predictions = cartesian_to_polar(predictions)
+
     # Convert the predictions back to a tensor and return it
     predictions = numpy_to_tensor(predictions, device)
 
@@ -53,7 +59,7 @@ def postprocess(predictions: torch.Tensor, device: torch.device = None) -> torch
 
 # Main post-processing function for cascade architecture (takes place between the first model's predictions
 # and the second model's input, to improve the first model's predictions which later modify the input images)
-def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torch.Tensor:
+def interprocess(predictions: torch.Tensor, is_in_polar: bool = True, device: torch.device = None) -> torch.Tensor:
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -61,6 +67,9 @@ def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torc
 
     # Convert the predictions tensor to a numpy array
     predictions = tensor_to_numpy(predictions.squeeze(1))  # (B, H, W)
+
+    if is_in_polar:
+        predictions = polar_to_cartesian(predictions)
 
     # Apply postprocessing to the predictions
     discs, _ = separate_disc_and_cup(predictions)
@@ -73,6 +82,9 @@ def interprocess(predictions: torch.Tensor, device: torch.device = None) -> torc
 
     # Enlarge the disc masks a bit
     discs = dilation(discs, kernel_size=9, iterations=1, kernel_shape=cv.MORPH_ELLIPSE)
+
+    if is_in_polar:
+        discs = cartesian_to_polar(discs)
 
     # Convert the predictions back to a tensor and return it
     predictions = numpy_to_tensor(discs, device).unsqueeze(1)  # (B, 1, H, W)

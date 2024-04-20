@@ -45,7 +45,7 @@ class CascadeTrainer:
         # Improve optic disc predictions (e.g. fill holes, keep only the largest object, dilate, etc.)
         od_masks = od_preds
         if self.inter_processing is not None:
-            od_masks = self.inter_processing(od_preds)
+            od_masks = self.inter_processing(od_masks)
 
         # Crop images to optic disc boundaries
         cropped_images = images * od_masks
@@ -174,7 +174,7 @@ class CascadeLogger:
             # Refine predictions
             od_masks = od_preds
             if self.inter_processing is not None:
-                od_masks = self.inter_processing(od_preds)
+                od_masks = self.inter_processing(od_masks)
 
             # Apply masks to images to crop them
             cropped_images = images * od_masks

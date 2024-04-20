@@ -394,11 +394,11 @@ def plot_results_from_loader(mode: str, loader, model, device, n_samples: int = 
                     preds[preds == 1] = 2
                     masks[masks == 1] = 2
 
-            if inverse_transform is not None:
-                images, masks, preds = inverse_transform(images, masks, preds)
-
             if post_process_fn is not None:
                 preds = post_process_fn(preds)
+
+            if inverse_transform is not None:
+                images, masks, preds = inverse_transform(images, masks, preds)
 
             images = images.detach().cpu().numpy().transpose(0, 2, 3, 1)
             masks = masks.detach().cpu().numpy()

@@ -31,7 +31,7 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
     history = defaultdict(list)
     loop = tqdm(loader, desc=f'Evaluating {mode} segmentation')
     labels = [binary_labels] if mode == 'binary' else [[1, 2], [2]]
-    in_polar = False if inverse_transform is None else True
+    in_polar = inverse_transform is None
     to_cartesian = False  # Don't convert because metrics need to be calculated in same space as masks
 
     with torch.no_grad():
@@ -275,11 +275,12 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
         od_probabilities = d4_inverse_transform(od_probabilities, polar=in_polar)
     od_predictions = (od_probabilities > (od_threshold or threshold)).long()  # (N, 1, H, W)
 
+    od_masks = od_predictions
     if inter_process_fn is not None:
-        od_predictions = inter_process_fn(od_predictions)
+        od_masks = inter_process_fn(od_masks)
 
     # Cascading effect: crop everything that is not inside the optic disc
-    cropped_images = images * od_predictions  # (N, C, H, W)
+    cropped_images = images * od_masks  # (N, C, H, W)
 
     model.eval()
     with torch.no_grad():
