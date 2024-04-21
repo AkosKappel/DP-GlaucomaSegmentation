@@ -31,7 +31,7 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
     history = defaultdict(list)
     loop = tqdm(loader, desc=f'Evaluating {mode} segmentation')
     labels = [binary_labels] if mode == 'binary' else [[1, 2], [2]]
-    in_polar = inverse_transform is None
+    in_polar = inverse_transform is not None
     to_cartesian = False  # Don't convert because metrics need to be calculated in same space as masks
 
     with torch.no_grad():

@@ -244,8 +244,8 @@ def plot_image_grid(grid: list[list], titles: list[str] | list[list[str]] = None
 
     if contour_legend:
         axes[rows - 1, contour_legend].legend(handles=[
-            Patch(color=np.array(TRUE_CONTOUR_COLOR) / 255, label='True'),
-            Patch(color=np.array(PRED_CONTOUR_COLOR) / 255, label='Predicted'),
+            Patch(color=np.array(TRUE_CONTOUR_COLOR) / 255, label='True contour'),
+            Patch(color=np.array(PRED_CONTOUR_COLOR) / 255, label='Predicted contour'),
         ], bbox_to_anchor=(0.5, -0.3), loc='lower center', ncol=1)
 
     plt.tight_layout()
