@@ -2,24 +2,27 @@
 .idea
 
 # Python environment
-venv
+venv/
 __pycache__
 
 # Datasets
-data
+data/
 
-# Preprocessing mini-framework - https://github.com/RetinaSegmentDP22-23/RetinaSegmentDP
-RetinaSegmentDP
+# Preprocessing mini-framework from another student - https://github.com/RetinaSegmentDP22-23/RetinaSegmentDP
+RetinaSegmentDP/
 
 # Model checkpoints
-checkpoints
+checkpoints/
 *.pth.tar
 
+# Trained models
+models/
+
 # Testing & Bug fixing
-#tests
+tests/
 
 # Logging
-logs
+logs/
 wandb
 
 # Kaggle

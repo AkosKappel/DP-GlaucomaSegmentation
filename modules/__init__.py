@@ -1,5 +1,6 @@
 from .datasets import *
 from .inference import *
+from .interpretability import *
 from .losses import *
 from .metrics import *
 from .misc import *
