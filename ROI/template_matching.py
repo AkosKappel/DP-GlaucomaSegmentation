@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from tqdm.notebook import tqdm
 
-__all__ = ['TemplateMatching']
+__all__ = ['TemplateMatching', 'get_templates', 'align_to_square']
 
 
 def get_templates(images_dir, show: bool = False):
@@ -62,6 +62,7 @@ class TemplateMatching:
         x, y, w, h = self.apply(image)
         cv.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 10)
         plt.imshow(image)
+        plt.title('Template Matching')
         plt.show()
 
     def generate_dataset(self, src_images_dir, src_masks_dir, dst_images_dir, dst_masks_dir):

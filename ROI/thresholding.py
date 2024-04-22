@@ -25,6 +25,7 @@ class Thresholding:
         x, y, w, h = self.apply(image)
         cv.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 10)
         plt.imshow(image)
+        plt.title('Thresholding')
         plt.show()
 
     def generate_dataset(self, src_images_dir, src_masks_dir, dst_images_dir, dst_masks_dir):
