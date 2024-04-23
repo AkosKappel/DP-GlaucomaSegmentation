@@ -125,7 +125,8 @@ def get_contour_images(imgs: list[np.ndarray], masks: list[np.ndarray], preds: l
     return [get_contour_image(img, mask, pred, **kwargs) for img, mask, pred in zip(imgs, masks, preds)]
 
 
-def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray = None, class_ids: list[int] = None):
+def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray = None,
+                      thickness: int = 1, class_ids: list[int] = None, od_oc_colors=None):
     """Draw contours of the mask and/or prediction over the input image."""
     contour_mask = get_input_image(img.copy(), uint8=True)
 
@@ -137,16 +138,19 @@ def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray
     if class_ids is None:
         class_ids = [1, 2]
 
-    for i, class_id in enumerate(class_ids):
-        if mask is not None:
+    if mask is not None:
+        for i, class_id in enumerate(class_ids):
             class_mask = np.where(mask >= class_id, 1, 0).astype(np.uint8)
             contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-            cv.drawContours(contour_mask, contours, -1, TRUE_CONTOUR_COLOR, thickness=1)
+            color = od_oc_colors[i] if od_oc_colors is not None else TRUE_CONTOUR_COLOR
+            cv.drawContours(contour_mask, contours, -1, color, thickness=thickness)
 
-        if pred is not None:
+    if pred is not None:
+        for i, class_id in enumerate(class_ids):
             class_mask = np.where(pred >= class_id, 1, 0).astype(np.uint8)
             contours, _ = cv.findContours(class_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-            cv.drawContours(contour_mask, contours, -1, PRED_CONTOUR_COLOR, thickness=1)
+            color = od_oc_colors[i] if od_oc_colors is not None else PRED_CONTOUR_COLOR
+            cv.drawContours(contour_mask, contours, -1, color, thickness=thickness)
 
     return contour_mask
 

@@ -7,6 +7,10 @@ __pycache__
 
 # Datasets
 data/
+ImagesForSegmentation/
+RoiResults/
+CascadeResults/
+DualResults/
 
 # Preprocessing mini-framework from another student - https://github.com/RetinaSegmentDP22-23/RetinaSegmentDP
 RetinaSegmentDP/

@@ -31,14 +31,13 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
     history = defaultdict(list)
     loop = tqdm(loader, desc=f'Evaluating {mode} segmentation')
     labels = [binary_labels] if mode == 'binary' else [[1, 2], [2]]
-    in_polar = inverse_transform is not None
-    to_cartesian = False  # Don't convert because metrics need to be calculated in same space as masks
+    is_in_polar = inverse_transform is not None
 
     with torch.no_grad():
         for images, masks in loop:
             preds, _, loss = predict(
                 mode, model, images, masks, device, thresh, od_thresh, oc_thresh,
-                criterion, binary_labels, base_model, in_polar, to_cartesian,
+                criterion, binary_labels, base_model, is_in_polar,
                 inter_process_fn, post_process_fn, tta, **morph_kwargs,
             )
             if inverse_transform is not None:
@@ -58,27 +57,25 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
 def predict(mode: str, model, images, masks=None, device=None,
             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
             criterion=None, binary_labels=None, base_model=None,
-            in_polar: bool = False, to_cartesian: bool = False,
-            inter_process_fn=None, post_process_fn=None, tta: bool = False, **morph_kwargs):
+            is_in_polar: bool = True, inter_process_fn=None, post_process_fn=None,
+            tta: bool = False, **morph_kwargs):
     # Morph kwargs = operation: str, kernel_size: int, iterations: int, kernel_shape: int
     if mode == 'multiclass':  # Multi-class segmentation
         return predict_multiclass(
             model, images, masks, device, criterion,
-            in_polar, to_cartesian, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, **morph_kwargs,
         )
 
     if mode == 'multilabel':  # Multi-label segmentation
         return predict_multilabel(
             model, images, masks, device, criterion, thresh,
-            in_polar, to_cartesian, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, **morph_kwargs,
         )
 
     if mode == 'binary':  # Binary segmentation
-        if binary_labels is None:
-            binary_labels = [1, 2]
         return predict_binary(
-            model, images, masks, device, criterion, thresh,
-            in_polar, to_cartesian, binary_labels, post_process_fn, tta, **morph_kwargs,
+            model, images, masks, device, criterion, od_thresh or thresh,
+            is_in_polar, binary_labels or [1, 2], post_process_fn, tta, **morph_kwargs,
         )
 
     if mode == 'cascade':  # Cascade architecture
@@ -86,22 +83,21 @@ def predict(mode: str, model, images, masks=None, device=None,
         return predict_cascade(
             base_model, model, images, masks, device, criterion,
             thresh, od_thresh, oc_thresh,
-            in_polar, to_cartesian, inter_process_fn, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, inter_process_fn, post_process_fn, tta, **morph_kwargs,
         )
 
     if mode == 'dual':  # Dual architecture
         return predict_dual(
             model, images, masks, device, criterion,
             thresh, od_thresh, oc_thresh,
-            in_polar, to_cartesian, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, **morph_kwargs,
         )
 
     raise ValueError(f'Invalid mode: {mode}')
 
 
 def predict_multiclass(model, images, masks=None, device=None, criterion=None,
-                       in_polar: bool = False, to_cartesian: bool = False,
-                       post_process_fn=None, tta: bool = False, **morph_kwargs):
+                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -115,7 +111,7 @@ def predict_multiclass(model, images, masks=None, device=None, criterion=None,
         criterion = criterion.to(device)
 
     if tta:
-        images, masks = d4_transform(images, masks, polar=in_polar)
+        images, masks = d4_transform(images, masks, polar=is_in_polar)
 
     model.eval()
     with torch.no_grad():
@@ -127,14 +123,11 @@ def predict_multiclass(model, images, masks=None, device=None, criterion=None,
 
     probabilities = F.softmax(logits, dim=1)  # (N, C, H, W)
     if tta:
-        probabilities = d4_inverse_transform(probabilities, polar=in_polar)
+        probabilities = d4_inverse_transform(probabilities, polar=is_in_polar)
     predictions = torch.argmax(probabilities, dim=1).long()  # (N, H, W)
 
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
-
-    if to_cartesian:
-        predictions = polar_to_cartesian(predictions)
 
     if post_process_fn is not None:
         predictions = post_process_fn(predictions)
@@ -143,8 +136,7 @@ def predict_multiclass(model, images, masks=None, device=None, criterion=None,
 
 
 def predict_multilabel(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
-                       in_polar: bool = False, to_cartesian: bool = False,
-                       post_process_fn=None, tta: bool = False, **morph_kwargs):
+                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -158,7 +150,7 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None, t
         criterion = criterion.to(device)
 
     if tta:
-        images, masks = d4_transform(images, masks, polar=in_polar)
+        images, masks = d4_transform(images, masks, polar=is_in_polar)
 
     model.eval()
     with torch.no_grad():
@@ -178,7 +170,7 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None, t
 
     probabilities = torch.sigmoid(logits)  # (N, C, H, W)
     if tta:
-        probabilities = d4_inverse_transform(probabilities, polar=in_polar)
+        probabilities = d4_inverse_transform(probabilities, polar=is_in_polar)
 
     predictions = torch.zeros_like(probabilities[:, 0, :, :]).long()  # (N, H, W)
     for i in range(1, probabilities.shape[1]):
@@ -187,9 +179,6 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None, t
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
 
-    if to_cartesian:
-        predictions = polar_to_cartesian(predictions)
-
     if post_process_fn is not None:
         predictions = post_process_fn(predictions)
 
@@ -197,7 +186,7 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None, t
 
 
 def predict_binary(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
-                   in_polar: bool = False, to_cartesian: bool = False, binary_labels: list[int] = None,
+                   is_in_polar: bool = False, binary_labels: list[int] = None,
                    post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -212,7 +201,7 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
         criterion = criterion.to(device)
 
     if tta:
-        images, masks = d4_transform(images, masks, polar=in_polar)
+        images, masks = d4_transform(images, masks, polar=is_in_polar)
 
     model.eval()
     with torch.no_grad():
@@ -232,14 +221,11 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
 
     probabilities = torch.sigmoid(logits)  # (N, 1, H, W)
     if tta:
-        probabilities = d4_inverse_transform(probabilities, polar=in_polar)  # (8 * N, 1, H, W) -> (N, 1, H, W)
+        probabilities = d4_inverse_transform(probabilities, polar=is_in_polar)  # (8 * N, 1, H, W) -> (N, 1, H, W)
     predictions = (probabilities > threshold).squeeze(1).long()  # (N, H, W)
 
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
-
-    if to_cartesian:
-        predictions = polar_to_cartesian(predictions)
 
     if post_process_fn is not None:
         predictions = post_process_fn(predictions)
@@ -249,7 +235,7 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
 
 def predict_cascade(base_model, model, images, masks=None, device=None, criterion=None,
                     threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                    in_polar: bool = False, to_cartesian: bool = False, inter_process_fn=None,
+                    is_in_polar: bool = False, inter_process_fn=None,
                     post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -265,14 +251,16 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
         criterion = criterion.to(device)
 
     if tta:
-        images, masks = d4_transform(images, masks, polar=in_polar)
+        images, masks = d4_transform(images, masks, polar=is_in_polar)
 
     base_model.eval()
     with torch.no_grad():
         od_logits = base_model(images)
+    if isinstance(od_logits, tuple):
+        raise ValueError('Cascade model must have a single output. Verify if your model is not a Dual model type.')
     od_probabilities = torch.sigmoid(od_logits)  # (N, 1, H, W)
     if tta:
-        od_probabilities = d4_inverse_transform(od_probabilities, polar=in_polar)
+        od_probabilities = d4_inverse_transform(od_probabilities, polar=is_in_polar)
     od_predictions = (od_probabilities > (od_threshold or threshold)).long()  # (N, 1, H, W)
 
     od_masks = od_predictions
@@ -285,9 +273,11 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
     model.eval()
     with torch.no_grad():
         oc_logits = model(cropped_images)
+    if isinstance(oc_logits, tuple):
+        raise ValueError('Cascade model must have a single output. Verify if your model is not a Dual model type.')
     oc_probabilities = torch.sigmoid(oc_logits)  # (N, 1, H, W)
     if tta:
-        oc_probabilities = d4_inverse_transform(oc_probabilities, polar=in_polar)
+        oc_probabilities = d4_inverse_transform(oc_probabilities, polar=is_in_polar)
     oc_predictions = (oc_probabilities > (oc_threshold or threshold)).long()  # (N, 1, H, W)
 
     loss = None
@@ -307,9 +297,6 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
 
-    if to_cartesian:
-        predictions = polar_to_cartesian(predictions)
-
     if post_process_fn is not None:
         predictions = post_process_fn(predictions)
 
@@ -318,8 +305,7 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
 
 def predict_dual(model, images, masks=None, device=None, criterion=None,
                  threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                 in_polar: bool = False, to_cartesian: bool = False,
-                 post_process_fn=None, tta: bool = False, **morph_kwargs):
+                 is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -333,17 +319,20 @@ def predict_dual(model, images, masks=None, device=None, criterion=None,
         criterion = criterion.to(device)
 
     if tta:
-        images, masks = d4_transform(images, masks, polar=in_polar)
+        images, masks = d4_transform(images, masks, polar=is_in_polar)
 
     model.eval()
     with torch.no_grad():
-        od_logits, oc_logits = model(images)
+        logits = model(images)
+    if not isinstance(logits, tuple) or len(logits) != 2:
+        raise ValueError('Dual model must have two outputs. Verify if your model is not a Cascade model type.')
+    od_logits, oc_logits = logits
     od_probabilities = torch.sigmoid(od_logits)  # (N, 1, H, W)
     oc_probabilities = torch.sigmoid(oc_logits)  # (N, 1, H, W)
 
     if tta:
-        od_probabilities = d4_inverse_transform(od_probabilities, polar=in_polar)
-        oc_probabilities = d4_inverse_transform(oc_probabilities, polar=in_polar)
+        od_probabilities = d4_inverse_transform(od_probabilities, polar=is_in_polar)
+        oc_probabilities = d4_inverse_transform(oc_probabilities, polar=is_in_polar)
 
     od_predictions = (od_probabilities > (od_threshold or threshold)).long()  # (N, 1, H, W)
     oc_predictions = (oc_probabilities > (oc_threshold or threshold)).long()  # (N, 1, H, W)
@@ -368,9 +357,6 @@ def predict_dual(model, images, masks=None, device=None, criterion=None,
 
     if morph_kwargs:
         predictions = apply_morphological_operation(predictions, **morph_kwargs)
-
-    if to_cartesian:
-        predictions = polar_to_cartesian(predictions)
 
     if post_process_fn is not None:
         predictions = post_process_fn(predictions)

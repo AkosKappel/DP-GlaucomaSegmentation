@@ -3,6 +3,7 @@ script_files = [
     'ROI/neural_network/helpers.py',
     'modules/datasets.py',
     'modules/inference.py',
+    'modules/interpretability.py',
     'modules/losses.py',
     'modules/metrics.py',
     'modules/misc.py',
