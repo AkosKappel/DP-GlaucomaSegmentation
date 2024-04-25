@@ -11,8 +11,8 @@ from modules.visualization import plot_results
 
 class MultilabelTrainer:
 
-    def __init__(self, model, criterion, optimizer, device, scaler=None, threshold: float = 0.5, inverse_transform=None,
-                 activation=None):
+    def __init__(self, model, criterion, optimizer, device, scaler=None, threshold: float = 0.5,
+                 inverse_transform=None, activation=None, postfix_metrics: list[str] = None):
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
@@ -24,6 +24,7 @@ class MultilabelTrainer:
         self.od_label = [1, 2]
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
+        self.postfix_metrics = postfix_metrics
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -113,7 +114,12 @@ class MultilabelTrainer:
 
             # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+            if self.postfix_metrics:
+                postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+            else:
+                postfix = mean_metrics
+            postfix['learning_rate'] = self.get_learning_rate()
+            loop.set_postfix(**postfix)
 
         return mean_metrics
 
@@ -132,7 +138,11 @@ class MultilabelTrainer:
 
                 # Show summary of metrics in progress bar
                 mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
+                if self.postfix_metrics:
+                    postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+                else:
+                    postfix = mean_metrics
+                loop.set_postfix(**postfix)
 
         return mean_metrics
 

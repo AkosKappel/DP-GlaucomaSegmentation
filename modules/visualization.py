@@ -155,7 +155,7 @@ def get_contour_image(img: np.ndarray, mask: np.ndarray = None, pred: np.ndarray
     return contour_mask
 
 
-def plot_history(hist, figsize=(12, 8), n_cols: int = 4):
+def plot_history(hist, figsize=(12, 8), n_cols: int = 4, save_path: str = None):
     if hist is None:
         return
     used_metrics = sorted([m[6:] for m in hist.keys() if m.startswith('train_')])
@@ -179,6 +179,8 @@ def plot_history(hist, figsize=(12, 8), n_cols: int = 4):
         ax.axis('off')
 
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
     plt.show()
 
 

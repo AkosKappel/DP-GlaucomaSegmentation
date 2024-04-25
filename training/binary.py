@@ -12,7 +12,7 @@ from modules.visualization import plot_results
 class BinaryTrainer:
 
     def __init__(self, model, criterion, optimizer, device, scaler=None, target_ids=None, threshold: float = 0.5,
-                 inverse_transform=None, activation=None):
+                 inverse_transform=None, activation=None, postfix_metrics: list[str] = None):
         assert target_ids is not None, 'target_ids must be specified for binary segmentation'
         self.model = model
         self.criterion = criterion
@@ -24,6 +24,7 @@ class BinaryTrainer:
         self.threshold = threshold
         self.target_ids = target_ids
         self.labels = [target_ids.detach().cpu().numpy().tolist()]
+        self.postfix_metrics = postfix_metrics
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -91,7 +92,12 @@ class BinaryTrainer:
 
             # Display average metrics in progress bar
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+            if self.postfix_metrics:
+                postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+            else:
+                postfix = mean_metrics
+            postfix['learning_rate'] = self.get_learning_rate()
+            loop.set_postfix(**postfix)
 
         return mean_metrics
 
@@ -109,7 +115,11 @@ class BinaryTrainer:
 
                 # Display average validation metrics in progress bar
                 mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
+                if self.postfix_metrics:
+                    postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+                else:
+                    postfix = mean_metrics
+                loop.set_postfix(**postfix)
 
         return mean_metrics
 

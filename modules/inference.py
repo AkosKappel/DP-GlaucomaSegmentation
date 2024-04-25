@@ -19,7 +19,8 @@ __all__ = [
 def evaluate(mode: str, model, loader, device=None, criterion=None,
              thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
              binary_labels: list[int] = None, base_model=None, inverse_transform=None,
-             inter_process_fn=None, post_process_fn=None, tta: bool = False, **morph_kwargs):
+             inter_process_fn=None, post_process_fn=None, tta: bool = False,
+             morph_kwargs: dict = None, postfix_metrics: list[str] = None) -> dict[str, float]:
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -38,7 +39,7 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
             preds, _, loss = predict(
                 mode, model, images, masks, device, thresh, od_thresh, oc_thresh,
                 criterion, binary_labels, base_model, is_in_polar,
-                inter_process_fn, post_process_fn, tta, **morph_kwargs,
+                inter_process_fn, post_process_fn, tta, morph_kwargs,
             )
             if inverse_transform is not None:
                 images, masks, preds = inverse_transform(images, masks, preds)
@@ -49,7 +50,11 @@ def evaluate(mode: str, model, loader, device=None, criterion=None,
 
             # show updated average metrics
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics)
+            if postfix_metrics:
+                postfix = {k: mean_metrics[k] for k in postfix_metrics if k in mean_metrics}
+            else:
+                postfix = mean_metrics
+            loop.set_postfix(**postfix)
 
     return mean_metrics
 
@@ -58,24 +63,24 @@ def predict(mode: str, model, images, masks=None, device=None,
             thresh: float = 0.5, od_thresh: float = None, oc_thresh: float = None,
             criterion=None, binary_labels=None, base_model=None,
             is_in_polar: bool = True, inter_process_fn=None, post_process_fn=None,
-            tta: bool = False, **morph_kwargs):
+            tta: bool = False, morph_kwargs: dict = None):
     # Morph kwargs = operation: str, kernel_size: int, iterations: int, kernel_shape: int
     if mode == 'multiclass':  # Multi-class segmentation
         return predict_multiclass(
             model, images, masks, device, criterion,
-            is_in_polar, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, morph_kwargs,
         )
 
     if mode == 'multilabel':  # Multi-label segmentation
         return predict_multilabel(
             model, images, masks, device, criterion, thresh,
-            is_in_polar, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, morph_kwargs,
         )
 
     if mode == 'binary':  # Binary segmentation
         return predict_binary(
             model, images, masks, device, criterion, od_thresh or thresh,
-            is_in_polar, binary_labels or [1, 2], post_process_fn, tta, **morph_kwargs,
+            is_in_polar, binary_labels or [1, 2], post_process_fn, tta, morph_kwargs,
         )
 
     if mode == 'cascade':  # Cascade architecture
@@ -83,21 +88,21 @@ def predict(mode: str, model, images, masks=None, device=None,
         return predict_cascade(
             base_model, model, images, masks, device, criterion,
             thresh, od_thresh, oc_thresh,
-            is_in_polar, inter_process_fn, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, inter_process_fn, post_process_fn, tta, morph_kwargs,
         )
 
     if mode == 'dual':  # Dual architecture
         return predict_dual(
             model, images, masks, device, criterion,
             thresh, od_thresh, oc_thresh,
-            is_in_polar, post_process_fn, tta, **morph_kwargs,
+            is_in_polar, post_process_fn, tta, morph_kwargs,
         )
 
     raise ValueError(f'Invalid mode: {mode}')
 
 
 def predict_multiclass(model, images, masks=None, device=None, criterion=None,
-                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
+                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, morph_kwargs: dict = None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -136,7 +141,7 @@ def predict_multiclass(model, images, masks=None, device=None, criterion=None,
 
 
 def predict_multilabel(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
-                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
+                       is_in_polar: bool = False, post_process_fn=None, tta: bool = False, morph_kwargs: dict = None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -187,7 +192,7 @@ def predict_multilabel(model, images, masks=None, device=None, criterion=None, t
 
 def predict_binary(model, images, masks=None, device=None, criterion=None, threshold: float = 0.5,
                    is_in_polar: bool = False, binary_labels: list[int] = None,
-                   post_process_fn=None, tta: bool = False, **morph_kwargs):
+                   post_process_fn=None, tta: bool = False, morph_kwargs: dict = None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -236,7 +241,7 @@ def predict_binary(model, images, masks=None, device=None, criterion=None, thres
 def predict_cascade(base_model, model, images, masks=None, device=None, criterion=None,
                     threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
                     is_in_polar: bool = False, inter_process_fn=None,
-                    post_process_fn=None, tta: bool = False, **morph_kwargs):
+                    post_process_fn=None, tta: bool = False, morph_kwargs: dict = None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):
@@ -305,7 +310,7 @@ def predict_cascade(base_model, model, images, masks=None, device=None, criterio
 
 def predict_dual(model, images, masks=None, device=None, criterion=None,
                  threshold: float = 0.5, od_threshold: float = None, oc_threshold: float = None,
-                 is_in_polar: bool = False, post_process_fn=None, tta: bool = False, **morph_kwargs):
+                 is_in_polar: bool = False, post_process_fn=None, tta: bool = False, morph_kwargs: dict = None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     elif isinstance(device, str):

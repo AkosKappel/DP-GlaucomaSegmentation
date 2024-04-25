@@ -15,8 +15,8 @@ from ROI import CenterNet, preprocess_centernet_input, detect_roi
 
 # Example usage:
 # python segment.py ./ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./RoiResults
-# python segment.py ./RoiResults --architecture dual --model ./models/polar/ref/dual.pth -o ./DualResults
-# python segment.py ./RoiResults --architecture cascade --model ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth -o ./CascadeResults
+# python segment.py ./RoiResults -a dual -m ./models/polar/ref/dual.pth -o ./DualResults
+# python segment.py ./RoiResults -a cascade -m ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth -o ./CascadeResults
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
     parser.add_argument('path', type=str,
                         help='Path to image or directory of images to segment')
     parser.add_argument('-a', '--architecture', type=str,
-                        help='Segmentation mode', choices=('cascade', 'dual'))
+                        help='Segmentation architecture', choices=('cascade', 'dual'))
     parser.add_argument('-m', '--model', type=str,
                         help='Path to segmentation model')
     parser.add_argument('-bm', '--base-model', type=str, default=None,
@@ -45,7 +45,7 @@ def main():
                         help='Optic cup threshold')
     parser.add_argument('-d', '--device', type=str, default='cuda',
                         help='Device used for inference', choices=('cuda', 'cpu'))
-    parser.add_argument('-s', '--show', action='store_true',
+    parser.add_argument('-s', '--show', type=bool, default=False,
                         help='Show results in a plot')
     parser.add_argument('-c', '--centernet', type=str, default=None,
                         help='Path to CenterNet model if segmentation needs ROI detection step')
@@ -56,18 +56,21 @@ def main():
 
     args = parser.parse_args()
 
+    for arg in vars(args):
+        print(f'{arg}: {getattr(args, arg)}')
+    print('===========================================')
+
     if not os.path.exists(args.path):
         print(f'Path {args.path} does not exist')
         exit(1)
 
     files = load_files_from_dir(args.path)
-    device = torch.device(parser.parse_args().device if torch.cuda.is_available() else 'cpu')
 
     if args.centernet:
         files = apply_centernet(
             files, args.centernet,
             input_size=args.roi_input_size, output_size=args.input_size,
-            device=device, show=args.show, output_dir=args.roi_output_dir,
+            device=args.device, show=args.show, output_dir=args.roi_output_dir,
         )
 
     if args.architecture and args.model:
@@ -83,7 +86,7 @@ def main():
         files = apply_segmentation(
             args.architecture, files, args.model, args.base_model,
             args.output_dir, args.optic_disc_threshold, args.optic_cup_threshold,
-            args.input_size, device, args.show,
+            args.input_size, args.device, args.show,
         )
 
     return files
@@ -93,12 +96,10 @@ def apply_segmentation(
         segmentation_mode: str, image_paths: list[str], model_path: str,
         base_model_path: str = None, output_dir: str = None,
         od_threshold: float = 0.2, oc_threshold: float = 0.3,
-        input_size: int = 512, device=None, show: bool = False,
+        input_size: int = 512, device: str = None, show: bool = False,
 ) -> list[np.ndarray]:
     assert segmentation_mode in ('cascade', 'dual')
-
-    if not device:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(device if torch.cuda.is_available() else 'cpu')
 
     # Load models
     ckpt = load_checkpoint(model_path, map_location=device)
@@ -133,7 +134,7 @@ def apply_segmentation(
     )
 
     if not output_dir:
-        output_dir = os.path.join(os.path.dirname(image_paths[0]), f'Segmented{segmentation_mode.capitalize()}')
+        output_dir = os.path.join(os.path.dirname(image_paths[0]), f'{segmentation_mode.capitalize()}Results')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -185,10 +186,9 @@ def apply_segmentation(
 def apply_centernet(
         image_paths: list[str], model_path: str, output_dir: str = None,
         input_size: int = 512, output_size: int = 512,
-        device=None, show: bool = False,
+        device: str = None, show: bool = False,
 ) -> list[str]:
-    if not device:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(device if torch.cuda.is_available() else 'cpu')
 
     # Load model
     state_dict = torch.load(model_path, map_location=device)
@@ -207,7 +207,7 @@ def apply_centernet(
 
     # Create output directory
     if not output_dir:
-        output_dir = os.path.join(os.path.dirname(image_paths[0]), 'CenterNetROIs')
+        output_dir = os.path.join(os.path.dirname(image_paths[0]), 'CenterNetResults')
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 

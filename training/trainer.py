@@ -34,7 +34,7 @@ class TrainingMode:
 
 # Common kwargs:
 #   early_stopping_patience, save_best_model, save_interval, log_interval, log_to_wandb, show_plots,
-#   clear_interval, checkpoint_dir, log_dir, plot_examples, inverse_transform, activation
+#   clear_interval, checkpoint_dir, log_dir, plot_examples, inverse_transform, activation, postfix_metrics
 # Cascade only:
 #   binary_model, inter_processing
 # Dual only:
@@ -135,7 +135,8 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
         clear_interval: int = 5, checkpoint_dir: str = '.', log_dir: str = '.', plot_examples: str = 'all',
         binary_labels: list[int] = None, threshold: float = 0.5, inverse_transform=None, activation=None,
         base_cascade_model=None, inter_processing=None, od_threshold: float = 0.5, oc_threshold: float = 0.5,
-        dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0):
+        dual_branch_criterion=None, od_loss_weight: float = 1.0, oc_loss_weight: float = 1.0,
+        postfix_metrics: list[str] = None):
     """
     Train a model with a given criterion and optimizer for a specified number of epochs in a selected training mode.
 
@@ -185,15 +186,44 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
     # Initialize objects for selected training mode
     train_mode = train_mode.lower()
     if train_mode == TrainingMode.MULTICLASS:
-        trainer = MulticlassTrainer(model, criterion, optimizer, device, scaler, inverse_transform)
-        logger = MulticlassLogger(log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS)
+        trainer = MulticlassTrainer(
+            model=model,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            inverse_transform=inverse_transform,
+            postfix_metrics=postfix_metrics,
+        )
+        logger = MulticlassLogger(
+            log_dir=log_dir,
+            interval=log_interval,
+            log_to_wandb=log_to_wandb,
+            show_plots=show_plots,
+            plot_type=plot_examples,
+            class_labels=CLASS_LABELS,
+        )
 
     elif train_mode == TrainingMode.MULTILABEL:
         trainer = MultilabelTrainer(
-            model, criterion, optimizer, device, scaler, threshold, inverse_transform, activation,
+            model=model,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            threshold=threshold,
+            inverse_transform=inverse_transform,
+            activation=activation,
+            postfix_metrics=postfix_metrics,
         )
         logger = MultilabelLogger(
-            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS, threshold=threshold,
+            log_dir=log_dir,
+            interval=log_interval,
+            log_to_wandb=log_to_wandb,
+            show_plots=show_plots,
+            plot_type=plot_examples,
+            class_labels=CLASS_LABELS,
+            threshold=threshold,
         )
 
     elif train_mode == TrainingMode.BINARY:
@@ -202,11 +232,26 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
         binary_labels = torch.tensor(binary_labels, device=device)
 
         trainer = BinaryTrainer(
-            model, criterion, optimizer, device, scaler, binary_labels, threshold, inverse_transform, activation,
+            model=model,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            target_ids=binary_labels,
+            threshold=threshold,
+            inverse_transform=inverse_transform,
+            activation=activation,
+            postfix_metrics=postfix_metrics,
         )
         logger = BinaryLogger(
-            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-            binary_labels=binary_labels, threshold=threshold,
+            log_dir=log_dir,
+            interval=log_interval,
+            log_to_wandb=log_to_wandb,
+            show_plots=show_plots,
+            plot_type=plot_examples,
+            class_labels=CLASS_LABELS,
+            binary_labels=binary_labels,
+            threshold=threshold,
         )
 
     elif train_mode == TrainingMode.CASCADE:
@@ -217,23 +262,57 @@ def fit(model, criterion, optimizer, epochs, device, train_loader, val_loader=No
         base_cascade_model = base_cascade_model.to(device)
 
         trainer = CascadeTrainer(
-            base_cascade_model, model, criterion, optimizer, device, scaler,
-            od_threshold, oc_threshold, inverse_transform, activation, inter_processing,
+            base_model=base_cascade_model,
+            model=model,
+            criterion=criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            od_threshold=od_threshold,
+            oc_threshold=oc_threshold,
+            inverse_transform=inverse_transform,
+            activation=activation,
+            inter_processing=inter_processing,
+            postfix_metrics=postfix_metrics,
         )
         logger = CascadeLogger(
-            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-            base_model=base_cascade_model, inter_processing=inter_processing,
-            od_threshold=od_threshold, oc_threshold=oc_threshold,
+            log_dir=log_dir,
+            interval=log_interval,
+            log_to_wandb=log_to_wandb,
+            show_plots=show_plots,
+            plot_type=plot_examples,
+            class_labels=CLASS_LABELS,
+            base_model=base_cascade_model,
+            inter_processing=inter_processing,
+            od_threshold=od_threshold,
+            oc_threshold=oc_threshold,
         )
 
     elif train_mode == TrainingMode.DUAL:
         trainer = DualTrainer(
-            model, criterion, dual_branch_criterion, optimizer, device, scaler,
-            od_threshold, oc_threshold, od_loss_weight, oc_loss_weight, inverse_transform, activation,
+            model=model,
+            od_criterion=criterion,
+            oc_criterion=dual_branch_criterion,
+            optimizer=optimizer,
+            device=device,
+            scaler=scaler,
+            od_threshold=od_threshold,
+            oc_threshold=oc_threshold,
+            od_loss_weight=od_loss_weight,
+            oc_loss_weight=oc_loss_weight,
+            inverse_transform=inverse_transform,
+            activation=activation,
+            postfix_metrics=postfix_metrics,
         )
         logger = DualLogger(
-            log_dir, log_interval, log_to_wandb, show_plots, plot_examples, CLASS_LABELS,
-            od_threshold=od_threshold, oc_threshold=oc_threshold,
+            log_dir=log_dir,
+            interval=log_interval,
+            log_to_wandb=log_to_wandb,
+            show_plots=show_plots,
+            plot_type=plot_examples,
+            class_labels=CLASS_LABELS,
+            od_threshold=od_threshold,
+            oc_threshold=oc_threshold,
         )
 
     else:

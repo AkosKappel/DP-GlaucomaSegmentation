@@ -18,6 +18,7 @@ RetinaSegmentDP/
 # Model checkpoints
 checkpoints/
 *.pth.tar
+output/
 
 # Trained models
 models/

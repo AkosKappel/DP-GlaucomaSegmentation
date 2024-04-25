@@ -13,7 +13,7 @@ class CascadeTrainer:
 
     def __init__(self, base_model, model, criterion, optimizer, device, scaler=None,
                  od_threshold: float = 0.5, oc_threshold: float = 0.5,
-                 inverse_transform=None, activation=None, inter_processing=None):
+                 inverse_transform=None, activation=None, inter_processing=None, postfix_metrics: list[str] = None):
         self.base_model = base_model
         self.model = model
         self.criterion = criterion
@@ -28,6 +28,7 @@ class CascadeTrainer:
         self.oc_label = [2]
         self.labels = [self.od_label, self.oc_label]
         self.inter_processing = inter_processing
+        self.postfix_metrics = postfix_metrics
 
     def get_learning_rate(self):
         return self.optimizer.param_groups[0]['lr']
@@ -109,7 +110,12 @@ class CascadeTrainer:
         for batch_idx, (images, masks) in enumerate(loop):
             self.run_one_iteration(images, masks, backward=True, history=history)
             mean_metrics = {k: np.mean(v) for k, v in history.items()}
-            loop.set_postfix(**mean_metrics, learning_rate=self.get_learning_rate())
+            if self.postfix_metrics:
+                postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+            else:
+                postfix = mean_metrics
+            postfix['learning_rate'] = self.get_learning_rate()
+            loop.set_postfix(**postfix)
 
         return mean_metrics
 
@@ -125,7 +131,11 @@ class CascadeTrainer:
             for batch_idx, (images, masks) in enumerate(loop):
                 self.run_one_iteration(images, masks, backward=False, history=history)
                 mean_metrics = {k: np.mean(v) for k, v in history.items()}
-                loop.set_postfix(**mean_metrics)
+                if self.postfix_metrics:
+                    postfix = {k: mean_metrics[k] for k in self.postfix_metrics if k in mean_metrics}
+                else:
+                    postfix = mean_metrics
+                loop.set_postfix(**postfix)
 
         return mean_metrics
 
