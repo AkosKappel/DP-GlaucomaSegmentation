@@ -32,3 +32,4 @@ wandb
 
 # Kaggle
 kaggle*.ipynb
+join-scripts.py
