@@ -18,8 +18,16 @@ __all__ = [
 
 def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bool = False,
                                crop_margin: int = 0, pad_margin: int = 0):
+    """Prepares the input image and mask for feeding into the CenterNet model.
+    The process goes as follows:
+    1. Read the image and mask (if given)
+    2. Remove black edges from the image using OTSU thresholding (if otsu_crop is True)
+    3. Pad the image and mask to square shape
+    4. Add margins to the image and mask with black pixels"""
+
     if isinstance(image, str):
         image = cv.imread(image)
+        assert image is not None, 'Image not found'
         image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
     assert image is not None, 'Image not found'
 
@@ -30,7 +38,7 @@ def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bo
     if mask is not None:
         assert image.shape[:2] == mask.shape[:2], 'Image and mask shapes do not match'
     else:
-        # Create empty dummy mask
+        # Create empty black dummy mask with the same shape as the image
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
 
     # Crop black edges from image using OTSU thresholding:
@@ -41,7 +49,7 @@ def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bo
         # Get binary image using OTSU thresholding
         _, thresh = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
 
-        # Find bounding box of non-zero pixels
+        # Find bounding box of non-zero pixels (leaving out black edges)
         row_sums = np.sum(thresh, axis=1)
         col_sums = np.sum(thresh, axis=0)
         x1 = np.argmax(col_sums > 0)
@@ -71,40 +79,58 @@ def preprocess_centernet_input(image: str | np.ndarray, mask=None, otsu_crop: bo
 
     if np.any(mask):
         return image, mask
-    return image
+    return image, None
 
 
-def generate_centernet_dataset(src_images_dir: str, dst_images_dir: str,
-                               src_masks_dir: str = None, dst_masks_dir: str = None,
+def get_file_paths(directory: str | list[str] | None, ignored_prefixes: tuple[str] = ('.',)) -> list[Path]:
+    """Retrieves a list of file paths from the given directory or directories."""
+    if directory is None:
+        return []
+
+    if isinstance(directory, str):
+        directory = [directory]
+
+    files = []
+
+    for d in directory:
+        if not os.path.exists(d):
+            print(f'Warning: Directory {d} does not exist. Skipping...')
+            continue
+        elif os.path.isdir(d):
+            new_files = [f'{d}/{f}' for f in os.listdir(d) if not f.startswith(ignored_prefixes)]
+            files.extend(sorted(new_files))
+        elif os.path.isfile(d):
+            files.append(d)
+
+    return [Path(f) for f in files if os.path.isfile(f)]
+
+
+def generate_centernet_dataset(src_image_paths: str | list[str], dst_images_dir: str,
+                               src_mask_paths: str | list[str] = None, dst_masks_dir: str = None,
                                otsu_crop: bool = True, crop_margin: int = 0, pad_margin: int = 0):
-    src_images_dir = Path(src_images_dir)
-    dst_images_dir = Path(dst_images_dir)
-    assert src_images_dir.exists()
-    dst_images_dir.mkdir(exist_ok=True, parents=True)
+    """Creates a dataset of images and masks for training CenterNet model.
+    The images are preprocessed by cropping black edges using OTSU thresholding,
+    padding to square shape, and adding margins to the images and masks."""
+    src_image_paths = get_file_paths(src_image_paths)
+    if src_mask_paths:
+        src_mask_paths = get_file_paths(src_mask_paths)
 
-    if src_masks_dir:
-        src_masks_dir = Path(src_masks_dir)
-        assert src_masks_dir.exists()
+    dst_images_dir = Path(dst_images_dir)
+    dst_images_dir.mkdir(exist_ok=True, parents=True)
     if dst_masks_dir:
         dst_masks_dir = Path(dst_masks_dir)
         dst_masks_dir.mkdir(exist_ok=True, parents=True)
 
-    images = sorted([f for f in os.listdir(src_images_dir) if not f.startswith('.')])
-    masks = None
-    if src_masks_dir:
-        masks = sorted([f for f in os.listdir(src_masks_dir) if not f.startswith('.')])
-
-    for i, image_name in enumerate(tqdm(images, desc='Generating CenterNet dataset')):
-        image_path = src_images_dir / image_name
+    for i, image_path in enumerate(tqdm(src_image_paths, desc='Generating CenterNet dataset')):
+        image_name = Path(image_path).name
         image = cv.imread(str(image_path))
 
-        if masks is not None:
-            mask_name = masks[i]
-            mask_path = src_masks_dir / mask_name
+        mask_name = None
+        mask = None
+        if src_mask_paths is not None:
+            mask_path = src_mask_paths[i]
+            mask_name = Path(mask_path).name
             mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
-        else:
-            mask_name = None
-            mask = None
 
         image, mask = preprocess_centernet_input(image, mask, otsu_crop, crop_margin, pad_margin)
 
@@ -115,28 +141,16 @@ def generate_centernet_dataset(src_images_dir: str, dst_images_dir: str,
 
 def generate_ground_truth_bbox_csv(images_dir: str | list[str], masks_dir: str | list[str],
                                    csv_file: str, margin: int = 0):
-    if isinstance(images_dir, str):
-        images_dir = [images_dir]
-    if isinstance(masks_dir, str):
-        masks_dir = [masks_dir]
-
-    images_dir = [Path(d) for d in images_dir]
-    masks_dir = [Path(d) for d in masks_dir]
+    """Generates a CSV file with bounding boxes for the optic disc and optic cup.
+    The bounding boxes are calculated from the masks of the optic disc and optic cup.
+    File is saved in the format: image_path, mask_path, x, y, w, h."""
+    image_paths = get_file_paths(images_dir)
+    mask_paths = get_file_paths(masks_dir)
     csv_file = Path(csv_file)
 
-    for d in images_dir + masks_dir:
-        assert d.exists(), f'Directory {d} not found'
-
-    image_paths = []
-    for d in images_dir:
-        image_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
-    mask_paths = []
-    for d in masks_dir:
-        mask_paths.extend(sorted([f'{d}/{f}' for f in os.listdir(d) if not f.startswith('.')]))
-
     df = pd.DataFrame()
-    title = f'Generating csv file with bounding boxes'
-    for i, (image_path, mask_path) in enumerate(tqdm(zip(image_paths, mask_paths), total=len(image_paths), desc=title)):
+    pbar = tqdm(zip(image_paths, mask_paths), total=len(image_paths), desc='Generating csv file with bounding boxes')
+    for i, (image_path, mask_path) in enumerate(pbar):
         # image = cv.imread(str(image_path))
         mask = cv.imread(str(mask_path), cv.IMREAD_GRAYSCALE)
 
@@ -187,9 +201,11 @@ def generate_roi_dataset(model, images: list[str], masks: list[str] | None,
                          dst_images_dir: str, dst_masks_dir: str | None, transform,
                          input_size: int, device=None, small_margin: int = 16, large_margin: int = 0,
                          threshold: float = 0.6, roi_size: int = 512, interpolation: int = cv.INTER_AREA):
+    """Generates a dataset of Region of Interest (RoI) images and masks
+    that are later used for Optic Disc (OD) and Optic Cup (OC) segmentation."""
     dst_images_dir = Path(dst_images_dir)
     dst_masks_dir = Path(dst_masks_dir)
-    overlay_dir = dst_images_dir / '../Overlaid_CenterNet_Images'
+    overlay_dir = dst_images_dir / '../Overlaid'
 
     dst_images_dir.mkdir(exist_ok=True, parents=True)
     dst_masks_dir.mkdir(exist_ok=True, parents=True)
@@ -279,6 +295,8 @@ def generate_roi_dataset(model, images: list[str], masks: list[str] | None,
 def detect_roi(model, image_file: str | np.ndarray, mask_file: str | np.ndarray | None, transform, input_size: int,
                device=None, small_margin: int = 16, large_margin: int = 0, threshold: float = 0.6,
                roi_size: int = 512, interpolation: int = cv.INTER_AREA, return_bbox: bool = False):
+    """Detects the Region of Interest (RoI) in the given image and mask.
+    The RoI is the bounding box that covers the optic disc and the optic cup."""
     # Read image
     if isinstance(image_file, str):
         original_image = cv.imread(image_file)

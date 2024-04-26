@@ -222,7 +222,7 @@ def apply_centernet(
 
         # Run ROI detection
         image_name = os.path.basename(file)
-        image = preprocess_centernet_input(file)
+        image, _ = preprocess_centernet_input(file, mask=None)
         roi_image, _ = detect_roi(
             model=model, image_file=image, mask_file=None, device=device,
             transform=transform, input_size=input_size, roi_size=output_size,

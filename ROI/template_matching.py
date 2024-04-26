@@ -8,35 +8,36 @@ from tqdm.notebook import tqdm
 __all__ = ['TemplateMatching', 'get_templates', 'align_to_square']
 
 
-def get_templates(images_dir, show: bool = False):
-    # Load templates
-    bounds = {  # image_id: (top, bottom, left, right)
-        0: (800, 1300, 1350, 1750),
-        1: (650, 1150, 850, 1250),
-        2: (700, 1200, 750, 1250),
-        3: (750, 1250, 1400, 1850),
-        4: (770, 1220, 750, 1180),
-        20: (670, 1180, 650, 1100),
-        21: (600, 1100, 1050, 1500),
-        22: (720, 1170, 1070, 1500),
-    }
-
+def get_templates(images_dir, n: int = -1, show: bool = False):
     files = sorted([f for f in os.listdir(images_dir) if not f.startswith('.')])
 
     templates = []
-    for idx, bound in bounds.items():
+    for idx in range(n if n > 0 else len(files)):
         template_file = os.path.join(images_dir, files[idx])
+        template = cv.imread(template_file, cv.IMREAD_COLOR)
 
-        img = cv.imread(template_file)
-        img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
+        if template is None:
+            raise ValueError(f'Could not read template file: {template_file}')
 
-        y_min, y_max, x_min, x_max = bound
-        template = img.copy()[y_min:y_max, x_min:x_max]
+        template = cv.cvtColor(template, cv.COLOR_BGR2RGB)
         templates.append(template)
 
-        if show:
-            plt.imshow(template)
-            plt.show()
+    if show:
+        ncols = min(len(templates), 6)
+        nrows = (len(templates) - 1) // ncols + 1
+
+        _, ax = plt.subplots(nrows, ncols, figsize=(ncols * 3, nrows * 3))
+        ax = ax.flatten()
+
+        for i in range(len(templates), nrows * ncols):
+            ax[i].axis('off')
+
+        for i, template in enumerate(templates, start=0):
+            ax[i].imshow(template)
+            ax[i].set_title(f'Template {i + 1}')
+
+        plt.tight_layout()
+        plt.show()
 
     return templates
 
