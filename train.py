@@ -11,9 +11,26 @@ from networks import *
 from training import *
 
 # Example usage:
-# python train.py -a binary --m ref -o ./output --epochs 10
-# python train.py -a cascade --m ref -o ./output --epochs 10 --base-model ./models/polar/ref/binary.pth
-# python train.py -a dual --m ref -o ./output --epochs 10
+# python train.py -a binary -m ref -o ./output --epochs 10
+# python train.py -a cascade -m ref -o ./output --epochs 10 --base-model ./models/polar/ref/binary.pth
+# python train.py -a dual -m ref -o ./output --epochs 10
+
+TRAIN_IMAGES_DIRECTORIES = [
+    './data/ORIGA/ROI/TrainImages',
+    './data/DRISHTI/ROI/TrainImages',
+]
+TRAIN_MASKS_DIRECTORIES = [
+    './data/ORIGA/ROI/TrainMasks',
+    './data/DRISHTI/ROI/TrainMasks',
+]
+VAL_IMAGES_DIRECTORIES = [
+    './data/ORIGA/ROI/TestImages',
+    './data/DRISHTI/ROI/TestImages',
+]
+VAL_MASKS_DIRECTORIES = [
+    './data/ORIGA/ROI/TestMasks',
+    './data/DRISHTI/ROI/TestMasks',
+]
 
 
 def main():
@@ -48,23 +65,6 @@ def main():
                         help='Dropout rate')
     parser.add_argument('--validate', type=bool, default=True,
                         help='Perform validation during training')
-
-    train_images_dir = [
-        './data/ORIGA/ROI/TrainImages',
-        './data/DRISHTI/ROI/TrainImages',
-    ]
-    train_masks_dir = [
-        './data/ORIGA/ROI/TrainMasks',
-        './data/DRISHTI/ROI/TrainMasks',
-    ]
-    val_images_dir = [
-        './data/ORIGA/ROI/TestImages',
-        './data/DRISHTI/ROI/TestImages',
-    ]
-    val_masks_dir = [
-        './data/ORIGA/ROI/TestMasks',
-        './data/DRISHTI/ROI/TestMasks',
-    ]
 
     args = parser.parse_args()
 
@@ -123,14 +123,14 @@ def main():
     ])
 
     train_loader = load_dataset(
-        train_images_dir, train_masks_dir, train_transform,
+        TRAIN_IMAGES_DIRECTORIES, TRAIN_MASKS_DIRECTORIES, train_transform,
         batch_size=batch_size, pin_memory=pin_memory,
         num_workers=num_workers, shuffle=True,
     )
     val_loader = None
     if validate:
         val_loader = load_dataset(
-            val_images_dir, val_masks_dir, val_transform,
+            VAL_IMAGES_DIRECTORIES, VAL_MASKS_DIRECTORIES, val_transform,
             batch_size=batch_size, pin_memory=pin_memory,
             num_workers=num_workers, shuffle=False,
         )
@@ -177,6 +177,9 @@ def main():
 
     assert model is not None, f'Invalid network name: {model_type}'
 
+    if architecture == 'dual' and 'dual-' in model_type:
+        model_type = model_type.replace('dual-', '')
+
     model = model.to(device)
     init_model_weights(model)
 
@@ -204,7 +207,45 @@ def main():
         postfix_metrics=['accuracy_OD', 'accuracy_OC', 'dice_OD', 'dice_OC'],
     )
 
-    plot_history(hist, figsize=(14, 12), save_path=f'{output_dir}/history.png')
+    print('=====================================')
+    print('    Optic Disc results (training):')
+    for k, v in hist.items():
+        if 'OD' in k and 'train' in k:
+            print(f'{k}: {v[-1]}')
+    print('=====================================')
+    print('    Optic Cup results (training):')
+    for k, v in hist.items():
+        if 'OC' in k and 'train' in k:
+            print(f'{k}: {v[-1]}')
+    print('=====================================')
+    print('    Optic Disc results (validation):')
+    for k, v in hist.items():
+        if 'OD' in k and 'val' in k:
+            print(f'{k}: {v[-1]}')
+    print('=====================================')
+    print('    Optic Cup results (validation):')
+    for k, v in hist.items():
+        if 'OC' in k and 'val' in k:
+            print(f'{k}: {v[-1]}')
+    print('=====================================')
+    print('    Miscellaneous:')
+    for k, v in hist.items():
+        if 'OD' not in k and 'OC' not in k:
+            print(f'{k}: {v[-1]}')
+
+    metrics_to_plot = [
+        'accuracy_OD', 'accuracy_OC',
+        'balanced_accuracy_OD', 'balanced_accuracy_OC',
+        'dice_OD', 'dice_OC',
+        'iou_OD', 'iou_OC',
+        'sensitivity_OD', 'sensitivity_OC',
+        'specificity_OD', 'specificity_OC',
+        'precision_OD', 'precision_OC',
+        'loss',
+    ]
+
+    h = {k: v for k, v in hist.items() if any(k.endswith(m) for m in metrics_to_plot)}
+    plot_history(h, figsize=(14, 12), save_path=f'{output_dir}/history-{architecture}-{model_type}.png')
 
 
 if __name__ == '__main__':

@@ -55,7 +55,7 @@ def calculate_metrics(tp: int, tn: int, fp: int, fn: int) -> dict[str, float]:
     fnr = safe_division(fn, tp + fn)  # FNR (False Negative Rate), Miss Rate
     dice = safe_division(2 * tp, 2 * tp + fp + fn)  # F1 score
     iou = safe_division(tp, tp + fp + fn)  # Jaccard index
-    balance_accuracy = safe_division(sensitivity + specificity, 2)
+    balanced_accuracy = safe_division(sensitivity + specificity, 2)
     # f1 = safe_division(2 * precision * sensitivity, precision + sensitivity)
     # informedness = specificity + sensitivity - 1
     # prevalence = safe_division(tp + fn, tp + tn + fp + fn)
@@ -76,7 +76,7 @@ def calculate_metrics(tp: int, tn: int, fp: int, fn: int) -> dict[str, float]:
         'fnr': fnr,
         'dice': dice,
         'iou': iou,
-        'balance_accuracy': balance_accuracy,
+        'balanced_accuracy': balanced_accuracy,
         'tp': tp,
         'tn': tn,
         'fp': fp,

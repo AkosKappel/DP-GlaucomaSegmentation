@@ -14,6 +14,15 @@ from training import *
 # python test.py -a cascade -m ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth
 # python test.py -a dual -m ./models/polar/ref/dual.pth
 
+TEST_IMAGES_DIRECTORIES = [
+    './data/ORIGA/ROI/TestImages',
+    './data/DRISHTI/ROI/TestImages',
+]
+TEST_MASKS_DIRECTORIES = [
+    './data/ORIGA/ROI/TestMasks',
+    './data/DRISHTI/ROI/TestMasks',
+]
+
 
 def main():
     print('=====================================')
@@ -35,15 +44,6 @@ def main():
                         help='Device used for training', choices=('cuda', 'cpu'))
     parser.add_argument('-p', '--polar', type=bool, default=True,
                         help='Use polar transformation')
-
-    test_images_dir = [
-        './data/ORIGA/ROI/TestImages',
-        './data/DRISHTI/ROI/TestImages',
-    ]
-    test_masks_dir = [
-        './data/ORIGA/ROI/TestMasks',
-        './data/DRISHTI/ROI/TestMasks',
-    ]
 
     args = parser.parse_args()
 
@@ -96,7 +96,7 @@ def main():
     ])
 
     test_loader = load_dataset(
-        test_images_dir, test_masks_dir, test_transform, batch_size=1,
+        TEST_IMAGES_DIRECTORIES, TEST_MASKS_DIRECTORIES, test_transform, batch_size=1,
         pin_memory=pin_memory, num_workers=num_workers, shuffle=True,
     )
 
