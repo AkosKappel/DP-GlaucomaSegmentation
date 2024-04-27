@@ -10,10 +10,19 @@ from modules.preprocessing import inverse_polar_transform
 from modules.postprocessing import interprocess, postprocess
 
 __all__ = [
+    'get_model_size', 'get_number_of_parameters',
     'undo_polar_transform', 'get_threshold_stats',
     'plot_curves', 'roc_curve', 'precision_recall_curve',
     'threshold_tuning_curve',
 ]
+
+
+def get_model_size(model):
+    return sum(p.numel() for p in model.parameters()) * 4 / 1024 / 1024
+
+
+def get_number_of_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def undo_polar_transform(images_batch: torch.Tensor, masks_batch: torch.Tensor, preds_batch: torch.Tensor):

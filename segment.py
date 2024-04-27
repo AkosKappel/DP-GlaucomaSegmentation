@@ -14,9 +14,9 @@ from training import *
 from ROI import CenterNet, preprocess_centernet_input, detect_roi
 
 # Example usage:
-# python segment.py ./ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./RoiResults
-# python segment.py ./RoiResults -a dual -m ./models/polar/ref/dual.pth -o ./DualResults
-# python segment.py ./RoiResults -a cascade -m ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth -o ./CascadeResults
+# python segment.py ./ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./results/roi
+# python segment.py ./results/roi -a dual -m ./models/polar/ref/dual.pth -o ./results/dual
+# python segment.py ./results/roi -a cascade -m ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth -o ./results/cascade
 
 
 def main():
