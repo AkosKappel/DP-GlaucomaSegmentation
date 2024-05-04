@@ -22,6 +22,10 @@ output/
 
 # Trained models
 models/
+*.zip
+*.pth
+*.h5
+*.onnx
 
 # Testing & Bug fixing
 tests/

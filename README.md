@@ -30,6 +30,9 @@ The project is implemented in [Python](https://www.python.org/) 3.10.2 using the
 
 ## Installation
 
+To install the project, you need to have Python 3.10 installed on your system.
+You can install the project dependencies using the following commands:
+
 ```bash
 # clone github repository   
 git clone https://github.com/AkosKappel/DP-GlaucomaSegmentation
@@ -47,6 +50,103 @@ source venv/bin/activate # Linux
 pip install -r requirements.txt
 ```
 
+### Our Preprocessed Dataset
+
+The dataset images and masks are not included in this repository.
+If you want to use our cropped and preprocessed data, you can download it from [here](https://drive.google.com/file/d/1u0d_et2O_wA1HCw6aS5c4ii6t0ilx9q1/view?usp=sharing).
+After downloading the data, extract the zip file to the `./data` directory.
+The dataset contains the following structure:
+
+```bash
+data
+├── ORIGA
+│   ├── CenterNet (preprocessed data for CenterNet)
+│   │   ├── TrainImages
+│   │   ├── TrainMasks
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── ROI (detected regions of interest)
+│   │   ├── TrainImages
+│   │   ├── TrainMasks
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── Templates (cropped images for template matching)
+│   ├── TrainImages
+│   ├── TrainMasks
+│   ├── TestImages
+│   └── TestMasks
+│
+├── DRISHTI
+│   ├── CenterNet
+│   │   ├── TrainImages
+│   │   ├── TrainMasks
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── ROI
+│   │   ├── TrainImages
+│   │   ├── TrainMasks
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── Templates
+│   ├── TrainImages
+│   ├── TrainMasks
+│   ├── TestImages
+│   └── TestMasks
+│
+├── RIMONE
+│   ├── CenterNet
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── ROI
+│   │   ├── TestImages
+│   │   └── TestMasks
+│   ├── TestImages
+│   └── TestMasks
+│
+└── ImagesForSegmentation
+    ├── CenterNet
+    └── ROI
+```
+
+### Our Pretrained Models
+
+You can also use our trained models for the project.
+They can be downloaded from [here](https://drive.google.com/file/d/1O4zULVF1_4ilZrRHPtMdTANk1-x4anhm/view?usp=sharing).
+When the download is finished, extract the models to the `./models` directory, which should look like this:
+
+```bash
+models
+├── roi
+│   └── centernet.pth
+│
+├── polar (polar coordinate trained models)
+│   ├── rau (Residual Attention U-Net++)
+│   │   ├── binary.pth
+│   │   ├── cascade.pth
+│   │   └── dual.pth
+│   ├── ref (Refined U-net 3+ with CBAM)
+│   │   ├── binary.pth
+│   │   ├── cascade.pth
+│   │   └── dual.pth
+│   └── swin (Shifted-Window U-net)
+│       ├── binary.pth
+│       ├── cascade.pth
+│       └── dual.pth
+│
+└── cartesian (cartesian coordinate trained models)
+    ├── rau
+    │   ├── binary.pth
+    │   ├── cascade.pth
+    │   └── dual.pth
+    ├── ref
+    │   ├── binary.pth
+    │   ├── cascade.pth
+    │   └── dual.pth
+    └── swin
+        ├── binary.pth
+        ├── cascade.pth
+        └── dual.pth
+```
 
 ## Usage
 
@@ -57,14 +157,20 @@ The project consists of 3 main parts:
 2. **[Cascade architecture](#cascade-architecture)** - train, evaluate and perform inference with the cascade architecture.
 3. **[Dual-decoder architecture](#dual-decoder-architecture)** - train, evaluate and perform inference with the dual-decoder architecture.
 
-To run the project, you need to download the [ORIGA](https://www.dropbox.com/s/7z3z3z1z9v6zv6o/ORIGA.zip?dl=0) and [DRISHTI-GS](https://cvit.iiit.ac.in/projects/mip/drishti-gs/mip-dataset2/Home.php) datasets.
-After downloading the datasets, extract the images to the `./data/ORIGA` and `./data/DRISHTI` directories, respectively.
-Inside these directories, create the following subdirectories:
+To run the project, you need to have the preprocessed dataset and the pretrained models.
+For the pretrained models, you can use the models provided in the `./models` directory.
+If you want to train the models from scratch, you can use the preprocessed dataset in the `./data` directory.
 
-- `./data/ORIGA/TrainImages` - contains the training images from the ORIGA dataset.
-- `./data/ORIGA/TrainMasks` - contains the training masks from the ORIGA dataset.
-- `./data/ORIGA/TestImages` - contains the validation images from the ORIGA dataset.
-- `./data/ORIGA/TestMasks` - contains the validation masks from the ORIGA dataset.
+- **`./<DatasetName>`** - contains the original dataset without any preprocessing.
+- **`./<DatasetName>/CenterNet`** - contains the preprocessed data for the CenterNet model.
+- **`./<DatasetName>/ROI`** - contains the detected regions of interest.
+
+Inside all the directories, you can find the following structure:
+
+- **`TrainImages`** - contains the training images.
+- **`TrainMasks`** - contains the training masks.
+- **`TestImages`** - contains the testing images.
+- **`TestMasks`** - contains the testing masks.
 
 You can use 3 scripts to run the project:
 
