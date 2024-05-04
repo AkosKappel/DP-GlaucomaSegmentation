@@ -50,7 +50,7 @@ source venv/bin/activate # Linux
 pip install -r requirements.txt
 ```
 
-### Our Preprocessed Dataset
+### Preprocessed Dataset
 
 The dataset images and masks are not included in this repository.
 If you want to use our cropped and preprocessed data, you can download it from [here](https://drive.google.com/file/d/1u0d_et2O_wA1HCw6aS5c4ii6t0ilx9q1/view?usp=sharing).
@@ -108,7 +108,7 @@ data
     └── ROI
 ```
 
-### Our Pretrained Models
+### Pretrained Models
 
 You can also use our trained models for the project.
 They can be downloaded from [here](https://drive.google.com/file/d/1O4zULVF1_4ilZrRHPtMdTANk1-x4anhm/view?usp=sharing).
@@ -154,36 +154,36 @@ When the installation is finished, you can start using the project.
 The project consists of 3 main parts:
 
 1. **[Region of Interest detection with CenterNet](#region-of-interest-detection-with-centernet)** - detect the region of interest in the fundus images.
-2. **[Cascade architecture](#cascade-architecture)** - train, evaluate and perform inference with the cascade architecture.
-3. **[Dual-decoder architecture](#dual-decoder-architecture)** - train, evaluate and perform inference with the dual-decoder architecture.
+2. **[Cascade architecture segmentation](#cascade-architecture)** - train, evaluate and perform inference with the cascade architecture.
+3. **[Dual-decoder architecture segmentation](#dual-decoder-architecture)** - train, evaluate and perform inference with the dual-decoder architecture.
 
 To run the project, you need to have the preprocessed dataset and the pretrained models.
 For the pretrained models, you can use the models provided in the `./models` directory.
-If you want to train the models from scratch, you can use the preprocessed dataset in the `./data` directory.
+If you want to train the models from scratch, you can use the preprocessed dataset in the `./data` directory:
 
-- **`./<DatasetName>`** - contains the original dataset without any preprocessing.
-- **`./<DatasetName>/CenterNet`** - contains the preprocessed data for the CenterNet model.
-- **`./<DatasetName>/ROI`** - contains the detected regions of interest.
+- `./<DatasetName>` - contains the original dataset without any preprocessing.
+- `./<DatasetName>/CenterNet` - contains the preprocessed data for the CenterNet model.
+- `./<DatasetName>/ROI` - contains the detected regions of interest.
 
-Inside all the directories, you can find the following structure:
+Inside all of these directories, you can find the following structure:
 
-- **`TrainImages`** - contains the training images.
-- **`TrainMasks`** - contains the training masks.
-- **`TestImages`** - contains the testing images.
-- **`TestMasks`** - contains the testing masks.
+- `TrainImages` - contains the training images.
+- `TrainMasks` - contains the training masks.
+- `TestImages` - contains the testing images.
+- `TestMasks` - contains the testing masks.
 
 You can use 3 scripts to run the project:
 
-- **`segment.py`** - detect the region of interest in the fundus images and perform the segmentation.
-- **`train.py`** - train the models.
-- **`test.py`** - evaluate the models.
+- `segment.py` - detect the region of interest in the fundus images and perform the segmentation.
+- `train.py` - train the models.
+- `test.py` - evaluate the models.
 
 Each script provides the `-h` flag to display the help message with the available options.
-When using these scripts, you can select between these architectures:
+When using these scripts, you can select between these architectures using the `-a` flag:
 
-- **`-a binary`** - binary segmentation of the optic disc.
-- **`-a cascade`** - cascade architecture for the optic disc and cup segmentation.
-- **`-a dual`** - dual-decoder architecture for the optic disc and cup segmentation.
+- `binary` - binary segmentation of the optic disc.
+- `cascade` - cascade architecture for the optic disc and cup segmentation.
+- `dual` - dual-decoder architecture for the optic disc and cup segmentation.
 
 As per the model selection, all our models are modified variants of the [U-Net](https://arxiv.org/abs/1505.04597) architecture.
 You can choose from these types of models:
@@ -202,7 +202,7 @@ For this purpose, the [CenterNet](https://openaccess.thecvf.com/content_ICCV_201
 To run the ROI detection, use the following command:
 
 ```bash
-python segment.py ./ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./results/roi
+python segment.py ./data/ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./results/roi
 ```
 
 
@@ -227,13 +227,13 @@ python train.py -a cascade -m ref -o ./output --epochs 10 --base-model ./models/
 
 #### Model evaluation
 
-To evaluate the final model, run the following command:
+To evaluate the binary model, run the following command:
 
 ```bash
 python test.py -a binary -m ./models/polar/ref/binary.pth
 ```
 
-And to evaluate both models combined, use the following command:
+And to evaluate both models combined in the cascade architecture, use the following command:
 
 ```bash
 python test.py -a cascade -m ./models/polar/ref/cascade.pth --base-model ./models/polar/ref/binary.pth
