@@ -12,6 +12,7 @@ Supervisor: **doc. RNDr. Silvester Czanner, PhD.**
 
 Institution: **Faculty of Informatics and Information Technologies, Slovak University of Technology in Bratislava**
 
+
 ## Contents
 
 1. [Introduction](#introduction)
@@ -333,6 +334,15 @@ Because of this, the raw results from the models look like this:
 After transforming the results back to Cartesian coordinates, the final segmentation masks look like:
 
 ![Dual Results](./assets/dual-cartesian-results.png)
+
+The overall performance of the models was evaluated using the Dice coefficient, which measures the overlap between the predicted and ground truth masks.
+The following table shows the accuracy and Dice coefficient of the models:
+
+| Architecture | Optic Disc Accuracy | Optic Disc Dice Coefficient | Optic Cup Accuracy | Optic Cup Dice Coefficient |
+|--------------|---------------------|-----------------------------|--------------------|----------------------------|
+| Cascade      | 98.33 %             | 96.83 %                     | 96.71 %            | 87.12 %                    |
+| Dual-decoder | 98.27 %             | 96.76 %                     | 97.32 %            | 89.65 %                    |
+
 
 During the training process, we monitored the training and validation loss, the Dice coefficient, and a few other metrics.
 The following plot shows the training history of the dual-decoder architecture:
