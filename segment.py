@@ -13,6 +13,7 @@ from networks import *
 from training import *
 from ROI import CenterNet, preprocess_centernet_input, detect_roi
 
+
 # Example usage:
 # python segment.py ./ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./results/roi
 # python segment.py ./results/roi -a dual -m ./models/polar/ref/dual.pth -o ./results/dual
@@ -65,6 +66,8 @@ def main():
         exit(1)
 
     files = load_files_from_dir(args.path)
+    valid_extensions = ('.jpg', '.jpeg', '.png')
+    files = [f for f in files if os.path.isfile(f) and f.lower().endswith(valid_extensions)]
 
     if args.centernet:
         files = apply_centernet(

@@ -11,6 +11,7 @@ ImagesForSegmentation/
 RoiResults/
 CascadeResults/
 DualResults/
+results/
 
 # Preprocessing mini-framework from another student - https://github.com/RetinaSegmentDP22-23/RetinaSegmentDP
 RetinaSegmentDP/
