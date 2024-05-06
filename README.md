@@ -77,7 +77,7 @@ pip install -r requirements.txt
 ### Exploratory Data Analysis
 
 As part of the project, we performed an EDA on the dataset, to better understand the data characteristics and potential challenges.
-The jupyter notebook with the EDA can be found in the `./EDA` directory.
+The jupyter notebooks with the EDA can be found in the `./EDA` directory.
 The main issues we identified during the EDA were:
 
 - **Class imbalance** - the dataset contains a lot of background pixels compared to the optic disc and cup pixels.
@@ -111,7 +111,6 @@ data
 │   ├── TrainMasks
 │   ├── TestImages
 │   └── TestMasks
-│
 ├── DRISHTI
 │   ├── CenterNet
 │   │   ├── TrainImages
@@ -128,7 +127,6 @@ data
 │   ├── TrainMasks
 │   ├── TestImages
 │   └── TestMasks
-│
 ├── RIMONE
 │   ├── CenterNet
 │   │   ├── TestImages
@@ -138,7 +136,6 @@ data
 │   │   └── TestMasks
 │   ├── TestImages
 │   └── TestMasks
-│
 └── ImagesForSegmentation
     ├── CenterNet
     └── ROI
@@ -154,7 +151,6 @@ When the download is finished, extract the models to the `./models` directory, w
 models
 ├── roi
 │   └── centernet.pth
-│
 ├── polar (polar coordinate trained models)
 │   ├── rau (Residual Attention U-Net++)
 │   │   ├── binary.pth
@@ -168,7 +164,6 @@ models
 │       ├── binary.pth
 │       ├── cascade.pth
 │       └── dual.pth
-│
 └── cartesian (cartesian coordinate trained models)
     ├── rau
     │   ├── binary.pth
@@ -240,6 +235,20 @@ To run the ROI detection, use the following command:
 ```bash
 python segment.py ./data/ImagesForSegmentation --centernet ./models/roi/centernet.pth --roi-output-dir ./results/roi
 ```
+
+We also experimented with other ROI detection methods, whose results can be found in the `./ROI` directory.
+The following methods were used:
+
+- **Thresholding** - simple thresholding of the image to detect brighter regions.
+- **Intensity-weighted centroid** - calculate the centroid of the image based on the pixel intensities.
+- **Brightest Spot Algorithm** - detects the brightest spot in the image.
+- **Template Matching** - match a template image to the fundus image to detect the optic disc.
+- **Deep Learning-based methods** - use the CenterNet model to detect the bounding box of the optic disc.
+
+Not all of these methods were successful, as some of them lead to inaccurate ROI detection or large bounding boxes.
+The following image shows the comparison of the different ROI detection results:
+
+![ROI Detection](./assets/roi.png)
 
 
 ### Cascade architecture
