@@ -12,6 +12,29 @@ Supervisor: **doc. RNDr. Silvester Czanner, PhD.**
 
 Institution: **Faculty of Informatics and Information Technologies, Slovak University of Technology in Bratislava**
 
+## Contents
+
+1. [Introduction](#introduction)
+2. [Installation](#installation)
+    - [Exploratory Data Analysis](#exploratory-data-analysis)
+    - [Preprocessed Dataset](#preprocessed-dataset)
+    - [Pretrained Models](#pretrained-models)
+3. [Usage](#usage)
+    - [Region of Interest detection with CenterNet](#region-of-interest-detection-with-centernet)
+    - [Cascade architecture](#cascade-architecture)
+        - [Model training](#model-training)
+        - [Model evaluation](#model-evaluation)
+        - [Inference](#inference)
+    - [Dual-decoder architecture](#dual-decoder-architecture)
+        - [Model training](#model-training-1)
+        - [Model evaluation](#model-evaluation-1)
+        - [Inference](#inference-1)
+4. [Results](#results)
+5. [Interpretability](#interpretability)
+    - [Probability map](#probability-map)
+    - [Activation map](#activation-map)
+    - [Grad-CAM](#grad-cam)
+
 
 ## Introduction
 
@@ -49,6 +72,19 @@ source venv/bin/activate # Linux
 # install dependencies
 pip install -r requirements.txt
 ```
+
+
+### Exploratory Data Analysis
+
+As part of the project, we performed an EDA on the dataset, to better understand the data characteristics and potential challenges.
+The jupyter notebook with the EDA can be found in the `./EDA` directory.
+The main issues we identified during the EDA were:
+
+- **Class imbalance** - the dataset contains a lot of background pixels compared to the optic disc and cup pixels.
+- **Variability in image quality** - the images have different resolutions, brightness, contrast, and artifacts.
+
+![Exploratory Data Analysis](./assets/eda.png)
+
 
 ### Preprocessed Dataset
 
@@ -288,4 +324,31 @@ Because of this, the raw results from the models look like this:
 After transforming the results back to Cartesian coordinates, the final segmentation masks look like:
 
 ![Dual Results](./assets/dual-cartesian-results.png)
+
+During the training process, we monitored the training and validation loss, the Dice coefficient, and a few other metrics.
+The following plot shows the training history of the dual-decoder architecture:
+
+![Training history](./assets/history.png)
+
+
+## Interpretability
+
+We also performed an interpretability analysis of the models to better understand their decision-making process.
+In this part we performed the following analyses:
+
+1. **[Probability map](#probability-map)** - the probability map shows the model's confidence in the segmentation.
+2. **[Layer Activation Visualization](#activation-map)** - shows the inner layers' activations during inference.
+3. **[Grad-CAM](#grad-cam)** - this visualization shows the regions in the image that the model focuses on during the segmentation.
+
+### Probability map
+
+![probability map](./assets/probabilities.png)
+
+### Activation map
+
+![activation map](./assets/activations.png)
+
+### Grad-CAM
+
+![Grad-CAM](./assets/gradcam.png)
 
