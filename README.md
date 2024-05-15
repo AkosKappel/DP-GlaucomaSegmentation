@@ -1,4 +1,4 @@
-# DP Glaucoma Segmentation
+# [Master's Thesis - Glaucoma Segmentation](https://github.com/AkosKappel/DP-GlaucomaSegmentation)
 
 Author: **Bc. Ákos Kappel**
 
