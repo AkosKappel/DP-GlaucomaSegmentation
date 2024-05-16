@@ -355,6 +355,11 @@ These are our results:
 
 ![vCDR results](./assets/vcdr.png)
 
+The confusion matrix of the model shows the number of true positives, true negatives, false positives, and false negatives.
+The following image shows the confusion matrix of the final best dual-decoder model, with vCDR threshold set to 0.63, as this was calculated from the ROC curve:
+
+![confusion matrix](./assets/confusion_matrix.png)
+
 
 ## Interpretability
 

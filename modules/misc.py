@@ -186,8 +186,8 @@ def precision_recall_curve(df):
     best_threshold_oc_pr = df['threshold'][min_index_oc]
 
     plt.figure(figsize=(9, 6))
-    plt.plot(recall_od, precision_od, label='OD curve', marker='.')
-    plt.plot(recall_oc, precision_oc, label='OC curve', marker='.')
+    plt.plot(recall_od, precision_od, label='OD curve')
+    plt.plot(recall_oc, precision_oc, label='OC curve')
     plt.scatter(recall_od[min_index_od], precision_od[min_index_od], c='b',
                 label=f'Best OD threshold: {best_threshold_od_pr:.2f}', zorder=3)
     plt.scatter(recall_oc[min_index_oc], precision_oc[min_index_oc], c='r',
@@ -280,8 +280,8 @@ def plot_curves(df, tuning_metric: str = 'dice'):
     axes[2].grid(True)
 
     # Precision-Recall Curve
-    axes[3].plot(recall_od, precision_od, label='OD curve', marker='.')
-    axes[3].plot(recall_oc, precision_oc, label='OC curve', marker='.')
+    axes[3].plot(recall_od, precision_od, label='OD curve')
+    axes[3].plot(recall_oc, precision_oc, label='OC curve')
     axes[3].scatter(recall_od[min_index_od], precision_od[min_index_od], c='b',
                     label=f'Best OD threshold: {best_threshold_od_pr:.2f}', zorder=3)
     axes[3].scatter(recall_oc[min_index_oc], precision_oc[min_index_oc], c='r',
