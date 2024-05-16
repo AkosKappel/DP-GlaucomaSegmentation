@@ -349,6 +349,12 @@ The following plot shows the training history of the dual-decoder architecture:
 
 ![Training history](./assets/history.png)
 
+After the evaluation of the models, we calculated the vertical cup-to-disc ratio (vCDR), which is a key indicator for glaucoma diagnosis.
+We compared the calculated vCDR values with the ground truth values measured by experts.
+These are our results:
+
+![vCDR results](./assets/vcdr.png)
+
 
 ## Interpretability
 
