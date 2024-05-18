@@ -3,7 +3,9 @@ import torch
 from scipy.ndimage import rotate
 
 __all__ = [
-    'safe_division', 'calculate_diameter', 'calculate_vCDR', 'calculate_hCDR',
+    'safe_division', 'calculate_diameter', 'calculate_vCDR', 'calculate_hCDR', 'calculate_aCDR',
+    'calculate_disc_height', 'calculate_disc_width', 'calculate_disc_area',
+    'calculate_cup_height', 'calculate_cup_width', 'calculate_cup_area',
     'calculate_metrics', 'get_tp_tn_fp_fn', 'get_metrics', 'update_metrics', 'get_extreme_examples',
     'get_best_OD_examples', 'get_worst_OD_examples', 'get_best_and_worst_OD_examples',
     'get_best_OC_examples', 'get_worst_OC_examples', 'get_best_and_worst_OC_examples',
@@ -42,6 +44,36 @@ def calculate_hCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) ->
     disc_diameter = calculate_diameter(mask, [disc_label], angle=90)
     cup_diameter = calculate_diameter(mask, [cup_label], angle=90)
     return safe_division(cup_diameter, disc_diameter)
+
+
+def calculate_aCDR(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> float:
+    cup_area = np.sum(mask == cup_label)
+    disc_area = np.sum(mask == disc_label) + cup_area
+    return safe_division(cup_area, disc_area)
+
+
+def calculate_disc_height(mask: np.ndarray, disc_label: int = 1) -> int:
+    return calculate_diameter(mask, [disc_label], angle=0)
+
+
+def calculate_disc_width(mask: np.ndarray, disc_label: int = 1) -> int:
+    return calculate_diameter(mask, [disc_label], angle=90)
+
+
+def calculate_disc_area(mask: np.ndarray, disc_label: int = 1, cup_label: int = 2) -> int:
+    return np.sum(mask == disc_label) + np.sum(mask == cup_label)
+
+
+def calculate_cup_height(mask: np.ndarray, cup_label: int = 2) -> int:
+    return calculate_diameter(mask, [cup_label], angle=0)
+
+
+def calculate_cup_width(mask: np.ndarray, cup_label: int = 2) -> int:
+    return calculate_diameter(mask, [cup_label], angle=90)
+
+
+def calculate_cup_area(mask: np.ndarray, cup_label: int = 2) -> int:
+    return np.sum(mask == cup_label)
 
 
 # Calculate individual metrics from TP, TN, FP, FN
