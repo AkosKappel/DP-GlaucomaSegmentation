@@ -12,6 +12,8 @@ Supervisor: **doc. RNDr. Silvester Czanner, PhD.**
 
 Institution: **Faculty of Informatics and Information Technologies, Slovak University of Technology in Bratislava**
 
+Full text: [Central Register of Theses (CRZP)](https://opac.crzp.sk/?fn=detailBiblioForm&sid=CC8450CBF10FC669817CF9C1506C)
+
 
 ## Contents
 
